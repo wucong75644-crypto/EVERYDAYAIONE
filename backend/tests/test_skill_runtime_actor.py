@@ -40,7 +40,8 @@ def prepared():
 def actor(callback=None):
     return ConversationTurnRuntime(
         conversation_id="conv-1", task_id="task-1", turn_id="turn-1",
-        cancellation_event=asyncio.Event(), replay_checkpoint_callback=callback,
+        cancellation_event=asyncio.Event(), replay_checkpoint_callback=(
+            callback if callback is not None else AsyncMock(return_value={'outcome':'saved'})),
     )
 
 

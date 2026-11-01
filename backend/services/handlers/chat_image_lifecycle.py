@@ -262,6 +262,9 @@ class ChatImageLifecycle:
             await asyncio.to_thread(resolver.verify,snapshot["references"])
             adapter=create_image_adapter(snapshot["model"],shadow_user_id=origin["workspace_owner_id"],shadow_org_id=task.get("org_id"))
             marker=await self.rpc(task,"mark_chat_image_dispatch",p_claim_token=token)
+            if marker.get("outcome") == "superseded":
+                await self.definite_failure(await self.refresh(task),"用户要求已更新，旧计划未发送供应商请求")
+                return
             if marker.get("outcome") != "dispatch":
                 return
             result=await adapter.generate(prompt=snapshot["prompt"],image_urls=urls or None,

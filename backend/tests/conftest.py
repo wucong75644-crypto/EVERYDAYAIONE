@@ -717,3 +717,10 @@ def mock_settings():
         settings.jwt_algorithm = "HS256"
         mock.return_value = settings
         yield settings
+
+
+@pytest.fixture
+def erp_write_adapter_enabled(monkeypatch):
+    """Exercise the frozen ERP protocol explicitly; never enable it by default."""
+    from core.config import get_settings
+    monkeypatch.setattr(get_settings(), 'agent_task_erp_write_enabled', True)

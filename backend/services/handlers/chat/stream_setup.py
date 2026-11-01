@@ -25,6 +25,9 @@ class PreparedChatStream:
     skill_context_applied: bool = False
     skill_host_scope_captured: bool = False
     knowledge_answer_plan: Any = None
+    knowledge_question: str | None = None
+    knowledge_input_facts: Any = None
+    knowledge_candidates: Any = None
 
     @property
     def adapter(self) -> Any:
@@ -51,8 +54,12 @@ async def prepare_chat_stream(
     on_model_retry: Any = None,
 ) -> PreparedChatStream:
     """准备一次固定上下文的 Chat 流执行，不读取或写入任务终态。"""
+    from services.agent.observability.chat_lifecycle import chat_phase
+    chat_phase('context.begin', task_id=task_id)
     started_at = time.monotonic()
     text_content = handler._extract_text_content(content)
+    # A handler may serve another request; never inherit its old exemption.
+    handler._knowledge_input_facts = None
     permission_mode = _normalize_permission_mode(permission_mode)
     if replay_context is not None:
         raw_messages = replay_context.get("messages")
@@ -74,12 +81,29 @@ async def prepare_chat_stream(
             permission_mode=permission_mode,
             context_anchor=context_anchor,
         )
+    chat_phase('context.history', task_id=task_id)
     from services.agent.agent_reach.web_links import prepare_links
     messages, handler._web_link_refs = prepare_links(
         messages, org_id=handler.org_id, user_id=user_id, conversation_id=conversation_id,
     )
+    from services.knowledge_workspace.input_facts import KnowledgeInputFacts, restore_facts
+    facts = (restore_facts(replay_context, context_anchor) if replay_context is not None
+             else getattr(handler, '_knowledge_input_facts', None))
+    if not isinstance(facts, KnowledgeInputFacts):
+        facts = None
+    knowledge_question = facts.question if facts else text_content
+    knowledge_started_at = time.monotonic()
     from services.knowledge_workspace.runtime import prepare_knowledge_run
-    await prepare_knowledge_run(handler, context_anchor, user_id, conversation_id, required=params.get('_knowledge_refs_required') is True, question=text_content)
+    await prepare_knowledge_run(handler, context_anchor, user_id, conversation_id,
+        required=params.get('_knowledge_refs_required') is True, question=knowledge_question)
+    logger.info('Chat knowledge preparation | task={} | active={} | elapsed_ms={} | input_facts={}',
+                task_id, getattr(handler, '_knowledge_run', None) is not None,
+                round((time.monotonic() - knowledge_started_at) * 1000, 3),
+                facts.version if facts else None)
+    chat_phase('context.knowledge', task_id=task_id)
+    from services.knowledge_workspace.answer_policy import INSTRUCTIONS
+    if not any(m.get('role')=='system' and m.get('content')==INSTRUCTIONS for m in messages):
+        messages.append({'role':'system','content':INSTRUCTIONS})
     if getattr(handler, '_knowledge_run', None):
         import json
         prefix='知识画布运行快照：'
@@ -181,6 +205,8 @@ async def prepare_chat_stream(
             task_id,
         )
         prepared = PreparedChatStream(
+            knowledge_input_facts=facts,
+            knowledge_question=knowledge_question,
             text_content=text_content,
             messages=messages,
             model_gateway=model_gateway,
@@ -192,6 +218,11 @@ async def prepare_chat_stream(
             budget=budget,
             execution_context=execution_context,
         )
+        chat_phase('context.ready', task_id=task_id)
+        from services.knowledge_workspace.candidates import start_preparation
+        handler._knowledge_candidates = start_preparation(handler, context_anchor, user_id, conversation_id,
+                                                         execution_context=execution_context)
+        prepared.knowledge_candidates = handler._knowledge_candidates
         return prepared
     except BaseException:
         await model_gateway.close()

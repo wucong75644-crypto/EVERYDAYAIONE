@@ -405,7 +405,10 @@ async def test_executor_reuses_commit_ready_checkpoint_without_model_call(monkey
 
 
 @pytest.mark.asyncio
-async def test_executor_builds_channel_scope_from_conversation(monkeypatch):
+@pytest.mark.parametrize('new_orchestration', [False, True])
+async def test_executor_builds_channel_scope_from_conversation(monkeypatch, new_orchestration):
+    from core.config import get_settings
+    monkeypatch.setattr(get_settings(), 'agent_task_execution_enabled', new_orchestration)
     row = {
         "id": "input-1",
         "conversation_id": "conv-1",
@@ -432,6 +435,7 @@ async def test_executor_builds_channel_scope_from_conversation(monkeypatch):
 
     async def fake_execute_chat(**kwargs):
         captured["request"] = kwargs["request"]
+        captured["runtime"] = kwargs["runtime"]
         return ChatExecutionResult(
             parts=[TextPart(text="完成")],
             content_blocks=[],
@@ -449,6 +453,7 @@ async def test_executor_builds_channel_scope_from_conversation(monkeypatch):
         _DB(row, conversation),
         lambda _db: handler,
         handler_db_factory=lambda: object(),
+        replay_checkpoint_store=_ReplayCheckpointStore(),
     )
 
     await executor.execute(task, _claim(), asyncio.Event())
@@ -459,6 +464,9 @@ async def test_executor_builds_channel_scope_from_conversation(monkeypatch):
     assert scope.personal_context_allowed is False
     assert scope.workspace_owner_id.startswith("channels/wecom/")
     assert handler._workspace_user_id == scope.workspace_owner_id
+
+    assert captured["runtime"].task_bootstrap is None
+    assert captured["runtime"].task_execution_state is None
 
 
 @pytest.mark.asyncio

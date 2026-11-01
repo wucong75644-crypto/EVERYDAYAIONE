@@ -191,6 +191,7 @@ class KernelManager:
         conversation_id: str,
         code: str,
         timeout: float,
+        *, response_observer=None, before_dispatch=None,
     ) -> Tuple[str, str, list]:
         """向 Kernel 发送代码并等待结果
 
@@ -215,8 +216,10 @@ class KernelManager:
             raise KeyError(f"Kernel 不存在或已死亡: {conversation_id[:8]}")
 
         async with kernel.lock:
+            if before_dispatch is not None:await before_dispatch()
             kernel.last_active = time.monotonic()
-            pending = asyncio.create_task(self._send_and_recv(kernel, code, timeout))
+            pending = asyncio.create_task(self._send_and_recv(kernel, code, timeout,**(
+                {'response_observer':response_observer} if response_observer is not None else {})))
             try:
                 return await asyncio.shield(pending)
             except asyncio.CancelledError:
@@ -405,7 +408,7 @@ class KernelManager:
                 pass  # symlink 失败不阻断启动,kernel 仍可跑无文件路径的代码
 
     async def _send_and_recv(
-        self, kernel: Kernel, code: str, timeout: float,
+        self, kernel: Kernel, code: str, timeout: float, *, response_observer=None,
     ) -> Tuple[str, str, list]:
         """发送代码并等待结果。
 
@@ -415,6 +418,9 @@ class KernelManager:
           - emit_payloads: 结构化产物 list[dict](独立通道,完整传输)
         """
         req_id = f"req_{int(time.monotonic() * 1000)}"
+        if response_observer is not None:
+            import uuid
+            req_id='req_'+uuid.uuid4().hex
         request: dict = {"id": req_id, "code": code, "timeout": timeout}
         request_line = json.dumps(request, ensure_ascii=False) + "\n"
 
@@ -447,6 +453,14 @@ class KernelManager:
         except json.JSONDecodeError:
             return "error", f"❌ Kernel 返回无效 JSON: {response_line[:200]}", []
 
+        if response_observer is not None:
+            if (not isinstance(response,dict) or response.get('id')!=req_id
+                or response.get('status') not in {'ok','error','timeout','interrupted'}
+                or not isinstance(response.get('stdout',''),str) or not isinstance(response.get('emit_payloads',[]),list)):
+                return 'error','❌ Kernel 回复无法与原代码调用核对',[]
+            import hashlib
+            response_observer({'request_id':req_id,'status':response['status'],
+                'code_sha256':hashlib.sha256(code.encode()).hexdigest()})
         return (
             response.get("status", "error"),
             response.get("stdout", ""),

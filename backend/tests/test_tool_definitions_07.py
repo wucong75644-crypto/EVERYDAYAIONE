@@ -25,6 +25,10 @@ WEB_SEARCH_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/web_search_pr
 # The approved knowledge retirement changes only this routing reference.
 WEB_SEARCH_UPGRADE['function']['description'] = WEB_SEARCH_UPGRADE['function']['description'].replace('查询企业知识库 → search_knowledge', '查询知识库 → knowledge_search')
 ERP_SCOPE_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/erp_order_scope_schema_upgrade.json').read_text())
+ERP_CALCULATE_WRITE_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/erp_purchase_calculate_write_upgrade.json').read_text())
+# Existing calculation starts a remote job. Its reviewed write classification
+# must require the original confirmation path; all other ERP contracts stay pinned.
+ERP_SCOPE_UPGRADE.update(ERP_CALCULATE_WRITE_UPGRADE['schemas'])
 CHAT_IMAGE_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/chat_image_default_tool_upgrade.json').read_text())
 
 def _knowledge_guidance_upgrade(value):
@@ -179,6 +183,12 @@ def test_old_imports_signatures_and_constant_values(module):
             assert not hasattr(current, name)
             continue
         value = plain(getattr(current, name))
+        if module == 'erp_tools' and name == 'PURCHASE_REGISTRY':
+            assert value['purchase_strategy_calculate']['is_write'] is True
+            assert value['purchase_strategy_calculate']['description'] == ERP_CALCULATE_WRITE_UPGRADE['registry_description']
+            value = deepcopy(value)
+            value['purchase_strategy_calculate']['is_write'] = False
+            value['purchase_strategy_calculate']['description'] = '触发采购建议计算任务（异步，用purchase_progress查进度）。计算完成后用purchase_strategy查看结果'
         if module == 'tool_domains' and name == 'TOOL_DOMAINS':
             expected = {
                 tool_name: spec['domain'] for tool_name, spec in BASELINE['specs'].items()

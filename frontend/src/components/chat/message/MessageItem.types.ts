@@ -11,6 +11,7 @@ export interface MessageItemProps {
   onRegenerate?: (messageId: string) => void;
   /** 从 ReplayCheckpoint 继续暂停的 Actor 任务 */
   onResume?: (messageId: string) => void;
+  onTaskResume?: (messageId: string) => Promise<boolean>;
   /** 删除回调 */
   onDelete?: (messageId: string) => void;
   /** 媒体加载完成回调（用于滚动调整） */

@@ -197,6 +197,16 @@ async def execute_chat(
         retry_context=request.retry_context,
         on_model_retry=request.on_model_retry,
     )
+    if runtime is not None:
+        runtime.knowledge_input_provider = None
+    if runtime is not None and getattr(prepared, 'knowledge_input_facts', None) is not None:
+        # Use the existing opaque checkpoint extension, including checkpoints
+        # produced by task/Skill safe points outside this module.
+        runtime.knowledge_input_provider = lambda: prepared.knowledge_input_facts.checkpoint(
+            changed=getattr(runtime, 'knowledge_input_changed', False) is True,
+            knowledge_used=(getattr(handler, '_knowledge_run', None) is not None
+                            and getattr(handler._knowledge_run, 'knowledge_used', True)),
+        )
     model_gateway = _get_model_gateway(prepared)
     handler._adapter = model_gateway
     previous_sink = getattr(handler, "_execution_sink", None)
@@ -211,6 +221,9 @@ async def execute_chat(
     # 保留 T3 的跨 Task 关联出口；模型 retry 已在 Gateway 内执行。
     handler._last_model_attempt_context = None
     totals = StreamTotals()
+    from services.task_execution.replay import restore_task_usage
+    usage=restore_task_usage(request.replay_context,task_id=request.task_id)
+    if usage is not None:totals.usage=usage
     blocks: list[dict[str, Any]] = _initial_replay_blocks(
         request.replay_context,
     )
@@ -222,7 +235,13 @@ async def execute_chat(
         selection_error = None
         from services.agent.image.ecommerce_planner.workflow import EcommerceWorkflow
         prepared.ecom_workflow = None
+        if runtime is not None:
+            saved_skill_state = (request.replay_context or {}).get('skill_runtime')
+            runtime.skill_coordination = not request.replay_context or (
+                isinstance(saved_skill_state, dict) and saved_skill_state.get('version') == 2)
+            runtime.committed_composition_revision = ((saved_skill_state or {}).get('composition') or {}).get('revision', 0)
         if (runtime is not None and hasattr(handler, "db")
+                and runtime.task_bootstrap is None and runtime.task_execution_state is None
                 and prepared.execution_context.feature_flags.get("ecom_image_planning_enabled") is True
                 and prepared.execution_context.context_scope == "user"
                 and prepared.execution_context.execution_mode == "interactive"):
@@ -252,6 +271,28 @@ async def execute_chat(
                 selection_error = control_result("SKILL_LOAD_UNAVAILABLE")
             if skills is not None:
                 _apply_skill_context(prepared, skills)
+        if runtime is not None and runtime.task_execution_state is not None:
+            from services.task_execution.methods import validate_method_replay
+            await validate_method_replay(runtime.task_execution_state, skills)
+        if runtime is not None and (runtime.task_bootstrap is not None or runtime.task_execution_state is not None):
+            from services.task_execution.image_resources import create_resolver
+            runtime.task_image_resource_resolver=create_resolver(handler,request,prepared.execution_context)
+            from services.task_execution.plan_fact_sources import create_source_provider
+            runtime.task_plan_source_provider=create_source_provider(handler,request,prepared.execution_context)
+            async def result_context():
+                from services.tools.runtime_context import refresh_context
+                from services.tools.catalog import build_capability_catalog
+                from services.task_execution.contracts import TaskError
+                executor=getattr(handler,'_tool_executor',None)
+                if executor is None:raise TaskError('TASK_NATIVE_RESULT_CONTEXT_UNAVAILABLE')
+                return await refresh_context(executor,prepared.execution_context,build_capability_catalog())
+            runtime.task_result_context_provider=result_context
+        completed_phase_ids = set()
+        if runtime is not None and runtime.task_execution_state is not None:
+            from services.task_execution.methods import completed_phase_bindings
+            completed_phase_ids = {binding.skill_key for binding in completed_phase_bindings(runtime.task_execution_state)}
+            if skills is not None:
+                completed_phase_ids.update(skills.resident)
         await output.start()
         workflow = getattr(prepared, "ecom_workflow", None)
         if workflow and not (skills and (skills.manual_skill_id == "ecommerce-main-images"
@@ -262,6 +303,9 @@ async def execute_chat(
                 blocks.append(block)
                 await output.on_block(block)
         if skills is not None and not request.replay_context:
+            if prepared.ecom_workflow:
+                # Pin the action before a pause can freeze the initial empty set.
+                await prepared.ecom_workflow.coordinate(skills)
             # Freeze session configuration before the first pause/cancel
             # boundary, including the empty binding set. Resume never rereads it.
             await runtime.safe_point(
@@ -273,9 +317,29 @@ async def execute_chat(
                 ),
             )
         if skills is not None:
+            # Freeze configuration before loading bodies; activate the complete
+            # locked set together, including when resuming its initial snapshot.
+            manual_finished = any(b.get('step_id') == 'manual-skill' for b in blocks)
+            if skills.checkpoint_version == 2 and not manual_finished:
+                required = await skills.activate_required(**(
+                    {'completed_phase_ids': completed_phase_ids} if completed_phase_ids else {}))
+                if not required['ok']:
+                    reason = skill_step(required, skills, step_id='required-skills')['reason']
+                    if skills.session_skill_ids:
+                        raise SkillBindingError('会话固定的 Skill 无法启用：' + reason)
+                    if required.get('code') in {'SKILL_WORKFLOW_CONFLICT', 'SKILL_DEPENDENCY_UNAVAILABLE'}:
+                        raise SkillBindingError(reason)
+                    # Preserve the existing safe manual-selection feedback. A
+                    # failed load must not be retried or silently called active.
+                    selection_error = required
+                if prepared.ecom_workflow:
+                    await prepared.ecom_workflow.coordinate(skills)
+                _apply_skill_context(prepared, skills)
             for skill_id in skills.session_skill_ids:
+                if skill_id in completed_phase_ids:
+                    continue
                 step_id = "session-skill:" + skill_id
-                if skill_id in skills.active:
+                if any(b.get('step_id') == step_id for b in blocks):
                     continue
                 await runtime.safe_point(SafePoint.BEFORE_TOOL)
                 await _check_cancelled(event, request, prepared.messages, blocks, totals, "before_skill")
@@ -296,14 +360,14 @@ async def execute_chat(
                     ),
                 )
                 await output.on_block(block)
-        if request.selected_skill is not None and not any(
+        if request.selected_skill is not None and request.selected_skill.skill_id not in completed_phase_ids and not any(
             b.get("type") == "skill_step" and b.get("step_id") == "manual-skill" for b in blocks
         ):
             if runtime:
                 await runtime.safe_point(SafePoint.BEFORE_TOOL)
             await _check_cancelled(event, request, prepared.messages, blocks, totals, "before_skill")
             result = selection_error or control_result("SKILL_RUNTIME_DISABLED")
-            if skills is not None:
+            if skills is not None and selection_error is None:
                 result = await skills.activate_manual(request.selected_skill)
             block = skill_step(result, skills, step_id="manual-skill")
             blocks.append(block)
@@ -331,7 +395,7 @@ async def execute_chat(
         if workflow and workflow.value and workflow.value.kind == "main_images":
             if skills is None:
                 raise SkillBindingError("原主图工作流的 Skill 当前不可用，已停止执行。")
-            if "ecommerce-main-images" not in skills.active:
+            if workflow.server_skill_key() is None:
                 await runtime.safe_point(SafePoint.BEFORE_TOOL)
                 await _check_cancelled(event, request, prepared.messages, blocks, totals, "before_workflow_skill")
                 result = await skills.activate(json.dumps({"skill_id": "ecommerce-main-images"}))
@@ -348,11 +412,16 @@ async def execute_chat(
                 ))
         if workflow:
             await workflow.activated()
-        from services.knowledge_workspace.answer_plan import prepare as prepare_knowledge_answer
-        await prepare_knowledge_answer(handler,prepared,request,skills)
-        from services.knowledge_workspace.chat import KnowledgeRun
-        active_knowledge=getattr(handler,'_knowledge_run',None)
-        prepared.knowledge_grounding_run=active_knowledge if isinstance(active_knowledge,KnowledgeRun) else None
+        finalized_parts = None
+
+        async def finalize_output(form_hint=None):
+            nonlocal finalized_parts
+            if finalized_parts is None:
+                finalized_parts = await _finalize_output_parts(handler=handler, prepared=prepared,
+                    totals=totals, blocks=blocks, sink=output, cancellation_event=event,
+                    runtime=runtime, form_hint=form_hint)
+            return finalized_parts
+
         form_hint = await _run_loop(
             handler=handler,
             request=request,
@@ -364,36 +433,10 @@ async def execute_chat(
             runtime=runtime,
             model_round=_initial_model_round(request.replay_context),
             repeated_tool_call_guard=repeated_tool_call_guard,
+            finalize_task=finalize_output,
         )
-        await _apply_budget_stop(prepared, totals, blocks, output,cancellation_event=event,runtime=runtime)
-        await _consume_emit_payloads(handler, blocks, output)
-        parts = build_content_parts(
-            blocks,
-            fallback_text=totals.text,
-            fallback_thinking=totals.thinking,
-        )
-        from services.knowledge_workspace.chat import KnowledgeRun
-        knowledge_run=getattr(handler,'_knowledge_run',None)
-        if isinstance(knowledge_run,KnowledgeRun):
-            for part in parts:
-                if isinstance(part,TextPart):
-                    part.text=await asyncio.to_thread(knowledge_run.normalize_citations,part.text)
-            totals.text=await asyncio.to_thread(knowledge_run.normalize_citations,totals.text)
-            for block in blocks:
-                if block.get('type')=='text' and isinstance(block.get('text'),str):
-                    block['text']=await asyncio.to_thread(knowledge_run.normalize_citations,block['text'])
-            footer=await asyncio.to_thread(knowledge_run.evidence_footer)
-            if footer:
-                parts.append(TextPart(text=footer)); totals.text += footer
-                if blocks:
-                    evidence={'type':'text','text':footer}
-                    blocks.append(evidence)
-                    await output.on_block(evidence)
-                else:
-                    await output.on_text(footer)
+        parts = await finalize_output(form_hint)
         await output.flush()
-        if form_hint:
-            parts.append(TextPart(text=form_hint))
         return ChatExecutionResult(
             model_id=getattr(model_gateway, "model_id", request.model_id),
             retry_context=getattr(model_gateway, "retry_context", None),
@@ -432,6 +475,11 @@ async def execute_chat(
                 await flush_progress()
         raise
     finally:
+        candidates = getattr(prepared, 'knowledge_candidates', None)
+        if candidates is not None:
+            await candidates.close()
+            if getattr(handler, '_knowledge_candidates', None) is candidates:
+                handler._knowledge_candidates = None
         from services.knowledge_workspace.chat import KnowledgeRun
         knowledge_run=getattr(handler,'_knowledge_run',None)
         if isinstance(knowledge_run,KnowledgeRun):
@@ -450,6 +498,44 @@ async def execute_chat(
             handler._execution_sink = previous_sink
 
 
+async def _finalize_output_parts(*, handler, prepared, totals, blocks, sink,
+                                 cancellation_event, runtime, form_hint=None):
+    """Canonical output finalization, shared by normal return and logical commit."""
+    from services.knowledge_workspace.chat import KnowledgeRun
+    knowledge_run = getattr(handler, '_knowledge_run', None)
+    if isinstance(knowledge_run, KnowledgeRun):
+        # Budget synthesis also receives retained source messages.
+        await asyncio.to_thread(knowledge_run.revalidate)
+    # New tasks already saved an explicit bounded partial result; do not invoke
+    # an extra uncounted synthesis model after their task budget is exhausted.
+    if runtime is None or (runtime.task_execution_state is None and getattr(runtime,'task_requirement_review',None) is None):
+        await _apply_budget_stop(prepared, totals, blocks, sink,
+            cancellation_event=cancellation_event, runtime=runtime)
+    await _consume_emit_payloads(handler, blocks, sink)
+    parts = build_content_parts(blocks, fallback_text=totals.text, fallback_thinking=totals.thinking)
+    if isinstance(knowledge_run, KnowledgeRun):
+        for part in parts:
+            if isinstance(part, TextPart):
+                part.text = await asyncio.to_thread(knowledge_run.normalize_citations, part.text)
+        totals.text = await asyncio.to_thread(knowledge_run.normalize_citations, totals.text)
+        for block in blocks:
+            if block.get('type') == 'text' and isinstance(block.get('text'), str):
+                block['text'] = await asyncio.to_thread(knowledge_run.normalize_citations, block['text'])
+        footer = await asyncio.to_thread(knowledge_run.evidence_footer)
+        if footer:
+            parts.append(TextPart(text=footer))
+            totals.text += footer
+            if blocks:
+                evidence = {'type': 'text', 'text': footer}
+                blocks.append(evidence)
+                await sink.on_block(evidence)
+            else:
+                await sink.on_text(footer)
+    if form_hint:
+        parts.append(TextPart(text=form_hint))
+    return parts
+
+
 async def _run_loop(
     *,
     handler: Any,
@@ -462,7 +548,35 @@ async def _run_loop(
     runtime: ConversationTurnRuntime | None,
     model_round: int = 0,
     repeated_tool_call_guard: _RepeatedToolCallGuard | None = None,
+    finalize_task=None,
 ) -> str | None:
+    if runtime and runtime.task_execution_state is not None:
+        from services.task_execution.user_changes import activate_for_delivery
+        from services.task_execution.requirement_changes import refresh as refresh_user_changes
+        await refresh_user_changes(runtime)
+        candidate = activate_for_delivery(runtime.task_execution_state, getattr(runtime,'task_user_changes',None),unreviewed=bool(runtime.task_unreviewed_changes))
+        if candidate is not runtime.task_execution_state:
+            from services.task_execution.model_bridge import commit_projection
+            await commit_projection(runtime=runtime,candidate=candidate,prepared=prepared,blocks=blocks,
+                point=SafePoint.BEFORE_MODEL,build_checkpoint=_build_replay_context,
+                turn=prepared.budget.turns_used,next_model_round=model_round,
+                repeated_tool_call_guard=repeated_tool_call_guard)
+    if runtime and runtime.task_execution_state is not None and runtime.task_execution_state.status != 'active':
+        # A crash may occur after logical completion was saved and before the
+        # executor's commit_ready save. Reuse the saved blocks without sampling.
+        return None
+    if runtime and (runtime.task_execution_state is not None or runtime.task_bootstrap is not None):
+        runtime.task_usage=totals.usage
+    async def terminal_task_result():
+        from schemas.message import serialize_content_parts
+        parts = (await finalize_task() if finalize_task is not None else build_content_parts(
+            blocks, fallback_text=totals.text, fallback_thinking=totals.thinking))
+        return {'checkpoint_kind': 'commit_ready',
+                'result_content': serialize_content_parts(parts),
+                'usage': dict(totals.usage),
+                'credits_cost': handler._calculate_credits(totals.usage) if request.calculate_credits else 0,
+                'tool_digest': _build_digest(prepared.messages, request.conversation_id,
+                                           prepared.budget.turns_used)}
     thinking_mode = request.thinking_mode
     entry_question = next((b for b in blocks if b.get("ecom_entry_question") is True), None)
     if entry_question:
@@ -475,6 +589,13 @@ async def _run_loop(
     prepared.image_arguments = image_arguments
     from services.agent.image.ecommerce_planner.arguments import PlannerArgumentCorrection
     prepared.ecom_arguments = PlannerArgumentCorrection(blocks)
+    if runtime and runtime.task_execution_state is not None:
+        from services.task_execution.pending_batch import recover_pending_batch
+        await recover_pending_batch(prepared=prepared, runtime=runtime, request=request, handler=handler,
+            sink=sink, totals=totals, blocks=blocks, cancellation_event=cancellation_event,
+            model_round=model_round, execute_tools=_execute_tools, repeated_tool_call_guard=repeated_tool_call_guard)
+        if runtime.task_execution_state.status != 'active':
+            return None
     while not prepared.budget.stop_reason:
         correcting = image_arguments.start_round(model_round)
         prepared.ecom_arguments.before_model()
@@ -502,33 +623,161 @@ async def _run_loop(
         if runtime:
             if runtime.skill_runtime is not None:
                 _apply_skill_context(prepared, runtime.skill_runtime)
+            from services.task_execution.model_bridge import controller_for
+            task_controller = controller_for(runtime)
+            if task_controller is None and runtime.task_bootstrap is not None:
+                instruction = {'role': 'system', 'content': '[Task initialization]\n'
+                    '先理解用户完整目标。需要多阶段或多项交付时先调用start_task_execution整理全部要求，'
+                    '再规划执行；不要因商品词自动切换到另一方法。用户已选择的方法优先完成其适用阶段。'
+                    '单步问答或查询直接处理，无需为使用编排而额外规划。'}
+                if instruction not in prepared.messages:
+                    prepared.messages.append(instruction)
+            if task_controller is not None:
+                if runtime.task_execution_state.model_rounds_used >= runtime.task_execution_state.model_round_limit:
+                    from services.task_execution.model_bridge import review_model_completion
+                    await review_model_completion(runtime=runtime, prepared=prepared, blocks=blocks,
+                        build_checkpoint=_build_replay_context, turn=prepared.budget.turns_used,
+                        next_model_round=model_round, repeated_tool_call_guard=repeated_tool_call_guard,
+                        exhausted=True, sink=sink, terminal_result=terminal_task_result)
+                    return None
+                from services.task_execution.model_bridge import model_round_candidate
+                task_candidate = model_round_candidate(runtime)
+                prepared.messages[:] = [m for m in prepared.messages if not (
+                    m.get('role') == 'system' and isinstance(m.get('content'), str)
+                    and m['content'].startswith('[Current task execution facts]'))]
+                prepared.messages.append(controller_for(runtime, state=task_candidate).context_message())
             runtime.set_state(ConversationState.RUNNING_MODEL)
-            await runtime.safe_point(
-                SafePoint.BEFORE_MODEL,
-                replay_payload=_build_replay_context(
-                    prepared.messages,
-                    blocks,
-                    prepared.budget.turns_used,
-                    next_model_round=model_round,
-                    repeated_tool_call_guard=repeated_tool_call_guard,
-                ),
-            )
+            if task_controller is not None:
+                from services.task_execution.model_bridge import commit_projection
+                await commit_projection(runtime=runtime, candidate=task_candidate,
+                    prepared=prepared, blocks=blocks, point=SafePoint.BEFORE_MODEL,
+                    build_checkpoint=_build_replay_context, turn=prepared.budget.turns_used,
+                    next_model_round=model_round, repeated_tool_call_guard=repeated_tool_call_guard)
+            else:
+                await runtime.safe_point(
+                    SafePoint.BEFORE_MODEL,
+                    replay_payload=_build_replay_context(
+                        prepared.messages,
+                        blocks,
+                        prepared.budget.turns_used,
+                        next_model_round=model_round,
+                        repeated_tool_call_guard=repeated_tool_call_guard,
+                    ),
+                )
             _inject_subtask_completions(
                 prepared.messages,
                 runtime.consume_subtask_completions(),
             )
             steers=runtime.consume_steer_messages()
-            _inject_steer_messages(prepared.messages,steers)
-            if steers and getattr(prepared,'knowledge_answer_plan',None):
-                from services.knowledge_workspace.answer_plan import invalidate_for_steer
-                invalidate_for_steer(prepared,handler._knowledge_run)
+            _inject_steer_messages(prepared.messages, steers, prepared=prepared)
+        await _refresh_knowledge_after_steer(handler, request, prepared)
         await _check_cancelled(
             cancellation_event, request, prepared.messages, blocks,
             totals, "loop_top",
         )
+        from services.task_execution.requirement_changes import refresh as refresh_user_changes
+        if runtime is not None:
+            await refresh_user_changes(runtime)
+            from services.task_execution.followup import settle_images
+            await settle_images(runtime,prepared,blocks,turn=prepared.budget.turns_used,model_round=model_round,build_checkpoint=_build_replay_context)
         prepared.budget.use_turn()
         turn = prepared.budget.turns_used - 1
+        followup=getattr(runtime,'task_followup_candidate',None) if runtime else None
+        if followup is not None and runtime.task_execution_state is None:
+            import copy
+            from services.task_execution.followup import review_messages as followup_messages,apply as apply_followup
+            isolated=copy.copy(prepared);isolated.messages=followup_messages(followup)
+            text,_thinking,review_calls,_preview=await _read_turn(isolated,[],cancellation_event,CollectingExecutionSink(),
+                StreamTotals(usage=totals.usage),[],runtime,request=request,model_round=model_round,task_review=True)
+            model_round+=1
+            await apply_followup(runtime,prepared,blocks,text,bool(review_calls),model_round=model_round,turn=turn,build_checkpoint=_build_replay_context)
+            continue
+        from services.task_execution.requirement_review import RequirementReview,review_messages,apply_review,reusable_observation
+        requirement_review = getattr(runtime,'task_requirement_review',None) if runtime else None
+        if isinstance(requirement_review,RequirementReview) and requirement_review.pending is not None:
+            cached = reusable_observation(requirement_review, prepared.messages)
+            if cached is not None:
+                await apply_review(runtime=runtime,prepared=prepared,blocks=blocks,
+                    text=cached.observation.model_dump_json(),has_tool_calls=False,
+                    model_round=cached.model_round,next_model_round=model_round,
+                    build_checkpoint=_build_replay_context,turn=turn,sink=sink)
+                continue
+            import copy
+            isolated=copy.copy(prepared)
+            isolated.messages=review_messages(requirement_review)
+            review_totals=StreamTotals(usage=totals.usage)
+            text,_thinking,review_calls,_preview=await _read_turn(
+                isolated,[],cancellation_event,CollectingExecutionSink(),review_totals,[],runtime,
+                request=request,model_round=model_round,task_review=True)
+            model_round+=1
+            await apply_review(runtime=runtime,prepared=prepared,blocks=blocks,text=text,
+                has_tool_calls=bool(review_calls),model_round=model_round-1,next_model_round=model_round,
+                build_checkpoint=_build_replay_context,turn=turn,sink=sink)
+            continue
+        from services.task_execution.requirement_review import clarification_question
+        question=clarification_question(requirement_review,prepared.messages)
+        if question:
+            notice={'type':'text','text':question,'task_status':'waiting_input'}
+            blocks.append(notice)
+            await sink.on_block(notice)
+            return None
+        if (isinstance(requirement_review,RequirementReview) and not requirement_review.approved_proposal_sha256
+                and len(requirement_review.attempts)>=3):
+            notice={'type':'text','text':'任务交付要求尚未核对完整，已保留原请求与核对记录，未启动外部执行。',
+                'task_status':'partial'}
+            blocks.append(notice)
+            await sink.on_block(notice)
+            return None
+        from services.task_execution.requirement_changes import pending as revision_pending,apply_review as apply_revision_review
+        if revision_pending(runtime):
+            import copy
+            from services.task_execution.requirement_changes import review_messages as revision_messages
+            isolated=copy.copy(prepared)
+            isolated.messages=revision_messages(runtime.task_execution_state,runtime.task_revision_review)
+            text,_thinking,review_calls,_preview=await _read_turn(isolated,[],cancellation_event,
+                CollectingExecutionSink(),StreamTotals(usage=totals.usage),[],runtime,request=request,
+                model_round=model_round,task_review=True)
+            model_round+=1
+            await apply_revision_review(runtime=runtime,prepared=prepared,blocks=blocks,text=text,has_tool_calls=bool(review_calls),
+                model_round=model_round-1,next_model_round=model_round,build_checkpoint=_build_replay_context,turn=turn)
+            continue
+        from services.task_execution.requirement_changes import exhausted as revision_exhausted
+        if revision_exhausted(runtime):
+            from services.task_execution.model_bridge import review_model_completion
+            await review_model_completion(runtime=runtime,prepared=prepared,blocks=blocks,
+                build_checkpoint=_build_replay_context,turn=turn,next_model_round=model_round,
+                exhausted=True,sink=sink)
+            return None
+        from services.task_execution.plan_facts import pending_review
+        if pending_review(runtime):
+            import copy
+            from services.task_execution.plan_facts import review_messages as plan_review_messages,apply_review as apply_plan_review
+            pending=runtime.task_plan_reviews.pending
+            source_error=None;text='';review_calls=[]
+            try:
+                _sources,pictures=await runtime.task_plan_source_provider(snapshot=pending.sources,images=True)
+            except (ValueError,PermissionError,OSError) as error:
+                source_error=type(error).__name__
+            if source_error is None:
+                isolated=copy.copy(prepared)
+                previous_attempt=next((a for a in reversed(runtime.task_plan_reviews.attempts)
+                    if a.request.artifact_id==pending.artifact_id and a.request.artifact_sha256==pending.artifact_sha256
+                    and a.request.sources.get('sha256')==pending.sources.get('sha256')),None)
+                isolated.messages=plan_review_messages(runtime.task_execution_state,pending,pictures,
+                    repair_issues=previous_attempt.issues if previous_attempt and previous_attempt.status=='uncertain' else ())
+                text,_thinking,review_calls,_preview=await _read_turn(
+                    isolated,[],cancellation_event,CollectingExecutionSink(),StreamTotals(usage=totals.usage),[],runtime,
+                    request=request,model_round=model_round,task_review='plan_facts')
+            model_round+=1
+            await apply_plan_review(runtime=runtime,prepared=prepared,blocks=blocks,text=text,
+                has_tool_calls=bool(review_calls),model_round=model_round-1,next_model_round=model_round,
+                build_checkpoint=_build_replay_context,turn=turn,sink=sink,repeated_tool_call_guard=repeated_tool_call_guard,
+                source_error=source_error)
+            continue
         if getattr(handler, '_knowledge_run', None) is not None and prepared.execution_context is not None:
+            # Access to retained source content is still checked before sending
+            # it to the model; this is not an answer review or display policy.
+            await asyncio.to_thread(handler._knowledge_run.revalidate)
             from dataclasses import replace
             prepared.execution_context = replace(prepared.execution_context, feature_flags={
                 **prepared.execution_context.feature_flags, 'knowledge_refs_present': True})
@@ -549,6 +798,8 @@ async def _run_loop(
             if any(key != runtime.skill_runtime.manual_skill_id and key not in runtime.skill_runtime.session_skill_ids
                    for key in runtime.skill_runtime.active):
                 tools.append(DEACTIVATE_SKILL_SCHEMA)
+        if runtime and runtime.skill_runtime is not None:
+            tools = runtime.skill_runtime.filter_protocol_tools(tools)
         knowledge_plan=getattr(prepared,'knowledge_answer_plan',None)
         fast_knowledge=knowledge_plan and knowledge_plan.get('mode') in ('answer','missing')
         if fast_knowledge:
@@ -556,6 +807,29 @@ async def _run_loop(
             tools=[]
         from services.knowledge_workspace.answer_plan import constrain_route_tools
         tools=await constrain_route_tools(prepared,getattr(handler,'_knowledge_run',None),tools)
+        if runtime and runtime.task_execution_state is not None and not fast_knowledge:
+            from services.task_execution.model_bridge import controller_for
+            tools.extend(controller_for(runtime).schemas())
+        elif runtime and runtime.task_bootstrap is not None and not fast_knowledge:
+            from services.task_execution.bootstrap import START_TASK_SCHEMA
+            tools.append(START_TASK_SCHEMA)
+        if runtime and (runtime.task_execution_state is not None or runtime.task_bootstrap is not None):
+            from services.task_execution.methods import blocked_tool_names
+            from services.tools.catalog import build_capability_catalog
+            from services.task_execution.dispatch import annotate_task_tools, plan_dispatch_blockers
+            catalog = build_capability_catalog()
+            tools = annotate_task_tools(tools, catalog)
+            blocked = blocked_tool_names(runtime.task_execution_state, catalog, runtime.skill_runtime)
+            blocked |= plan_dispatch_blockers(runtime.task_execution_state, catalog).keys()
+            tools = [tool for tool in tools if tool['function']['name'] not in blocked]
+        from services.task_execution.requirement_review import coverage_blocked
+        if coverage_blocked(runtime):
+            from services.task_execution.bootstrap import START_TASK_SCHEMA
+            tools=[START_TASK_SCHEMA]
+        from services.task_execution.requirement_changes import blocked as revision_blocked,SCHEMA as REVISION_SCHEMA,phase_repair
+        if runtime and runtime.task_execution_state is not None and revision_blocked(runtime):
+            tools=[REVISION_SCHEMA]
+            if phase_repair(runtime):tools.extend([ACTIVATE_SKILL_SCHEMA,DEACTIVATE_SKILL_SCHEMA])
         current_model_round = model_round
         before_usage = dict(totals.usage) if correcting else {}
         try:
@@ -583,17 +857,6 @@ async def _run_loop(
                 await sink.on_block(blocks[-1])
                 return None
             turn_text, turn_thinking = "", ""
-        grounding_run=getattr(prepared,'knowledge_grounding_run',None)
-        if grounding_run is not None:
-            # Tool-round narratives and reasoning are drafts, not user-visible facts.
-            turn_thinking=''
-            if calls:
-                turn_text=''
-            else:
-                turn_text=await _verify_knowledge_answer(grounding_run,turn_text,getattr(prepared,'text_content',''.join(p.text for p in request.content if isinstance(p,TextPart))),totals.usage,cancellation_event,runtime,other_tools=_completed_other_tools(blocks))
-                await _check_cancelled(cancellation_event,request,prepared.messages,blocks,totals,'knowledge_verification')
-                totals.text+=turn_text
-                await sink.on_text(turn_text)
         await _append_turn_blocks(
             blocks,
             sink,
@@ -601,6 +864,16 @@ async def _run_loop(
             text=turn_text,
         )
         if not calls:
+            if runtime and runtime.task_execution_state is not None:
+                from services.task_execution.model_bridge import review_model_completion
+                if turn_text:
+                    prepared.messages.append({'role': 'assistant', 'content': turn_text})
+                if await review_model_completion(runtime=runtime, prepared=prepared, blocks=blocks,
+                        build_checkpoint=_build_replay_context, turn=turn, next_model_round=model_round,
+                        repeated_tool_call_guard=repeated_tool_call_guard, sink=sink,
+                        exhausted=bool(fast_knowledge), terminal_result=terminal_task_result):
+                    continue
+                return None
             if not turn_text and prepared.budget.turns_used > 1:
                 if not empty_output_retried:
                     empty_output_retried = True
@@ -674,32 +947,18 @@ async def _run_loop(
             return None
         if form_hint:
             return form_hint
+    if runtime and runtime.task_execution_state is not None:
+        from services.task_execution.model_bridge import review_model_completion
+        await review_model_completion(runtime=runtime, prepared=prepared, blocks=blocks,
+            build_checkpoint=_build_replay_context, turn=prepared.budget.turns_used,
+            next_model_round=model_round, repeated_tool_call_guard=repeated_tool_call_guard,
+            exhausted=True, sink=sink, terminal_result=terminal_task_result)
+    elif runtime and getattr(runtime,'task_requirement_review',None) is not None:
+        notice={'type':'text','text':'已达到本次执行预算，任务交付要求尚未核对完成；原请求与核对记录已保留，未启动外部执行。',
+            'task_status':'partial'}
+        blocks.append(notice)
+        await sink.on_block(notice)
     return None
-
-
-def _completed_other_tools(blocks):
-    return sorted({b['tool_name'] for b in blocks if b.get('type')=='tool_step' and b.get('status')=='completed' and isinstance(b.get('tool_name'),str) and not b['tool_name'].startswith('knowledge_') and b['tool_name'] not in SKILL_CONTROL_TOOLS})
-
-
-async def _verify_knowledge_answer(run,text,question,usage,cancellation_event,runtime,*,other_tools=()):
-    from services.knowledge_workspace.grounding import release_answer
-    task=asyncio.create_task(release_answer(run,text,question,usage=usage,other_tools=other_tools))
-    cancel=asyncio.create_task(cancellation_event.wait())
-    command=asyncio.create_task(runtime.wait_for_command()) if runtime else None
-    try:
-        while True:
-            waits={task,cancel}
-            if command is not None:waits.add(command)
-            done,_=await asyncio.wait(waits,return_when=asyncio.FIRST_COMPLETED)
-            if cancel in done:raise asyncio.CancelledError()
-            if command is not None and command in done:
-                await runtime.safe_point(SafePoint.MODEL_CHUNK)
-                command=asyncio.create_task(runtime.wait_for_command())
-            if task in done:return task.result()
-    finally:
-        for pending in (task,cancel,command):
-            if pending is not None and not pending.done():pending.cancel()
-        await asyncio.gather(*(t for t in (task,cancel,command) if t is not None),return_exceptions=True)
 
 
 async def _read_turn(
@@ -714,6 +973,7 @@ async def _read_turn(
     thinking_mode: str | None = None,
     request: ChatExecutionRequest | None = None,
     model_round: int = 0,
+    task_review: bool | str = False,
 ) -> tuple[str, str, list[dict[str, Any]], set[str]]:
     turn_text = ""
     turn_thinking = ""
@@ -724,7 +984,7 @@ async def _read_turn(
     previewed_indices: set[int] = set()
     preview_ids: dict[int, str] = {}
     model_gateway = _get_model_gateway(prepared)
-    skills = runtime.skill_runtime if runtime else None
+    skills = runtime.skill_runtime if runtime and not task_review else None
     stream_kwargs = {
         "messages": skills.model_messages(prepared.messages, tools) if skills else prepared.messages,
         "tools": tools,
@@ -732,12 +992,18 @@ async def _read_turn(
         "thinking_mode": thinking_mode,
         **prepared.stream_kwargs,
     }
+    if task_review:
+        stream_kwargs.update(tools=[],enable_builtin_tools=False,max_tokens=6000 if task_review=='plan_facts' else 2048,thinking_mode='disabled')
     # 旧测试/兼容入口仍可注入 adapter-shaped double；只有永久 Gateway
     # 消费本地 turn_index，不能把该内部字段转发给旧 Provider adapter。
     from services.model_gateway import ModelGatewaySession
 
     if isinstance(model_gateway, ModelGatewaySession):
         stream_kwargs["turn_index"] = model_round
+    from services.agent.observability.chat_stream import ModelTurnTiming
+    from services.agent.observability.chat_lifecycle import chat_phase
+    chat_phase('model.begin', task_id=request.task_id if request else None, model_round=model_round)
+    model_timing = ModelTurnTiming()
     stream = model_gateway.stream_chat(
         **stream_kwargs,
     )
@@ -828,17 +1094,20 @@ async def _read_turn(
                 builtin_sources[source["url"]] = source.get("title") or source["url"]
         if chunk.thinking_content:
             turn_thinking += chunk.thinking_content
-            if not getattr(prepared, "defer_ecom_narrative", False) and getattr(prepared,"knowledge_grounding_run",None) is None:
+            if not getattr(prepared, "defer_ecom_narrative", False):
                 totals.thinking += chunk.thinking_content
                 await sink.on_thinking(chunk.thinking_content)
         if chunk.content:
+            model_timing.on_text()
+            if model_timing.chunks == 1:
+                chat_phase('model.first_body', task_id=request.task_id if request else None, model_round=model_round)
             turn_text += chunk.content
-            if not getattr(prepared, "defer_ecom_narrative", False) and getattr(prepared,"knowledge_grounding_run",None) is None:
+            if not getattr(prepared, "defer_ecom_narrative", False):
                 totals.text += chunk.content
                 await sink.on_text(chunk.content)
         if chunk.tool_calls:
             accumulate_tool_call_delta(calls, chunk.tool_calls)
-            if runtime is not None:
+            if runtime is not None and not task_review:
                 for index, call in calls.items():
                     if index in previewed_indices or not call.get("name") or call["name"] in SKILL_CONTROL_TOOLS:
                         continue
@@ -867,9 +1136,8 @@ async def _read_turn(
         from services.handlers.chat.builtin_tools import source_text
         references = source_text(builtin_sources)
         turn_text += references
-        if getattr(prepared,'knowledge_grounding_run',None) is None:
-            totals.text += references
-            await sink.on_text(references)
+        totals.text += references
+        await sink.on_text(references)
     ordered_indices = sorted(calls)
     ordered_calls = [calls[index] for index in ordered_indices]
     previewed_call_ids: set[str] = set()
@@ -888,6 +1156,16 @@ async def _read_turn(
                 )
     else:
         ordered_calls.sort(key=lambda call: call.get("id", ""))
+    chat_phase('model.end', task_id=request.task_id if request else None, model_round=model_round)
+    timing = model_timing.summary(held=False,
+                                  review=task_review)
+    if not hasattr(prepared, 'model_turn_timings'):
+        prepared.model_turn_timings = []
+    timings = prepared.model_turn_timings
+    if len(timings) < 48:
+        timings.append({'round': model_round, **timing})
+    logger.info('Chat model timing | task={} | round={} | metrics={}',
+                request.task_id if request else None, model_round, timing)
     return turn_text, turn_thinking, ordered_calls, previewed_call_ids
 
 
@@ -991,14 +1269,116 @@ async def _execute_tools(
     totals: StreamTotals | None = None,
     repeated_tool_call_guard: _RepeatedToolCallGuard | None = None,
     repeated_tool_call_nudge: str | None = None,
+    assistant_already_present: bool = False,
+    recovery_only: bool = False,
 ) -> str | None:
     totals = totals or StreamTotals()
+    from services.task_execution.model_bridge import TASK_CONTROL_TOOLS, execute_control_batch
+    from services.task_execution.requirement_review import coverage_blocked
+    from services.task_execution.plan_facts import pending_review
+    from services.task_execution.requirement_changes import refresh as refresh_user_changes,blocked as revision_blocked,phase_repair
+    if runtime is not None:await refresh_user_changes(runtime)
+    # Exact native reuse takes place before effect reservation and charging.
+    # Keep the original assistant tool call: its real result explains reuse.
+    source_calls=calls
+    if (runtime and runtime.task_execution_state is not None and runtime.task_execution_state.image_binding_version>=3
+            and runtime.task_execution_state.execution_identity.context_scope=='user' and not revision_blocked(runtime) and not pending_review(runtime) and not coverage_blocked(runtime)
+            and hasattr(getattr(runtime,'task_artifact_reader',None),'reusable_images')):
+        from services.task_execution.image_reuse import reuse,ReuseImageInput
+        from services.task_execution.contracts import TaskError
+        routed=[]
+        for call in calls:
+            mapped=call
+            if call['name']=='generate_image':
+                from services.tools.argument_validation import decode_image_arguments
+                try:args=decode_image_arguments(call.get('arguments',''))
+                except (ValueError,TypeError):args=None
+                if isinstance(args,dict):
+                    value=ReuseImageInput(expected_revision=runtime.task_execution_state.revision,arguments=args)
+                    route=True
+                    try:
+                        await reuse(runtime.task_execution_state,value,reader=runtime.task_artifact_reader,
+                            resolver=runtime.task_image_resource_resolver,owner_task_id=runtime.task_id)
+                    except TaskError as error:
+                        route=str(error) not in {'TASK_REUSABLE_IMAGE_NOT_FOUND','TASK_IMAGE_REUSE_REGENERATION_REQUEST','TASK_IMAGE_REUSE_SIZE_UNRESOLVED','IMAGE_TOOL_ARGUMENTS_INVALID'}
+                    # A denied/unverifiable existing output is not permission to
+                    # buy a replacement silently. Return its real control error.
+                    if route:mapped={**call,'name':'reuse_task_image','arguments':value.model_dump_json()}
+            routed.append(mapped)
+        calls=routed
+    if (runtime and (runtime.task_execution_state is not None or runtime.task_bootstrap is not None)
+            and (any(call['name'] in TASK_CONTROL_TOOLS for call in calls) or coverage_blocked(runtime) or pending_review(runtime) or (revision_blocked(runtime) and not (
+                phase_repair(runtime)
+                and all(c['name'] in SKILL_CONTROL_TOOLS for c in calls))))):
+        assistant = _assistant_tool_message(turn_text, source_calls)
+        if getattr(prepared, 'last_provider_output', None):
+            assistant['_dashscope_output'] = prepared.last_provider_output
+        if getattr(prepared, 'last_reasoning_content', ''):
+            assistant['reasoning_content'] = prepared.last_reasoning_content
+        await execute_control_batch(prepared=prepared, runtime=runtime, calls=calls,
+            assistant=assistant, blocks=blocks, turn=turn, next_model_round=next_model_round,
+            build_checkpoint=_build_replay_context, sink=sink,
+            repeated_tool_call_guard=repeated_tool_call_guard)
+        return None
+    if (runtime and (runtime.task_execution_state is not None or runtime.task_bootstrap is not None)
+            and any(call['name'] in SKILL_CONTROL_TOOLS for call in calls)):
+        # New task method selection reads pinned bodies but dispatches no
+        # business IO. Save the complete batch, rather than a pending assistant
+        # tool_calls checkpoint which a resumed model cannot consume safely.
+        import copy
+        saved_messages, saved_blocks = copy.deepcopy(prepared.messages), copy.deepcopy(blocks)
+        sequence = runtime.replay_save_sequence
+        assistant = _assistant_tool_message(turn_text, calls)
+        if getattr(prepared, 'last_provider_output', None):
+            assistant['_dashscope_output'] = prepared.last_provider_output
+        if getattr(prepared, 'last_reasoning_content', ''):
+            assistant['reasoning_content'] = prepared.last_reasoning_content
+        prepared.messages.append(assistant)
+        for call in calls:
+            if call['name'] not in SKILL_CONTROL_TOOLS:
+                blocks.append(build_running_step(call))
+        try:
+            await _execute_skill_batch(prepared=prepared, calls=calls, runtime=runtime,
+                blocks=blocks, sink=sink, start_times={}, turn=turn,
+                next_model_round=next_model_round, repeated_tool_call_guard=repeated_tool_call_guard)
+        except BaseException:
+            if runtime.replay_save_sequence == sequence:
+                prepared.messages[:] = saved_messages
+                blocks[:] = saved_blocks
+            raise
+        return None
+    coordination_error = None
+    task_blocked_names = frozenset()
+    plan_blockers = {}
+    image_operations, image_binding_errors = None, {}
+    if runtime and (runtime.task_execution_state is not None or runtime.task_bootstrap is not None):
+        from services.task_execution.methods import blocked_tool_names
+        from services.tools.catalog import build_capability_catalog
+        from services.task_execution.dispatch import plan_dispatch_blockers
+        catalog = build_capability_catalog()
+        task_blocked_names = blocked_tool_names(runtime.task_execution_state, catalog, runtime.skill_runtime)
+        plan_blockers = plan_dispatch_blockers(runtime.task_execution_state, catalog)
+        from services.task_execution.image_operations import prepare_image_operations
+        image_operations, image_binding_errors = prepare_image_operations(runtime,
+            [c for c in calls if c['name'] not in task_blocked_names and c['name'] not in plan_blockers], catalog)
+    if (runtime and runtime.skill_runtime is not None and runtime.skill_runtime.checkpoint_version == 2
+            and not any(c['name'] in SKILL_CONTROL_TOOLS for c in calls)):
+        from services.skills.contracts import SkillError
+        try:
+            runtime.skill_runtime.prepare_tool_action([c for c in calls
+                if c['name'] not in task_blocked_names and c['name'] not in plan_blockers
+                and c['id'] not in image_binding_errors])
+            _apply_skill_context(prepared, runtime.skill_runtime)
+        except SkillError as exc:
+            coordination_error = control_result(str(exc), state_unchanged=True,
+                conflicting_skills=list(getattr(exc, 'keys', ())))
     assistant = _assistant_tool_message(turn_text, calls)
     if getattr(prepared, "last_provider_output", None):
         assistant["_dashscope_output"] = prepared.last_provider_output
     if getattr(prepared, "last_reasoning_content", ""):
         assistant["reasoning_content"] = prepared.last_reasoning_content
-    prepared.messages.append(assistant)
+    if not assistant_already_present:
+        prepared.messages.append(assistant)
     await _sink_tool_calls(sink, [c for c in calls if c["name"] not in SKILL_CONTROL_TOOLS], turn + 1)
     start_times: dict[str, float] = {}
     for call in calls:
@@ -1018,7 +1398,44 @@ async def _execute_tools(
             blocks.append(block)
             await sink.on_block(block)
     guard = getattr(prepared, "image_arguments", None)
-    ready_calls, rejected = guard.filter_calls(calls) if guard else (calls, [])
+    recorded_recovery_ids = ({op.invocation_id for op in runtime.task_execution_state.operations
+        if op.tool_name == 'generate_image' and str(op.owner_task_id) == str(runtime.task_id)}
+        if recovery_only and runtime and runtime.task_execution_state is not None else set())
+    if coordination_error:
+        from services.agent.agent_result import AgentResult
+        message = skill_step(coordination_error, runtime.skill_runtime, step_id='action-coordination')['reason']
+        ready_calls = []
+        rejected = [(call, AgentResult(message, status='error', error_message=coordination_error['code']),
+                     True, message) for call in calls]
+    else:
+        if guard and recorded_recovery_ids:
+            fresh, rejected = guard.filter_calls([c for c in calls if c['id'] not in recorded_recovery_ids])
+            allowed = recorded_recovery_ids | {c['id'] for c in fresh}
+            ready_calls = [c for c in calls if c['id'] in allowed]
+        else:
+            ready_calls, rejected = guard.filter_calls(calls) if guard else (calls, [])
+    if task_blocked_names:
+        from services.agent.agent_result import AgentResult
+        message = '请先完成并保存所选方法要求的完整规划和逐图提示词，再执行图片生成。'
+        rejected.extend((call, AgentResult(message, status='error', error_message='TASK_PREREQUISITE_INCOMPLETE'),
+                         True, message) for call in ready_calls if call['name'] in task_blocked_names)
+        ready_calls = [call for call in ready_calls if call['name'] not in task_blocked_names]
+    if plan_blockers:
+        from services.agent.agent_result import AgentResult
+        from services.task_execution.dispatch import blocker_message
+        for call in ready_calls:
+            code = plan_blockers.get(call['name'])
+            if code:
+                message = blocker_message(code)
+                rejected.append((call, AgentResult(message, status='error', error_message=code), True, message))
+        ready_calls = [call for call in ready_calls if call['name'] not in plan_blockers]
+    if image_binding_errors:
+        from services.agent.agent_result import AgentResult
+        for call in ready_calls:
+            if call['id'] in image_binding_errors:
+                code, message = image_binding_errors[call['id']]
+                rejected.append((call, AgentResult(message, status='error', error_message=code), True, message))
+        ready_calls = [call for call in ready_calls if call['id'] not in image_binding_errors]
     ecom_arguments = getattr(prepared, "ecom_arguments", None)
     if ecom_arguments:
         ready_calls, ecom_rejected = ecom_arguments.filter_calls(ready_calls)
@@ -1038,12 +1455,14 @@ async def _execute_tools(
             if terminal:
                 handler._tool_result_stop_reason = message
     if guard:
-        guard.reserve_dispatch(ready_calls)
+        guard.reserve_dispatch([c for c in ready_calls if c['id'] not in recorded_recovery_ids])
         if guard.repair and guard.repair.get("dispatch_reserved") and runtime is None:
             raise RuntimeError("IMAGE_ARGUMENT_CORRECTION_CHECKPOINT_REQUIRED")
     if runtime:
         runtime.set_state(ConversationState.WAITING_TOOL)
-        if ((guard and guard.repair and guard.repair.get("dispatch_reserved"))
+        if (runtime.task_execution_state is not None
+                or (runtime.skill_runtime is not None and runtime.skill_runtime.checkpoint_version == 2)
+                or (guard and guard.repair and guard.repair.get("dispatch_reserved"))
                 or (ecom_arguments and ecom_arguments.state and ecom_arguments.state.get("dispatch_reserved"))):
             # Commit the paid correction boundary before any business IO. A
             # restart stops here; it cannot change the batch index/call ID.
@@ -1076,6 +1495,15 @@ async def _execute_tools(
         if block.get("type") == "tool_step" and block.get("tool_name") == "file_search"
         and block.get("status") == "completed"
     )
+    async def persist_workflow_binding(value):
+        workflow = getattr(prepared, 'ecom_workflow', None)
+        if workflow is None or runtime is None:
+            raise RuntimeError('SKILL_COMPOSITION_OWNER_UNAVAILABLE')
+        await workflow.commit_binding(value)
+        await runtime.safe_point(SafePoint.BEFORE_TOOL, replay_payload=_build_replay_context(
+            prepared.messages, blocks, turn, next_model_round=next_model_round,
+            repeated_tool_call_guard=repeated_tool_call_guard))
+
     results = await handler._execute_tool_calls(
         ready_calls,
         request.task_id,
@@ -1088,12 +1516,17 @@ async def _execute_tools(
         cancellation_event=cancellation_event,
         permission_mode=prepared.permission.mode.value,
         agent_domain=prepared.execution_context.agent_domain,
+        **({'task_image_operations': image_operations} if image_operations is not None else {}),
+        **({'recovery_only': True} if recovery_only else {}),
         **({"authorized_tool_names": prepared.execution_context.authorized_tool_names,
             "image_skill_snapshot": tuple({"skill_key": active.skill_key, "revision": active.revision,
                 "body_sha256": active.body_sha256, "rendered_sha256": active.rendered_sha256}
                 for active in runtime.skill_runtime.active.values())}
            if runtime and runtime.skill_runtime is not None and runtime.skill_runtime.has_active_skills
            else {}),
+        **({'image_composition': runtime.skill_runtime.checkpoint()['composition'],
+            'image_binding_writer': persist_workflow_binding}
+           if runtime and runtime.skill_runtime is not None and runtime.skill_runtime.checkpoint_version == 2 else {}),
     ) if ready_calls else []
     if rejected:
         by_call = {item[0]["id"]: item for item in [*results, *rejected]}
@@ -1113,6 +1546,11 @@ async def _execute_tools(
         and getattr(result, "metadata", {}).get("accepted") is True
         for call, result, is_error, _display in results
     )
+    from services.task_execution.image_binding import managed_image_task
+    managed_images = bool(runtime and managed_image_task(runtime.task_execution_state))
+    if managed_images:
+        from services.task_execution.image_binding import image_dependencies_waiting
+        handler._terminal_image_pending = image_dependencies_waiting(runtime.task_execution_state)
     if guard:
         guard.observe(results)
         if guard.stop_message:
@@ -1160,12 +1598,12 @@ async def _execute_tools(
         await runtime.safe_point(SafePoint.AFTER_TOOL)
         _inject_steer_messages(
             prepared.messages,
-            runtime.consume_steer_messages(),
+            runtime.consume_steer_messages(), prepared=prepared,
         )
     elif getattr(request, "steer_reader", None) is not None:
         steer_message = request.steer_reader()
         if steer_message:
-            prepared.messages.append({"role": "user", "content": steer_message})
+            _inject_steer_messages(prepared.messages, [steer_message], prepared=prepared)
     if repeated_tool_call_nudge:
         prepared.messages.append({
             "role": "user",
@@ -1179,17 +1617,25 @@ async def _execute_tools(
         context_window=getattr(getattr(prepared, "model_gateway", None), "effective_context_window", None),
     )
     if runtime:
-        await runtime.safe_point(
-            SafePoint.AFTER_TOOL,
-            replay_payload=_build_replay_context(
-                prepared.messages,
-                blocks,
-                turn,
-                tool_call_ids=[call["id"] for call in calls],
-                next_model_round=next_model_round,
-                repeated_tool_call_guard=repeated_tool_call_guard,
-            ),
-        )
+        from services.task_execution.scheduled_operations import pending_schedule
+        waiting_schedule=pending_schedule(runtime.task_execution_state,force=bool(
+            getattr(handler,'_terminal_form_pending',False) or getattr(handler,'_terminal_change_set_pending',False)))
+        from services.task_execution.video_operations import pending as pending_video
+        waiting_video=pending_video(runtime.task_execution_state)
+        if (managed_images and handler._terminal_image_pending) or waiting_schedule or waiting_video:
+            from services.task_execution.contracts import TaskState
+            from services.task_execution.model_bridge import commit_projection
+            current = runtime.task_execution_state
+            candidate = TaskState.model_validate({**current.model_dump(), 'revision': current.revision + 1,
+                'status': 'waiting_dependencies' if (managed_images and handler._terminal_image_pending) or waiting_video else 'waiting_approval'})
+            await commit_projection(runtime=runtime, candidate=candidate, prepared=prepared, blocks=blocks,
+                point=SafePoint.AFTER_TOOL, build_checkpoint=_build_replay_context, turn=turn,
+                next_model_round=next_model_round, tool_call_ids=[call['id'] for call in calls],
+                repeated_tool_call_guard=repeated_tool_call_guard)
+        else:
+            await runtime.safe_point(SafePoint.AFTER_TOOL, replay_payload=_build_replay_context(
+                prepared.messages, blocks, turn, tool_call_ids=[call['id'] for call in calls],
+                next_model_round=next_model_round, repeated_tool_call_guard=repeated_tool_call_guard))
     logger.info(
         f"Headless tool turn complete | task={request.task_id} | "
         f"turn={turn + 1} | tools={[call['name'] for call in calls]}"
@@ -1198,7 +1644,6 @@ async def _execute_tools(
 
 
 def _apply_skill_context(prepared: Any, skills: Any) -> None:
-    skills.ensure_messages(prepared.messages)
     if not getattr(prepared, "skill_host_scope_captured", False):
         prepared.skill_host_scope_captured = True
         prepared.skill_host_authorized_tool_names = prepared.execution_context.authorized_tool_names
@@ -1206,7 +1651,7 @@ def _apply_skill_context(prepared: Any, skills: Any) -> None:
         prepared.skill_context_applied = True
         current = prepared.skill_host_authorized_tool_names
         if current is not None:
-            skills.effective_allowed_tool_names &= current
+            skills.restrict_tools(current)
         snapshot = dict(prepared.execution_context.authorization_snapshot)
         if skills.scheduled_snapshot is not None:
             required = set(snapshot.get("required_permissions") or ())
@@ -1220,17 +1665,79 @@ def _apply_skill_context(prepared: Any, skills: Any) -> None:
         if prepared.execution_context.execution_mode == "interactive":
             # Registry/Policy still filter this already authorized ceiling.
             prepared.tool_context.discovered_tools.update(skills.effective_allowed_tool_names)
+    skills.ensure_messages(prepared.messages)
 
 
-async def _execute_skill_batch(
+async def _execute_skill_batch(**kwargs) -> None:
+    """Do not expose staged state if preparation or persistence fails."""
+    import copy
+    runtime, prepared = kwargs['runtime'], kwargs['prepared']
+    original = runtime.skill_runtime if runtime else None
+    original_task = runtime.task_execution_state if runtime else None
+    save_sequence = runtime.replay_save_sequence if runtime else 0
+    messages = copy.deepcopy(prepared.messages)
+    blocks = copy.deepcopy(kwargs['blocks'])
+    context = prepared.execution_context
+    discovered = set(prepared.tool_context.discovered_tools)
+    workflow = getattr(prepared, 'ecom_workflow', None)
+    old_workflow = {name: copy.deepcopy(getattr(workflow, name))
+                    for name in ('value', 'route', '_coordinated') if hasattr(workflow, name)}
+    request_params = getattr(getattr(workflow, 'request', None), 'params', None)
+    old_params = copy.deepcopy(request_params) if request_params is not None else None
+    context_flags = {name: getattr(prepared, name) for name in (
+        'skill_host_scope_captured', 'skill_host_authorized_tool_names', 'skill_context_applied')
+        if hasattr(prepared, name)}
+    projection = copy.deepcopy(getattr(runtime, 'workflow_projection', None)) if runtime else None
+    try:
+        await _execute_skill_batch_impl(**kwargs)
+    except BaseException:
+        if (runtime and (original_task is not None or runtime.task_bootstrap is not None)
+                and runtime.replay_save_sequence != save_sequence):
+            # Commands may stop execution after the new projection was saved.
+            # Keep its task facts, Skill facts and closed call/result pairs.
+            raise
+        if runtime:
+            runtime.skill_runtime = original
+            runtime.task_execution_state = original_task
+            runtime.workflow_projection = projection
+        prepared.messages[:] = messages
+        kwargs['blocks'][:] = blocks
+        prepared.execution_context = context
+        prepared.tool_context.discovered_tools.clear()
+        prepared.tool_context.discovered_tools.update(discovered)
+        if workflow is not None:
+            for name in ('value', 'route', '_coordinated'):
+                if name in old_workflow:
+                    setattr(workflow, name, old_workflow[name])
+                elif hasattr(workflow, name):
+                    delattr(workflow, name)
+        if request_params is not None:
+            request_params.clear()
+            request_params.update(old_params)
+        for name in ('skill_host_scope_captured', 'skill_host_authorized_tool_names', 'skill_context_applied'):
+            if name in context_flags:
+                setattr(prepared, name, context_flags[name])
+            elif hasattr(prepared, name):
+                delattr(prepared, name)
+        raise
+
+
+async def _execute_skill_batch_impl(
     *, prepared, calls, runtime, blocks, sink, start_times, turn,
     next_model_round, repeated_tool_call_guard,
 ) -> None:
     """Whole model batch barrier, including invalid/disabled activations."""
     skills = runtime.skill_runtime if runtime else None
+    original_skills = skills
+    save_sequence = runtime.replay_save_sequence if runtime else 0
+    if skills is not None and hasattr(skills, 'staged'):
+        skills = skills.staged()
+        runtime.skill_runtime = skills
     results = []
     skill_blocks = []
-    for call in calls:
+    ordered_calls = skills.ordered_control_calls(calls) if skills is not None else calls
+    for call in ordered_calls:
+        key = None
         if call["name"] not in SKILL_CONTROL_TOOLS:
             result = control_result("SKILL_ACTIVATION_BARRIER", message="请下一轮重新请求")
         elif prepared.execution_context.execution_mode in {"scheduled", "preflight"}:
@@ -1244,19 +1751,40 @@ async def _execute_skill_batch(
             except (ValueError, TypeError, KeyError):
                 key = None
             if call["name"] == DEACTIVATE_SKILL:
-                if workflow and workflow.value and workflow.value.kind == "main_images" and key == "ecommerce-main-images":
+                task_state = runtime.task_execution_state
+                bound = next((b for b in task_state.method_bindings if b.skill_key == key), None) if task_state else None
+                if bound is not None:
+                    result = control_result('TASK_METHOD_PHASE_BOUND', message='当前方法仍关联任务交付，请先完成该阶段。')
+                elif (workflow and workflow.value and workflow.value.kind == "main_images"
+                        and key in {workflow.server_skill_key(), workflow.value.skill.get('skill_key')}):
                     result = control_result("SKILL_BINDING_LOCKED")
                 else:
                     old_messages = skills.messages()
                     result = await skills.deactivate(call.get("arguments", ""))
                     if result["ok"]:
                         prepared.messages[:] = [m for m in prepared.messages if m not in old_messages]
-            elif key == "ecommerce-main-images" and workflow and not await workflow.allows_planning():
+            elif (key == "ecommerce-main-images" and workflow
+                    and skills.workflow_method('image.planning') != 'ecommerce.inline'
+                    and not await workflow.allows_planning()):
                 result = control_result("SKILL_ROUTING_UNAVAILABLE" if workflow.route and workflow.route["kind"] == "unavailable" else "SKILL_NOT_APPLICABLE",
                     message="电商策划路由暂不可用。" if workflow.route and workflow.route["kind"] == "unavailable" else "当前任务不需要电商策划；已有提示词直接生图，必要时使用聊天图片编排方法。")
             else:
-                result = await skills.activate(call.get("arguments", ""))
-        if call["name"] == ACTIVATE_SKILL:
+                from services.task_execution.methods import completed_phase_bindings
+                retired = ({b.skill_key for b in completed_phase_bindings(runtime.task_execution_state)}
+                           if runtime.task_execution_state is not None else set())
+                if key in retired:
+                    result = control_result('TASK_METHOD_PHASE_COMPLETED',
+                        message='该方法阶段已经交付，请复用已保存的完整成果继续后续步骤。')
+                else:
+                    result = await skills.activate(call.get("arguments", ""))
+                    if result.get('ok') and runtime.task_execution_state is not None:
+                        from services.task_execution.methods import append_active_methods
+                        runtime.task_execution_state = append_active_methods(runtime.task_execution_state, skills,
+                            activated_skill_id=result['skill_id'])
+                        result = {**result, 'task_revision': runtime.task_execution_state.revision}
+        optional_conflict = (result.get('code') in {'SKILL_WORKFLOW_CONFLICT', 'SKILL_DEPENDENCY_UNAVAILABLE'}
+            and skills is not None and key != skills.manual_skill_id and key not in skills.session_skill_ids)
+        if call["name"] == ACTIVATE_SKILL and not optional_conflict:
             skill_blocks.append(skill_step(result, skills, step_id=call["id"]))
         text = json.dumps(result, ensure_ascii=False)
         results.append((call, text, not result["ok"], text))
@@ -1267,18 +1795,31 @@ async def _execute_skill_batch(
     blocks.extend(skill_blocks)
     if skills is not None:
         _apply_skill_context(prepared, skills)
+        workflow = getattr(prepared, 'ecom_workflow', None)
+        if workflow and hasattr(workflow, 'coordinate'):
+            await workflow.coordinate(skills)
+            await workflow.activated()
     if runtime:
         # Save completed call/result pairs, rendered text and scope atomically
         # before pause/cancel reduction or any external delivery can interrupt.
-        await runtime.safe_point(
-            SafePoint.AFTER_SKILL_ACTIVATION,
-            replay_payload=_build_replay_context(
-                prepared.messages, blocks, turn, tool_call_ids=[c["id"] for c in calls],
-                next_model_round=next_model_round,
-                repeated_tool_call_guard=repeated_tool_call_guard,
-            ),
-        )
-        _inject_steer_messages(prepared.messages, runtime.consume_steer_messages())
+        try:
+            await runtime.safe_point(
+                SafePoint.AFTER_SKILL_ACTIVATION,
+                replay_payload=_build_replay_context(
+                    prepared.messages, blocks, turn, tool_call_ids=[c["id"] for c in calls],
+                    next_model_round=next_model_round,
+                    repeated_tool_call_guard=repeated_tool_call_guard,
+                ),
+            )
+        except BaseException:
+            if ((runtime.task_execution_state is None and runtime.task_bootstrap is None)
+                    or runtime.replay_save_sequence == save_sequence):
+                runtime.skill_runtime = original_skills
+            raise  # No business IO may follow an unconfirmed composition save.
+        if original_skills is not None and skills is not original_skills:
+            original_skills.adopt(skills)
+            runtime.skill_runtime = original_skills
+        _inject_steer_messages(prepared.messages, runtime.consume_steer_messages(), prepared=prepared)
     for block in skill_blocks:
         await sink.on_block(block)
     call_ids = {call["id"] for call in calls}
@@ -1467,9 +2008,6 @@ async def _apply_budget_stop(
         reason=stop_message(prepared.budget.stop_reason),
     )
     if synthesis:
-        run=getattr(prepared,'knowledge_grounding_run',None)
-        if run is not None:
-            synthesis=await _verify_knowledge_answer(run,synthesis,getattr(prepared,'text_content',''),totals.usage,cancellation_event or asyncio.Event(),runtime,other_tools=_completed_other_tools(blocks))
         totals.text = synthesis
         block = {"type": "text", "text": synthesis}
         blocks.append(block)
@@ -1553,10 +2091,44 @@ async def _sink_tool_calls(
 def _inject_steer_messages(
     messages: list[dict[str, Any]],
     steer_messages: list[str],
+    *, prepared=None,
 ) -> None:
+    if prepared is not None and any(steer_messages):
+        prepared.knowledge_steer_pending = True
+        prepared.knowledge_pending_directives = [
+            *getattr(prepared, 'knowledge_pending_directives', []),
+            *(message for message in steer_messages if message),
+        ]
     for message in steer_messages:
         if message:
             messages.append({"role": "user", "content": message})
+
+
+async def _refresh_knowledge_after_steer(handler, request, prepared):
+    if not getattr(prepared, 'knowledge_steer_pending', False):
+        return
+    # Only authenticated runtime directives change the question. Attachment
+    # locators, preferences and other rendered packets are not directives.
+    directives = getattr(prepared, 'knowledge_pending_directives', [])
+    question = directives[-1] if directives else ''
+    prepared.knowledge_question = question or getattr(prepared, 'text_content', '')
+    if getattr(prepared, 'knowledge_input_facts', None) is not None:
+        from dataclasses import replace
+        prepared.knowledge_input_facts = replace(prepared.knowledge_input_facts,
+            question=prepared.knowledge_question, changed=True)
+    candidates = getattr(prepared, 'knowledge_candidates', None)
+    if candidates is not None:
+        await candidates.close()
+        prepared.knowledge_candidates = None
+        if getattr(handler, '_knowledge_candidates', None) is candidates:
+            handler._knowledge_candidates = None
+    # Actual bound knowledge remains bound. A new directive alone never creates
+    # a default audit guard or starts an automatic knowledge tool chain.
+    if getattr(prepared, 'knowledge_answer_plan', None):
+        from services.knowledge_workspace.answer_plan import invalidate_for_steer
+        invalidate_for_steer(prepared, handler._knowledge_run)
+    prepared.knowledge_steer_pending = False
+    prepared.knowledge_pending_directives = []
 
 
 def _last_tool_output(blocks: list[dict[str, Any]]) -> str:

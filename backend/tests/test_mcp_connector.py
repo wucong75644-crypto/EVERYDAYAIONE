@@ -531,7 +531,7 @@ async def test_skill_mcp_actor_pause_resume_audit_end_to_end(enabled, setup, mon
 
     store = InvocationStore()
     harness = actor_harness(store)
-    checkpoint = AsyncMock(return_value={})
+    checkpoint = AsyncMock(return_value={"outcome": "saved"})
     actor = ConversationTurnRuntime(conversation_id='c1', task_id='task1', turn_id='turn',
         cancellation_event=asyncio.Event(), replay_checkpoint_callback=checkpoint)
     actor.skill_runtime = skill

@@ -33,6 +33,7 @@ _BLOCKED_NAMES = frozenset({
     "credentials.json", "service_account.json",
     "id_rsa", "id_ed25519", "authorized_keys",
     ".ssh", ".gnupg", ".aws", ".docker",
+    ".agent-task-effects",  # Host-owned recovery snapshots, never user file targets.
 })
 
 # 禁止访问的文件扩展名

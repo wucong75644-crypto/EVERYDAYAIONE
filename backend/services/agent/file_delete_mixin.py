@@ -43,6 +43,14 @@ class FileDeleteMixin:
             return AgentResult(summary=str(error), status="error", error_message=str(error),
                                metadata={"retryable": False})
 
+        resume=getattr(operation,'_native_delete_resume',None)
+        if resume is not None:
+            from services.task_execution.file_delete_resume import execute_remaining
+            return await execute_remaining(executor,operation,resume)
+        from services.task_execution.file_deletions import prepare,delete
+        session=await prepare(self,args,operation)
+        if session is not None:return await delete(executor,operation,session)
+
         # 整批校验结束后才执行。保留 OSS 副本和原恢复记录，不能改用
         # FileExecutor.file_delete（它会立即删除 OSS，破坏 30 天恢复）。
         deleted = []
@@ -91,6 +99,9 @@ class FileDeleteMixin:
 
         from services.tools.file_calls import active_file_call
         prepared = active_file_call("restore_file")
+        from services.task_execution.file_restores import prepare,restore
+        session=await prepare(self,args,prepared)
+        if session is not None:return await restore(self,executor,prepared,session)
         filename = args.get("filename", "").strip()
         if not filename and not args.get("record_id"):
             return AgentResult(
@@ -175,9 +186,10 @@ class FileDeleteMixin:
                         """
                         SELECT id, relative_path, oss_object_key
                         FROM deleted_files
-                        WHERE org_id = %(org_id)s
+                        WHERE org_id IS NOT DISTINCT FROM %(org_id)s
                           AND user_id = %(user_id)s
                           AND NOT purged
+                          AND COALESCE(to_jsonb(deleted_files)->>'native_status','completed')='completed'
                           AND purge_after > now()
                           AND ((%(record_id)s::bigint IS NOT NULL AND id = %(record_id)s::bigint)
                             OR (%(record_id)s::bigint IS NULL AND (relative_path = %(name)s

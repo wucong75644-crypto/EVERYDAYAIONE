@@ -11,6 +11,7 @@ import asyncio
 from datetime import datetime
 
 from loguru import logger
+from services.kuaimai.session_rotations import rotation_recorder
 
 
 from core.config import get_settings
@@ -222,6 +223,7 @@ class ErpSyncWorker:
                         refresh_token=creds["kuaimai_refresh_token"],
                         org_id=org_id,
                         token_persister=_persist,
+                        token_rotation_recorder=rotation_recorder(self.db,org_id),
                     )
                     await client.load_cached_token()  # 从 Redis 拿最新热缓存
                     orgs.append((org_id, client))

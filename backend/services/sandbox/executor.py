@@ -89,6 +89,7 @@ class SandboxExecutor:
         skills_dir: str = "",
         user_id: str = "",
         org_id: Optional[str] = None,
+        managed_task: bool = False,
     ) -> None:
         self._timeout = timeout
         self._max_result_chars = max_result_chars
@@ -100,6 +101,33 @@ class SandboxExecutor:
         self._conversation_id = conversation_id
         self._user_id = user_id              # 给 emit_file/image 上传 OSS 用
         self._org_id = org_id                # 给 emit_file/image 上传 OSS 用
+        self._managed_task=managed_task
+        self._kernel_reply=None
+        self._code_submitted=False
+
+    def _execution_metadata(self,code,*,not_started=False):
+        if not self._managed_task:return {}
+        import hashlib
+        checksum=hashlib.sha256(code.encode()).hexdigest()
+        reply=self._kernel_reply or {}
+        finished=reply.get('code_sha256')==checksum and reply.get('status') in {'ok','error'}
+        return {'code_execution':{'code_sha256':checksum,'phase':'not_started' if not_started or not self._code_submitted else 'finished' if finished else 'unknown',
+            'kernel_status':reply.get('status'),'request_id':reply.get('request_id')}}
+
+    def _fingerprint_managed_outputs(self,payloads):
+        from services.file_executor import FileExecutor
+        from services.file_resources import content_digest,file_version
+        from pathlib import Path
+        files=FileExecutor(self._workspace_dir,create_root=False)
+        for payload in payloads:
+            if payload.get('kind') not in {'file','image'}:continue
+            target=files.resolve_safe_path(payload.get('workspace_path') or payload.get('path',''))
+            if target.name!=payload.get('name') or target.stat().st_size!=payload.get('size'):
+                raise ValueError('SANDBOX_OUTPUT_CHANGED')
+            version=file_version(target);checksum=content_digest(target)
+            if file_version(target)!=version:raise ValueError('SANDBOX_OUTPUT_CHANGED')
+            payload.update(workspace_path=target.relative_to(Path(files.workspace_root)).as_posix(),
+                content_sha256=checksum,file_version=list(version))
 
     async def execute(
         self, code: str, description: str = "",
@@ -124,12 +152,14 @@ class SandboxExecutor:
         """
         # 1. AST 安全验证(主进程,快速拦截)
         error = validate_code(code)
+        self._kernel_reply=None
+        self._code_submitted=False
         if error:
             return AgentResult(
                 summary=f"代码验证失败:\n{error}",
                 status="error",
                 error_message=error,
-                metadata={"retryable": True},
+                metadata={"retryable": True,**self._execution_metadata(code,not_started=True)},
             )
 
         logger.info(
@@ -158,7 +188,7 @@ class SandboxExecutor:
                 status="error",
                 error_message=stdout,
                 emit_payloads=payloads,  # 半成品产物仍透传
-                metadata={"retryable": True},
+                metadata={"retryable": True,**self._execution_metadata(code)},
             )
         if is_timeout:
             return AgentResult(
@@ -166,6 +196,7 @@ class SandboxExecutor:
                 status="timeout",
                 error_message=stdout,
                 emit_payloads=payloads,
+                metadata=self._execution_metadata(code),
             )
 
         # 4. file/image 类 payload 上传 OSS(原地写回 url/workspace_path)
@@ -182,6 +213,9 @@ class SandboxExecutor:
         auto_payloads = await self._auto_emit_missed(snapshot_before, payloads)
         if auto_payloads:
             payloads.extend(auto_payloads)
+        if self._managed_task and payloads:
+            from services.workspace_coordination import finish_file_io
+            await finish_file_io(self._fingerprint_managed_outputs,payloads)
 
         # 6. stdout 追加占位提示(让 LLM 知道产物已生成,不要重复 emit)
         summary = _append_emit_hints(stdout, payloads)
@@ -190,6 +224,7 @@ class SandboxExecutor:
             summary=summary,
             status="success",
             emit_payloads=payloads,
+            metadata=self._execution_metadata(code),
         )
 
     async def _execute_code(self, code: str) -> tuple[str, list[dict[str, Any]]]:
@@ -220,14 +255,21 @@ class SandboxExecutor:
                         "沙盒内核启动失败,请稍后重试", retryable=True,
                     ), []
 
+                options={'response_observer':lambda value:setattr(self,'_kernel_reply',value)} if self._managed_task else {}
+                before=getattr(self,'_before_managed_submit',None)
+                if self._managed_task and before is not None:
+                    async def authorize():
+                        await before()
+                        self._code_submitted=True
+                    options['before_dispatch']=authorize
+                else:self._code_submitted=True
                 status, stdout, payloads = await self._kernel_manager.execute(
-                    self._conversation_id, code, self._timeout,
-                )
+                    self._conversation_id, code, self._timeout,**options)
 
                 if status != "crashed":
                     return stdout, payloads
 
-                if attempt == 0:
+                if attempt == 0 and not self._managed_task:
                     logger.warning("Kernel 崩溃,尝试重建 | conv={}",
                                    self._conversation_id[:8])
                     await self._kernel_manager.destroy(self._conversation_id)

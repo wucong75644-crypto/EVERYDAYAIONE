@@ -45,7 +45,7 @@ class SkillBindingRepository(SkillRepository):
             cursor.execute("""SELECT id, package_id, revision_id FROM public.conversation_skill_bindings
                 WHERE conversation_id = %s AND skill_key = %s""", (conversation_id, candidate.skill_key))
             existing = cursor.fetchone()
-            cursor.execute("""SELECT r.id FROM public.skill_revisions r
+            cursor.execute("""SELECT r.id,r.body_sha256 FROM public.skill_revisions r
                 JOIN public.skill_packages p ON p.id = r.package_id
                 LEFT JOIN LATERAL (SELECT * FROM public.skill_assignments
                     WHERE package_id=p.id AND (org_id=%s::uuid OR org_id IS NULL)
@@ -63,6 +63,27 @@ class SkillBindingRepository(SkillRepository):
                 if existing["package_id"] != candidate.package_id or existing["revision_id"] != revision["id"]:
                     raise SkillError("SKILL_BINDING_CONFLICT")
                 return existing["id"]
+            cursor.execute('''SELECT p.id AS package_id,p.skill_key,r.revision,
+                    r.catalog_metadata,r.body_sha256 FROM public.conversation_skill_bindings b
+                JOIN public.skill_packages p ON p.id=b.package_id
+                JOIN public.skill_revisions r ON r.id=b.revision_id
+                WHERE b.conversation_id=%s AND b.org_id IS NOT DISTINCT FROM %s::uuid''',
+                (conversation_id, self.scope.org_id))
+            from types import SimpleNamespace
+            from services.skills.contracts import SkillCatalogMetadata
+            from services.skills.coordination import Participant, validate_configuration
+            from services.skills.workflow_contracts import contract_for
+            participants = []
+            for row in cursor.fetchall():
+                old = SimpleNamespace(package_id=row['package_id'],skill_key=row['skill_key'],
+                    revision=row['revision'],catalog_metadata=SkillCatalogMetadata.model_validate(row['catalog_metadata']))
+                participants.append(Participant(package_id=str(old.package_id),skill_key=old.skill_key,
+                    revision=old.revision,body_sha256=row['body_sha256'],sources=('session',),
+                    contract=contract_for(old,row['body_sha256'])))
+            participants.append(Participant(package_id=str(candidate.package_id),skill_key=candidate.skill_key,
+                revision=candidate.revision,body_sha256=revision['body_sha256'],sources=('session',),
+                contract=contract_for(candidate,revision['body_sha256'])))
+            validate_configuration(participants)
             cursor.execute("""INSERT INTO public.conversation_skill_bindings
                 (conversation_id, org_id, package_id, revision_id, skill_key, created_by)
                 VALUES (%s, %s, %s, %s, %s, %s) RETURNING id""",

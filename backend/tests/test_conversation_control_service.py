@@ -78,3 +78,14 @@ def test_execute_pause_delegates_to_existing_actor_control(monkeypatch):
     assert result["action"] == "pause"
     assert result["outcome"] == "requested"
     assert result["client_task_id"] == "client-task-1"
+
+
+def test_control_result_keeps_actual_continuation_identity(monkeypatch):
+    task=_task()
+    tasks=load_control_tasks(_DB([task]),conversation_id='conv-1',user_id='user-1',org_id='org-1')
+    monkeypatch.setattr('services.conversation_control_service.pause_actor_task',Mock(return_value={
+        'outcome':'requested','task_id':'continuation','client_task_id':'current-gate',
+        'assistant_message_id':'current-output'}))
+    result=execute_control_action(_DB([]),tasks=tasks,action=ControlAction.PAUSE,user_id='user-1',org_id='org-1')
+    assert result['task_id']=='continuation' and result['client_task_id']=='current-gate'
+    assert result['assistant_message_id']=='current-output'

@@ -1,0 +1,43 @@
+SET LOCAL ROLE everydayai;
+DO $$ DECLARE task_force boolean; journal_force boolean; BEGIN
+ SELECT relforcerowsecurity INTO task_force FROM pg_class WHERE oid='public.tasks'::regclass;
+ SELECT relforcerowsecurity INTO journal_force FROM pg_class WHERE oid='public.agent_task_native_writes'::regclass;
+ ALTER TABLE public.tasks NO FORCE ROW LEVEL SECURITY;
+ ALTER TABLE public.agent_task_native_writes NO FORCE ROW LEVEL SECURITY;
+ IF EXISTS(SELECT 1 FROM public.tasks WHERE request_params ? '_agent_video_request_v1')
+   OR EXISTS(SELECT 1 FROM public.agent_task_native_writes WHERE domain='video') THEN
+   RAISE EXCEPTION 'AGENT_VIDEO_TASKS_NOT_DRAINED'; END IF;
+ IF task_force THEN ALTER TABLE public.tasks FORCE ROW LEVEL SECURITY; END IF;
+ IF journal_force THEN ALTER TABLE public.agent_task_native_writes FORCE ROW LEVEL SECURITY; END IF;
+END $$;
+RESET ROLE;
+SET LOCAL ROLE everydayai_owner;
+DROP FUNCTION public.read_agent_task_video(uuid,uuid,uuid,bigint,text);
+DROP FUNCTION public.agent_task_video_rejection_verified(jsonb);
+DROP FUNCTION public.ack_agent_video_delivery(uuid,uuid);
+DROP FUNCTION public.scan_agent_video_work(uuid,timestamptz,uuid,int);
+DROP FUNCTION public.publish_agent_video(uuid,jsonb,text,text,boolean,uuid);
+DROP FUNCTION public.record_agent_video_output(uuid,jsonb,uuid);
+DROP FUNCTION public.fail_agent_video_before_dispatch(uuid,uuid,text,uuid);
+DROP FUNCTION public.record_agent_video_result(uuid,text,jsonb,uuid);
+DROP FUNCTION public.mark_agent_video_uncertain(uuid,uuid,int,uuid);
+DROP FUNCTION public.bind_agent_video_submission(uuid,uuid,text,uuid);
+DROP FUNCTION public.mark_agent_video_dispatch(uuid,uuid,uuid);
+DROP FUNCTION public.agent_video_submission_gate(uuid,uuid);
+DROP FUNCTION public.claim_agent_video_submission(uuid,uuid,int,uuid);
+DROP FUNCTION public.accept_agent_video_request(uuid,uuid,jsonb,uuid);
+RESET ROLE;
+SET LOCAL ROLE everydayai;
+DROP TRIGGER agent_video_snapshot ON public.tasks;
+DROP FUNCTION public.guard_agent_video_snapshot();
+RESET ROLE;
+SET LOCAL ROLE everydayai_owner;
+DROP FUNCTION public.assert_agent_video_worker_task(uuid,uuid);
+RESET ROLE;
+SET LOCAL ROLE everydayai;
+DROP INDEX public.agent_video_queue;
+DROP INDEX public.agent_video_one_call;
+DROP POLICY agent_video_worker_source_read ON public.agent_task_states;
+ALTER TABLE public.agent_task_native_writes DROP CONSTRAINT agent_task_native_writes_domain_check;
+ALTER TABLE public.agent_task_native_writes ADD CONSTRAINT agent_task_native_writes_domain_check CHECK(domain IN ('erp','file'));
+RESET ROLE;

@@ -52,13 +52,18 @@ def active_writers():
     return sorted(set(writers))
 
 
-def validate_manifest(app, manifest):
+def validate_manifest(app, manifest, *, allow_absent=False):
     require(bool(manifest), 'Failed candidate source manifest is empty')
     for name, expected in manifest.items():
         path = Path(name)
         require(name.startswith(('backend/', 'deploy/')) and '..' not in path.parts
                 and not path.is_absolute() and not any(p.startswith('.env') or p == 'config.env' for p in path.parts), 'Unsafe evidence path')
         target = app / path
+        if allow_absent and expected is None:
+            require(not target.exists() and not target.is_symlink()
+                    and target.parent.resolve().is_relative_to(app.resolve()),
+                    'Pre-mutation candidate file already exists: ' + name)
+            continue
         require(not target.is_symlink() and target.is_file() and target.resolve().is_relative_to(app.resolve()), 'Failed candidate file missing or unsafe: ' + name)
         require(hashlib.sha256(target.read_bytes()).hexdigest() == expected,
                 'Production differs from the identified failed candidate: ' + name)
@@ -100,11 +105,28 @@ def recover(owner, failed_commit, branch, manifest, app=APP):
         fcntl.flock(migration, fcntl.LOCK_EX | fcntl.LOCK_NB)
         require(not active_writers(), 'Deployment writer still active')
         marker = app / '.release-provenance'
-        if marker.exists():
+        pre_mutation = manifest.get('recovery_mode') == 'pre_mutation'
+        proof = manifest if pre_mutation else None
+        files = proof['files'] if proof else manifest
+        if pre_mutation:
+            require(attempt.exists(), 'Pre-mutation recovery requires the recorded attempt')
+            require(re.fullmatch(r'[a-f0-9]{40}', proof.get('previous_commit', '')),
+                    'Previous production commit missing')
+            local_log = proof.get('local_log', {})
+            require(re.fullmatch(r'[a-f0-9]{64}', local_log.get('sha256', ''))
+                    and local_log.get('stages') in (['preflight'], ['preflight','tests_and_build']),
+                    'Pre-mutation stage evidence invalid')
+            require(marker.is_file() and not marker.is_symlink(), 'Previous provenance missing')
+            fields = dict(line.split('=', 1) for line in marker.read_text().splitlines() if '=' in line)
+            require(fields.get('commit') == proof['previous_commit'], 'Production changed since pre-mutation failure')
+        elif marker.exists():
             fields = dict(line.split('=', 1) for line in marker.read_text().splitlines() if '=' in line)
             require(fields.get('source') == branch, 'Another task has production provenance; do not recover it')
-        validate_manifest(app, manifest)
+        validate_manifest(app, files, allow_absent=pre_mutation)
         ledger = database_snapshot(app)
+        if pre_mutation:
+            require(not any(path in files and files[path] is None for path, _ in ledger),
+                    'Failed candidate migration was already applied')
         for unit in ('everydayai-backend','everydayai-sync','everydayai-wecom','everydayai-conversation-actor','nginx'):
             require(subprocess.run(['systemctl','is-active','--quiet',unit]).returncode == 0, 'Service not active: ' + unit)
         require(subprocess.run(['curl','--fail','--silent','--max-time','10','-o','/dev/null',
@@ -113,8 +135,11 @@ def recover(owner, failed_commit, branch, manifest, app=APP):
         evidence = app / '.incident-evidence' / ('release-recovery-' + stamp + '-' + owner)
         evidence.mkdir(parents=True, mode=0o700)
         with tarfile.open(evidence / 'files.tar.gz', 'w:gz') as archive:
-            for name in manifest:
-                archive.add(app / name, arcname=name, recursive=False)
+            for name in files:
+                if (app / name).is_file():
+                    archive.add(app / name, arcname=name, recursive=False)
+            if marker.exists():
+                archive.add(marker, arcname='.release-provenance', recursive=False)
             if (app / 'frontend').is_dir():
                 archive.add(app / 'frontend', arcname='frontend')
         receipt = dict(owner=owner, failed_commit=failed_commit, source=branch,

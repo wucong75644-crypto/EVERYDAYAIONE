@@ -50,6 +50,7 @@ def test_runtime_version_checks_are_exact_and_environment_isolated(tmp_path,monk
 
 def test_invalid_write_action_and_world_readable_media_rejected(tmp_path):
     media=tmp_path/'media'; media.mkdir(mode=0o755)
+    media.chmod(0o755)  # Exercise the unsafe mode independently of release umask.
     report=configuration_checks(settings(tmp_path,agent_reach_write_actions='twitter:create_post,github:create_post'),{'twitter','github'})
     assert any(row['name']=='write_action' and row['state']=='blocked' for row in report)
     assert next(row for row in report if row['name']=='media.directory')['state']=='blocked'

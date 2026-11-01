@@ -152,6 +152,7 @@ class ConversationWorker:
         concurrency: int = 5,
         scan_batch_size: int = 100,
         shutdown_timeout_seconds: float = 10,
+        continuation_consumer=None,
     ) -> None:
         if scan_interval_seconds <= 0:
             raise ValueError("scan_interval_seconds must be positive")
@@ -160,6 +161,7 @@ class ConversationWorker:
         if shutdown_timeout_seconds <= 0:
             raise ValueError("shutdown_timeout_seconds must be positive")
         self._db = db
+        self._continuation_consumer = continuation_consumer
         self._execution = execution
         self._wakeup_bus = wakeup_bus
         self._scan_interval = scan_interval_seconds
@@ -219,6 +221,11 @@ class ConversationWorker:
             self._wake_event.set()
 
     async def scan_once(self) -> int:
+        if self._continuation_consumer is not None:
+            try:
+                await self._continuation_consumer.scan_once()
+            except Exception as error:
+                logger.warning('task_continuation_scan_failed | error={}',type(error).__name__)
         candidates = await self._load_candidates()
         for conversation_id, wake_generation in self._drain_wakeups():
             candidates.insert(

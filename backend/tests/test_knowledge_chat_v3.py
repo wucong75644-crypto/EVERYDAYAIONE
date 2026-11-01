@@ -205,7 +205,9 @@ async def test_plain_model_answer_and_evidence_survive_finalization(v3_db,monkey
     root=run.snapshot['roots'][0]['handle'];h=run.execute('outline',{'root_handle':root})['items'][0]['handle']
     source=run.execute('read',{'root_handle':root,'item_handles':[h]})['items'][0]['source']['url']
     async def stream(**kwargs):
-        yield SimpleNamespace(content='中文正文中的验收关键词',thinking_content=None,tool_calls=None,prompt_tokens=3,completion_tokens=2,credits_consumed=None,finish_reason='stop')
+        yield SimpleNamespace(content='中文正文中的',thinking_content=None,tool_calls=None,prompt_tokens=3,completion_tokens=0,credits_consumed=None,finish_reason=None)
+        assert sink.text=='中文正文中的'  # Actual native read, before model completion.
+        yield SimpleNamespace(content='验收关键词',thinking_content=None,tool_calls=None,prompt_tokens=0,completion_tokens=2,credits_consumed=None,finish_reason='stop')
     prepared=SimpleNamespace(execution_context=catalog_context('org-1'),adapter=SimpleNamespace(stream_chat=stream,close=AsyncMock()),
         permission=SimpleNamespace(mode=SimpleNamespace(value='auto'),need_exit_attachment=False,get_reminder=lambda _:''),
         core_tools=[],stream_kwargs={},tool_context=SimpleNamespace(discovered_tools=set(),build_context_prompt=lambda:''),messages=[],
@@ -224,8 +226,10 @@ async def test_plain_model_answer_and_evidence_survive_finalization(v3_db,monkey
     sink=CollectingExecutionSink();sink.flush=AsyncMock(side_effect=lambda:None)
     runtime=ConversationTurnRuntime(conversation_id='conv-1',task_id='task-1',turn_id='turn-1',cancellation_event=asyncio.Event())
     result=await execute_chat(handler=handler,request=_request(),runtime=runtime,sink=sink)
-    assert result.parts[0].text=='中文正文中的验收关键词'
-    assert len(audited)==1
+    assert [part.text for part in result.parts if part.type == 'text'][0]=='中文正文中的验收关键词'
+    assert result.parts[0].type == 'text'
+    assert not any(getattr(part,'tool_name',None)=='knowledge_answer_verification' for part in result.parts)
+    assert audited==[]
     assert source in result.parts[-1].text
     assert source in sink.text+json.dumps(sink.blocks,ensure_ascii=False)
     sink.flush.assert_awaited_once()
@@ -322,3 +326,195 @@ def test_application_and_runtime_roles_read_with_same_rls(v3_db,file_client,role
                 c.execute('SELECT id FROM kb_read_snapshots WHERE id=%s',(run.id,))
                 assert c.fetchone() is None
             with pytest.raises(AppException):KnowledgeRun.start(foreign,conversation_id=cid,input_message_id=mid)
+
+
+@pytest.fixture(scope='module')
+def current_snapshot_db(v3_db):
+    make, actors = v3_db
+    with psycopg.connect(**make.admin_args) as c:
+        for name in ('307_knowledge_branch_drag.sql', '308_knowledge_canvas_undo.sql'):
+            c.execute((Path(__file__).resolve().parents[1] / 'migrations' / name).read_text())
+    return make, actors
+
+
+def test_self_contained_default_skip_never_discards_explicit_refs_or_saved_snapshot(current_snapshot_db):
+    make, _ = current_snapshot_db
+    r = make()
+    obj = document(r)
+    # Persisted explicit refs outrank the host default-scope optimization.
+    explicit, mid, cid = start(make, r, [ref(obj)])
+    restored = KnowledgeRun.start(r, conversation_id=cid, input_message_id=mid, default_scope=False)
+    assert restored.id == explicit.id
+    # No refs and no saved snapshot: avoid the unrelated default corpus.
+    empty, mid2, cid2 = start(make, r, [])
+    assert empty is None
+    assert KnowledgeRun.start(r, conversation_id=cid2, input_message_id=mid2, default_scope=False) is None
+    # If a later instruction entered knowledge, subsequent recovery must restore
+    # that frozen snapshot even if the original input was self-contained.
+    run = KnowledgeRun.start(r, conversation_id=cid2, input_message_id=mid2, default_scope=True)
+    assert run is not None
+    replay = KnowledgeRun.start(r, conversation_id=cid2, input_message_id=mid2, default_scope=False)
+    assert replay.id == run.id
+
+
+@pytest.mark.asyncio
+async def test_real_runtime_host_scope_cannot_be_reopened_by_legacy_selector(current_snapshot_db, monkeypatch):
+    from types import SimpleNamespace
+    from core.config import get_settings
+    from services.handlers.context_snapshot import ContextAnchor
+    from services.knowledge_workspace.runtime import prepare_knowledge_run
+    settings = get_settings().model_copy(update={'knowledge_derivation_enabled': True, 'knowledge_default_scope_enabled': True})
+    monkeypatch.setattr('core.config.get_settings', lambda: settings)
+    monkeypatch.setattr('api.routes.knowledge.enabled', lambda ctx: True)
+    make, _ = current_snapshot_db
+    r = make()
+    r.initialize()
+    document(r)
+    _, mid, cid = start(make, r, [])
+    h = SimpleNamespace(db=SimpleNamespace(pool=r.pool), org_id=r.scope.org_id, _personal_context_allowed=True)
+    anchor = ContextAnchor(task_id=str(uuid4()), conversation_id=cid, turn_id=str(uuid4()),
+        input_message_id=mid, base_revision=0, through_message_id=None, org_id=r.scope.org_id)
+    await prepare_knowledge_run(h, anchor, r.scope.actor_user_id, cid, question='你好', self_contained=True)
+    assert h._knowledge_run is None
+    # Different wording also cannot bind a default run before model tool use.
+    await prepare_knowledge_run(h, anchor, r.scope.actor_user_id, cid, question='润色上一版', self_contained=False)
+    assert h._knowledge_run is None
+    actual = KnowledgeRun.start(r,conversation_id=cid,input_message_id=mid,default_scope=True,question='润色上一版',allow_self_contained=False)
+    original = actual.id
+    await prepare_knowledge_run(h, anchor, r.scope.actor_user_id, cid, question='你好', self_contained=True)
+    assert h._knowledge_run.id == original
+
+
+@pytest.mark.asyncio
+async def test_full_prompt_greeting_skips_default_snapshot_but_restores_explicit_sources(v3_db,monkeypatch):
+    from types import SimpleNamespace
+    from core.config import get_settings
+    from config.chat_tools import TOOL_SYSTEM_PROMPT
+    from schemas.message import TextPart
+    from services.handlers.context_snapshot import ContextAnchor
+    from services.knowledge_workspace.runtime import prepare_knowledge_run
+    from services.prompt_builder.builder import PromptBuilder
+    make,_=v3_db;r=make()
+    run,input_id,conv=start(make,r,[])
+    assert run is None
+    settings=get_settings().model_copy(update={'knowledge_derivation_enabled':True,'knowledge_default_scope_enabled':True})
+    monkeypatch.setattr('core.config.get_settings',lambda:settings)
+    monkeypatch.setattr('api.routes.knowledge.enabled',lambda _:True)
+    monkeypatch.setattr('services.knowledge_workspace.runtime.repository',lambda *_:r)
+    messages=PromptBuilder._compose_messages(TOOL_SYSTEM_PROMPT,'工具权限','时间',[],None,
+        SimpleNamespace(workspace_system_block='',attachments_system_block='',user_message={'role':'user','content':'你好'}))
+    anchor=ContextAnchor(task_id=str(uuid4()),conversation_id=conv,turn_id=str(uuid4()),
+        input_message_id=input_id,base_revision=0,through_message_id=None,org_id=r.scope.org_id)
+    handler=SimpleNamespace(org_id=r.scope.org_id,db=object())
+    await prepare_knowledge_run(handler,anchor,r.scope.actor_user_id,conv,question='你好',self_contained=True)
+    assert handler._knowledge_run is None
+    # A pinned source on the same greeting retains priority over default-scope routing.
+    obj=document(r)
+    pinned,new_input,new_conv=start(make,r,[ref(obj)])
+    from dataclasses import replace
+    await prepare_knowledge_run(handler,replace(anchor,input_message_id=new_input,conversation_id=new_conv),
+        r.scope.actor_user_id,new_conv,question='你好',self_contained=True)
+    assert handler._knowledge_run.id==pinned.id
+    assert handler._knowledge_run.snapshot['roots']==pinned.snapshot['roots']
+
+
+def test_default_scope_can_defer_snapshot_but_explicit_and_saved_versions_cannot(current_snapshot_db):
+    from services.knowledge_workspace.answer_policy import DeferredKnowledgeScope
+    make,_=current_snapshot_db;r=make();r.initialize();obj=document(r)
+    _,message,conversation=start(make,r,[])
+    deferred=KnowledgeRun.start(r,conversation_id=conversation,input_message_id=message,
+        default_scope=True,question='公司规则是什么',defer_default=True,allow_self_contained=False)
+    assert isinstance(deferred,DeferredKnowledgeScope)
+    deferred.revalidate();assert deferred.grounding_sources() is None
+    with psycopg.connect(**make.admin_args) as c:
+        assert c.execute('SELECT count(*) FROM kb_read_snapshots WHERE input_message_id=%s',(message,)).fetchone()[0]==0
+    # First real use freezes through the unchanged transaction. Replays restore
+    # that exact snapshot even when the new chat entry requests deferral.
+    actual=KnowledgeRun.start(r,conversation_id=conversation,input_message_id=message,
+        default_scope=True,question='公司规则是什么',allow_self_contained=False)
+    assert isinstance(actual,KnowledgeRun)
+    restored=KnowledgeRun.start(r,conversation_id=conversation,input_message_id=message,
+        default_scope=True,question='新的说法',defer_default=True)
+    assert isinstance(restored,KnowledgeRun) and restored.id==actual.id and restored.snapshot==actual.snapshot
+    pinned,new_input,new_conv=start(make,r,[ref(obj)])
+    explicit=KnowledgeRun.start(r,conversation_id=new_conv,input_message_id=new_input,defer_default=True)
+    assert isinstance(explicit,KnowledgeRun) and explicit.id==pinned.id
+
+
+def test_deferred_policy_is_actor_bound_and_cannot_downgrade_new_explicit_refs(current_snapshot_db):
+    from dataclasses import replace
+    from services.knowledge_workspace.answer_policy import DeferredKnowledgeScope
+    make,_=current_snapshot_db;r=make();r.initialize();obj=document(r)
+    _,message,conversation=start(make,r,[])
+    deferred=KnowledgeRun.start(r,conversation_id=conversation,input_message_id=message,
+        default_scope=True,question='公司规则是什么',defer_default=True,allow_self_contained=False)
+    assert isinstance(deferred,DeferredKnowledgeScope)
+    with pytest.raises(AppException):replace(deferred,repo=make(1,0)).revalidate()
+    with psycopg.connect(**make.admin_args) as c:
+        c.execute('UPDATE messages SET knowledge_refs=%s WHERE id=%s',(json.dumps([ref(obj)]),message))
+    with pytest.raises(AppException,match='知识引用'):deferred.revalidate()
+
+
+@pytest.mark.asyncio
+async def test_runtime_default_deferral_does_not_enter_program_retrieval(current_snapshot_db,monkeypatch):
+    from dataclasses import replace
+    from types import SimpleNamespace
+    from core.config import get_settings
+    from services.handlers.context_snapshot import ContextAnchor
+    from services.knowledge_workspace.runtime import prepare_knowledge_run
+    from services.knowledge_workspace.answer_policy import DeferredKnowledgeScope
+    from services.knowledge_workspace.answer_plan import prepare
+    make,_=current_snapshot_db;r=make();r.initialize();obj=document(r)
+    _,message,conversation=start(make,r,[])
+    settings=get_settings().model_copy(update={'knowledge_derivation_enabled':True,'knowledge_default_scope_enabled':True})
+    monkeypatch.setattr('core.config.get_settings',lambda:settings)
+    monkeypatch.setattr('api.routes.knowledge.enabled',lambda _:True)
+    monkeypatch.setattr('services.knowledge_workspace.runtime.repository',lambda *_:r)
+    monkeypatch.setattr('services.knowledge_workspace.answer_plan.collect',lambda *_:pytest.fail('pre-model retrieval'))
+    anchor=ContextAnchor(task_id=str(uuid4()),conversation_id=conversation,turn_id=str(uuid4()),
+        input_message_id=message,base_revision=0,through_message_id=None,org_id=r.scope.org_id)
+    h=SimpleNamespace(org_id=r.scope.org_id,db=object())
+    await prepare_knowledge_run(h,anchor,r.scope.actor_user_id,conversation,question='公司规则是什么',defer_default=True)
+    assert h._knowledge_run is None and h._knowledge_answer_guard is None
+    await prepare(h,SimpleNamespace(),SimpleNamespace())
+    # The default strategy must not weaken a new explicitly pinned request.
+    pinned,new_input,new_conv=start(make,r,[ref(obj)])
+    await prepare_knowledge_run(h,replace(anchor,input_message_id=new_input,conversation_id=new_conv),
+        r.scope.actor_user_id,new_conv,question='公司规则是什么',required=True,defer_default=True)
+    assert h._knowledge_answer_guard is None and h._knowledge_run.id==pinned.id
+
+
+def test_default_preparation_query_comparison_uses_same_native_source(current_snapshot_db):
+    from contextlib import contextmanager
+    import time
+    from services.knowledge_workspace.answer_policy import DeferredKnowledgeScope
+    make,_=current_snapshot_db;r=make();r.initialize();document(r)
+    metrics={}
+    for deferred in (False,True):
+        _,mid,cid=start(make,r,[]);queries=[]
+        class Cursor:
+            def __init__(self,value):self.value=value
+            def execute(self,query,*args,**kwargs):
+                queries.append(str(query))
+                return self.value.execute(query,*args,**kwargs)
+            def __getattr__(self,name):return getattr(self.value,name)
+        class Traced:
+            @contextmanager
+            def cursor(self):
+                with r.cursor() as cursor:yield Cursor(cursor)
+            def __getattr__(self,name):return getattr(r,name)
+        begin=time.perf_counter()
+        result=KnowledgeRun.start(Traced(),conversation_id=cid,input_message_id=mid,default_scope=True,
+            question='公司规范如何',allow_self_contained=False,defer_default=deferred)
+        elapsed=round((time.perf_counter()-begin)*1000,3)
+        enumerations=sum('SELECT o.id,o.container_id,o.parent_id' in q for q in queries)
+        with psycopg.connect(**make.admin_args) as c:
+            snapshots=c.execute('SELECT count(*) FROM kb_read_snapshots WHERE input_message_id=%s',(mid,)).fetchone()[0]
+        metrics['deferred' if deferred else 'baseline']={
+            'scope_prepare_ms':elapsed,'sql_calls':len(queries),'object_enumerations':enumerations,'snapshots':snapshots}
+        assert isinstance(result,DeferredKnowledgeScope) is deferred
+        assert snapshots==(0 if deferred else 1)
+        assert enumerations==(0 if deferred else 1)
+    assert metrics['deferred']['sql_calls']<metrics['baseline']['sql_calls']
+    # Component-local loopback evidence, not a live-provider or page latency SLO.
+    print('LOCAL_PREPARATION_COMPARISON '+json.dumps(metrics))

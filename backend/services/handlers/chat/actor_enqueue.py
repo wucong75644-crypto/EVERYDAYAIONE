@@ -50,6 +50,8 @@ async def enqueue_web_chat(
         conversation_id=conversation_id,
         external_task_id=external_task_id,
     )
+    from services.agent.observability.chat_lifecycle import chat_phase
+    chat_phase('enqueue.begin', task_id=task_data['id'], turn_id=metadata.turn_id)
     delivery_context = {"actor": True, "channel": "web"}
     response = handler.db.rpc(
         "enqueue_generation_turn",
@@ -64,7 +66,10 @@ async def enqueue_web_chat(
     result = response.data if response else None
     if not isinstance(result, dict) or not result.get("task_id"):
         raise RuntimeError("ACTOR_ENQUEUE_RESULT_INVALID")
+    if not result.get('already_enqueued', False):
+        chat_phase('enqueue.persisted', task_id=result['task_id'], turn_id=metadata.turn_id)
     await _publish_wakeup(conversation_id, handler.org_id)
+    chat_phase('enqueue.wakeup', task_id=result['task_id'], turn_id=metadata.turn_id)
     logger.info(
         "actor_web_enqueued | "
         f"task_id={result['task_id']} | external_task_id={external_task_id} | "

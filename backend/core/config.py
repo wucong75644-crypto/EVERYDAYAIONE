@@ -357,6 +357,8 @@ class Settings(BaseSettings):
     chat_image_transparent_enabled: bool = False
     chat_image_max_requests: int = Field(default=15, ge=1, le=15)
     ecom_image_planning_enabled: bool = False
+    agent_task_execution_enabled: bool = False  # New-task admission only; keep disabled until full verification.
+    agent_task_erp_write_enabled: bool = False  # Deferred domain; original ERP Agent and existing receipts remain available.
     detail_page_generation_enabled: bool = False
     # Ten products, up to 15 images each; legacy task admission remains unchanged.
     detail_page_image_concurrency: int = Field(default=150, ge=1, le=150)

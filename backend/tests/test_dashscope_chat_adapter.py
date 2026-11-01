@@ -781,3 +781,13 @@ class TestClose:
         adapter = _make_adapter()
         adapter._client = None
         await adapter.close()  # 不应抛异常
+
+
+@pytest.mark.parametrize('model',['qwen3.8-max','qwen3.8-flash'])
+@pytest.mark.parametrize('stream',[False,True])
+def test_qwen_forwards_explicit_output_limit_without_inventing_default(model,stream):
+    from services.adapters.dashscope.chat_adapter import DashScopeChatAdapter
+    adapter=DashScopeChatAdapter('synthetic-no-network',model)
+    kwargs={'stream':stream,'reasoning_effort':None,'thinking_mode':'disabled'}
+    assert adapter._request_body([],max_tokens=2048,**kwargs)['max_tokens']==2048
+    assert 'max_tokens' not in adapter._request_body([],**kwargs)

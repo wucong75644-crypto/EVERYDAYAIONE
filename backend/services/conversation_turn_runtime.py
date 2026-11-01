@@ -44,6 +44,16 @@ class ConversationTurnRuntime:
     ) -> None:
         self.conversation_id = conversation_id
         self.task_id = task_id
+        self.task_requirement_review = None
+        self.task_plan_reviews = None
+        self.task_read_arguments = None
+        self.task_usage = None
+        self.task_user_changes = None
+        self.task_unreviewed_changes = ()
+        self.task_revision_review = None
+        self.task_user_change_pending_reader = None
+        self.task_revision_apply = None
+        self.task_user_change_capture = None
         self.turn_id = turn_id
         self.cancellation_event = cancellation_event
         self.execution_token = execution_token
@@ -53,6 +63,14 @@ class ConversationTurnRuntime:
         self._replay_checkpoint_callback = replay_checkpoint_callback
         self.skill_runtime = None  # Owned by this turn; never a handler/global cache.
         self.mcp_invocations = {}  # Result snapshots only; the ledger remains authoritative.
+        self.task_execution_state = None  # New logical tasks only; old checkpoints remain unchanged.
+        self.task_bootstrap = None  # Trusted input only; never populated from request params.
+        self.task_artifact_reader = None
+        self.committed_task_execution_revision = 0
+        self.checkpoint_base = {}
+        self.knowledge_input_provider = None
+        self.knowledge_input_changed = False
+        self.replay_save_sequence = 0  # Confirmed saves, including unchanged logical revisions.
         self.inbox = CommandInbox()
         self._command_event = asyncio.Event()
         self._watcher_stop = asyncio.Event()
@@ -154,6 +172,16 @@ class ConversationTurnRuntime:
 
         if point == SafePoint.BEFORE_TOOL and replay_payload is not None and self._replay_checkpoint_callback is None:
             raise RuntimeError("ACTOR_TOOL_DISPATCH_CHECKPOINT_UNAVAILABLE")
+        if (replay_payload is not None and self.task_execution_state is not None
+                and self._replay_checkpoint_callback is None):
+            raise RuntimeError('TASK_EXECUTION_CHECKPOINT_UNAVAILABLE')
+        if (replay_payload is not None and self.task_bootstrap is not None
+                and self._replay_checkpoint_callback is None):
+            raise RuntimeError('TASK_BOOTSTRAP_CHECKPOINT_UNAVAILABLE')
+        if (replay_payload is not None and self._replay_checkpoint_callback is None
+                and self.skill_runtime is not None
+                and getattr(self.skill_runtime, 'checkpoint_version', 1) == 2):
+            raise RuntimeError('SKILL_COMPOSITION_CHECKPOINT_UNAVAILABLE')
 
         if (
             replay_payload is not None
@@ -166,12 +194,47 @@ class ConversationTurnRuntime:
                 SafePoint.BEFORE_COMMIT,
             }
         ):
-            payload = dict(replay_payload)
+            import copy
+            payload = {**copy.deepcopy(self.checkpoint_base),**dict(replay_payload)}
+            knowledge_input_provider = getattr(self, 'knowledge_input_provider', None)
+            if knowledge_input_provider is not None:
+                from services.knowledge_workspace.input_facts import CHECKPOINT_KEY
+                payload[CHECKPOINT_KEY] = knowledge_input_provider()
+            for key in ('checkpoint_kind','result_content','usage','credits_cost','tool_digest'):
+                if key not in replay_payload:payload.pop(key,None)
+            if self.task_revision_review is None:payload.pop('_task_revision_review',None)
+            if self.task_plan_reviews is None:payload.pop('_task_plan_reviews',None)
+            if self.task_requirement_review is not None:
+                payload['_task_requirement_review'] = self.task_requirement_review.model_dump(mode='json')
+            if self.task_plan_reviews is not None:
+                payload['_task_plan_reviews'] = self.task_plan_reviews.model_dump(mode='json')
+            if self.task_read_arguments is not None:
+                import copy
+                payload['_task_read_arguments'] = copy.deepcopy(self.task_read_arguments)
+            if self.task_revision_review is not None:
+                payload['_task_revision_review'] = self.task_revision_review.model_dump(mode='json')
+            if self.task_user_changes is not None:
+                payload['_task_user_changes'] = self.task_user_changes.model_dump(mode='json')
+            if self.task_usage is not None:
+                payload['_task_usage']={'version':1,'owner_task_id':self.task_id,'usage':dict(self.task_usage)}
+            if self.task_bootstrap is not None and self.task_execution_state is None:
+                payload['_task_bootstrap'] = self.task_bootstrap.checkpoint()
+            if self.task_execution_state is not None:
+                payload['_task_execution'] = self.task_execution_state.model_dump(mode='json')
+                payload['_task_execution_expected_revision'] = self.committed_task_execution_revision
             if self.skill_runtime is not None:
                 payload["skill_runtime"] = self.skill_runtime.checkpoint()
+                if payload['skill_runtime'].get('version') == 2:
+                    payload['_skill_composition'] = payload['skill_runtime']['composition']
+                    payload['_skill_composition_expected_revision'] = getattr(self, 'committed_composition_revision', 0)
+                    if getattr(self, 'workflow_projection', None) is not None:
+                        payload['_ecom_workflow'] = self.workflow_projection
             if self.mcp_invocations:
                 payload["mcp_invocations"] = list(self.mcp_invocations.values())
             result = await self._replay_checkpoint_callback(point, payload)
+            if result.get('outcome') == 'saved':
+                self.replay_save_sequence += 1
+                self.checkpoint_base = copy.deepcopy(payload)
             if result.get("outcome") in {
                 "ownership_lost", "lease_expired", "terminal",
             }:
@@ -179,6 +242,16 @@ class ConversationTurnRuntime:
                 raise ConversationStopRequested("ownership_lost")
             if point == SafePoint.BEFORE_TOOL and result.get("outcome") != "saved":
                 raise RuntimeError("ACTOR_TOOL_DISPATCH_CHECKPOINT_NOT_SAVED")
+            if '_skill_composition' in payload:
+                if result.get('outcome') != 'saved':
+                    raise RuntimeError('SKILL_COMPOSITION_NOT_SAVED')
+                self.committed_composition_revision = payload['_skill_composition']['revision']
+            if '_task_execution' in payload:
+                if result.get('outcome') != 'saved':
+                    raise RuntimeError('TASK_EXECUTION_NOT_SAVED')
+                self.committed_task_execution_revision = payload['_task_execution']['revision']
+            if '_task_bootstrap' in payload and result.get('outcome') != 'saved':
+                raise RuntimeError('TASK_BOOTSTRAP_NOT_SAVED')
 
         # MODEL_CHUNK 每个 token 都会经过，不能在这里访问数据库。
         if (
@@ -197,11 +270,26 @@ class ConversationTurnRuntime:
             self.applied_commands.append(command)
             if command.command_type.value == "subtask_completed":
                 self._record_subtask_completion(command)
+            captured_steer = False
             if command.command_type is CommandType.STEER:
+                self.knowledge_input_changed = True
                 message = (command.payload or {}).get("message")
                 if not isinstance(message, str) or not message.strip():
                     raise RuntimeError("ACTOR_STEER_PAYLOAD_INVALID")
-                self._steer_messages.append(message.strip())
+                managed = (self.task_execution_state is not None and self.task_execution_state.image_binding_version >= 3
+                    or self.task_bootstrap is not None and self.task_bootstrap.require_coverage_review)
+                if managed:
+                    if self.task_user_change_capture is None or not command.event_id:
+                        raise RuntimeError('TASK_USER_CHANGE_CAPTURE_REQUIRED')
+                    from services.task_execution.user_changes import merge
+                    root = self.task_execution_state.root_task_id if self.task_execution_state is not None else self.task_bootstrap.task_id
+                    prior = {i.event_id for i in self.task_user_changes.items} if self.task_user_changes else set()
+                    inbox = await self.task_user_change_capture(command.event_id)
+                    self.task_user_changes = merge(self.task_user_changes, inbox, root_task_id=root)
+                    self._steer_messages.extend(i.message for i in self.task_user_changes.items if i.event_id not in prior and not i.delivered)
+                    captured_steer = True  # Same transaction saved the source and acknowledged it.
+                else:
+                    self._steer_messages.append(message.strip())
             self.state = reduce_command(self.state, command)
             if self.state in {
                 ConversationState.CANCELLING,
@@ -215,7 +303,7 @@ class ConversationTurnRuntime:
                 if self.state is ConversationState.CANCELLING:
                     raise ConversationStopRequested("cancel")
                 raise ConversationStopRequested("ownership_lost")
-            if command.event_id and self.command_store and self.execution_token:
+            if command.event_id and self.command_store and self.execution_token and not captured_steer:
                 await self.command_store.acknowledge(
                     event_id=command.event_id,
                     task_id=self.task_id,
@@ -257,6 +345,9 @@ class ConversationTurnRuntime:
         """取出已在安全点归约的 steer；每个事件只注入下一轮模型一次。"""
         messages = self._steer_messages
         self._steer_messages = []
+        if messages and self.task_user_changes is not None:
+            self.task_user_changes = self.task_user_changes.model_copy(update={'items': tuple(
+                item.model_copy(update={'delivered': True}) for item in self.task_user_changes.items)})
         return messages
 
     def set_state(self, state: ConversationState) -> None:

@@ -22,6 +22,7 @@ import {
 } from '../../../services/message';
 import { useMessageStore, type Message, type ImageAsset, getTextContent, getImageAssets } from '../../../stores/useMessageStore';
 import MessageItem from './MessageItem';
+import { applyTaskResume } from '../../../services/taskResume';
 import { groupChatImages, isChatImage } from './chatImageDisplay';
 import EmptyState from '../layout/EmptyState';
 import LoadingSkeleton from './LoadingSkeleton';
@@ -393,26 +394,27 @@ export default function MessageArea({
     await doRegenerateSingle(pair.target, imageIndex, pair.user);
   }, [conversationId, findMessagePair, doRegenerateSingle]);
 
-  const handleResume = useCallback(async (messageId: string) => {
-    if (!conversationId) return;
+  const resuming = useRef(new Set<string>());
+  const handleResume = useCallback(async (messageId: string): Promise<boolean> => {
+    if (!conversationId || resuming.current.has(messageId)) return false;
+    resuming.current.add(messageId);
     try {
       const response = await resumeTaskByMessageId(messageId);
-      const task = response.tasks?.find(
-        (item) => item.outcome === 'resumed' || item.outcome === 'already_pending',
-      );
-      const taskId = task?.client_task_id || task?.external_task_id;
-      if (!taskId) {
-        toast.error('该任务没有可用的恢复快照');
-        return;
-      }
-      const store = useMessageStore.getState();
-      store.beginResumedStreaming(conversationId, messageId);
-      subscribeTaskWithMapping(taskId, conversationId);
+      const accepted = await applyTaskResume(response, conversationId, messageId, {
+        beginStreaming: (conversation, message) => useMessageStore.getState().beginResumedStreaming(conversation, message),
+        subscribe: subscribeTaskWithMapping,
+        reload: () => loadMessages(),
+      });
+      if (!accepted) toast.error('该任务没有可用的恢复快照');
+      return accepted;
     } catch (error) {
       logger.error('messageArea', '继续任务失败', error);
-      toast.error('继续任务失败，请稍后重试');
+      toast.error('继续请求结果未确认，请先刷新任务进度');
+      return false;
+    } finally {
+      resuming.current.delete(messageId);
     }
-  }, [conversationId, subscribeTaskWithMapping]);
+  }, [conversationId, subscribeTaskWithMapping, loadMessages]);
 
   // 空状态
   if (!conversationId && mergedMessages.length === 0) {
@@ -485,6 +487,7 @@ export default function MessageArea({
                     streamingThinking={isMessageStreaming ? streamingThinking : undefined}
                     onRegenerate={handleRegenerate}
                     onResume={isPausedMessage ? handleResume : undefined}
+                    onTaskResume={handleResume}
                     onDelete={handleDelete}
                     onMediaLoaded={handleMediaLoaded}
                     allImageAssets={allImageAssets}

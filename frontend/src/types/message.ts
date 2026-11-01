@@ -18,6 +18,7 @@ export type ContentPart =
   | ThinkingPart
   | ToolStepPart
   | SkillStepPart
+  | TaskProgressPart
   | ToolResultPart
   | FormPart
   | ChartPart
@@ -31,6 +32,11 @@ export type ContentPart =
 export interface TextPart {
   type: 'text';
   text: string;
+}
+
+export interface TaskProgressPart {
+  type: 'task_progress';
+  root_task_id: string;
 }
 
 export interface SkillStepPart {

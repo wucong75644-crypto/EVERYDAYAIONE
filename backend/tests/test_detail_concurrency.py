@@ -192,7 +192,7 @@ async def test_detail_scan_isolates_org_project_and_slow_acceptance(monkeypatch)
     finally: await worker.close()
 
 
-async def test_shutdown_cancels_both_scans_and_closes_both_pools():
+async def test_shutdown_cancels_all_scans_and_closes_all_pools():
     worker = BackgroundTaskWorker.__new__(BackgroundTaskWorker)
     worker.is_running = True
     started = asyncio.Event()
@@ -201,15 +201,18 @@ async def test_shutdown_cancels_both_scans_and_closes_both_pools():
         await asyncio.Event().wait()
     worker._chat_image_loop_task = asyncio.create_task(hangs())
     worker._detail_page_loop_task = asyncio.create_task(hangs())
+    worker._native_video_loop_task = asyncio.create_task(hangs())
     worker._social_publish_loop_task = None
     worker._social_ops = NS(stop=AsyncMock())
     worker._chat_images = NS(close=AsyncMock())
     worker._detail_pages = NS(close=AsyncMock())
+    worker._native_videos = NS(close=AsyncMock())
     await started.wait()
     await worker.stop()
     worker._chat_images.close.assert_awaited_once()
     worker._detail_pages.close.assert_awaited_once()
-    assert worker._chat_image_loop_task is worker._detail_page_loop_task is None
+    worker._native_videos.close.assert_awaited_once()
+    assert worker._chat_image_loop_task is worker._detail_page_loop_task is worker._native_video_loop_task is None
 
 
 async def test_main_and_detail_groups_of_same_project_do_not_block_each_other(monkeypatch):

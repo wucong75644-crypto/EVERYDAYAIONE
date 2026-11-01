@@ -36,6 +36,7 @@ import 'katex/dist/katex.min.css';
 const MermaidBlock = lazy(() => import('./MermaidBlock'));
 
 interface MarkdownRendererProps {
+  timingBody?: boolean;
   /** Markdown 文本内容 */
   content: string;
   /** 是否正在流式输出（显示闪烁光标） */
@@ -200,6 +201,7 @@ export default memo(function MarkdownRenderer({
   streamingSegment,
   animateInitial = false,
   className = '',
+  timingBody = false,
 }: MarkdownRendererProps) {
   const displayedContent = useStreamingText(receivedContent, isStreaming, streamingBaseline, streamingSegment, animateInitial);
   const { body: content, sources } = useMemo(() => splitSearchSources(displayedContent, isStreaming || displayedContent.length < receivedContent.length), [displayedContent, isStreaming, receivedContent.length]);
@@ -223,7 +225,7 @@ export default memo(function MarkdownRenderer({
   if (!hasMarkdown) {
     const trimmed = content.replace(/\s+$/, '');
     return (
-      <div className={`text-[15px] leading-relaxed whitespace-pre-wrap ${className}`}>
+      <div data-chat-body={timingBody ? "" : undefined} className={`text-[15px] leading-relaxed whitespace-pre-wrap ${className}`}>
         {trimmed}
         {sources.length > 0 && <SearchSources sources={sources} />}
       </div>
@@ -231,7 +233,7 @@ export default memo(function MarkdownRenderer({
   }
 
   return (
-    <div className={`markdown-body ${className}`}>
+    <div data-chat-body={timingBody ? "" : undefined} className={`markdown-body ${className}`}>
       <Markdown
         remarkPlugins={remarkPlugins}
         rehypePlugins={rehypePlugins}

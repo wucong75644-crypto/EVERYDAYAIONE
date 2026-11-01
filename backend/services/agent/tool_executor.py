@@ -70,6 +70,8 @@ class ToolExecutor(
         scheduled_publish_grant=None,
         image_execution_token=None,
         image_skill_snapshot=(),
+        image_composition=None,
+        image_binding_writer=None,
     ) -> None:
         self.db = db
         self.user_id = user_id
@@ -100,6 +102,8 @@ class ToolExecutor(
         self.scheduled_publish_grant = scheduled_publish_grant
         self.image_execution_token = image_execution_token
         self.image_skill_snapshot = tuple(image_skill_snapshot)
+        self.image_composition = image_composition
+        self.image_binding_writer = image_binding_writer
         self._tool_runtime = None
         self.erp_step_timeout_sec = erp_step_timeout_sec
         self.tool_policy_snapshot = dict(tool_policy_snapshot or {})
@@ -216,16 +220,17 @@ class ToolExecutor(
                               (self.task_id, self.conversation_id, self.user_id, self.org_id))
                     task = c.fetchone()
                 if not task or not task['input_message_id']:unavailable()
-                from services.knowledge_workspace.scope_selection import SOURCE_ONLY
-                from services.knowledge_workspace.ai_journal_extract import message_text
-                if SOURCE_ONLY.search(message_text(task['content'])):
-                    return None
-                return KnowledgeRun.start(repo, conversation_id=self.conversation_id,
-                    input_message_id=task['input_message_id'], default_scope=True, question=args['query'])
-            self.knowledge_run = await asyncio.to_thread(start)
+                return (KnowledgeRun.start(repo, conversation_id=self.conversation_id,
+                    input_message_id=task['input_message_id'], default_scope=True, question=args['query'],
+                    allow_self_contained=False), str(task['input_message_id']))
+            self.knowledge_run, input_message_id = await asyncio.to_thread(start)
+            candidates = getattr(self, 'knowledge_candidates', None)
+            if self.knowledge_run is not None and candidates is not None:
+                await candidates.attach(self.knowledge_run, input_message_id)
         if self.knowledge_run is None:
             return AgentResult(summary='当前任务未找到可用知识范围，不能据此断言整个知识库没有资料。', status='empty')
         await asyncio.to_thread(self.knowledge_run.revalidate)
+        self.knowledge_run.knowledge_used = True  # Checkpoint provenance, not a display gate.
         return AgentResult(summary=json.dumps(self.knowledge_run.introduction(), ensure_ascii=False), status='success')
 
     def _knowledge_handler(self, action):
@@ -235,6 +240,7 @@ class ToolExecutor(
             from services.knowledge_workspace.chat import unavailable
             if self.knowledge_run is None or not self.personal_context_allowed: unavailable()
             result = await asyncio.to_thread(self.knowledge_run.execute, action, args)
+            self.knowledge_run.knowledge_used = True
             from services.knowledge_workspace.model_view import present
             return AgentResult(summary=json.dumps(present(result), ensure_ascii=False), status='success')
         return execute
@@ -498,6 +504,7 @@ class ToolExecutor(
                 metadata={"retryable": False},
             )
 
+        dispatch_arguments = args
         action = (args.get("action") or "").strip()
         if not action:
             return AgentResult(
@@ -517,17 +524,24 @@ class ToolExecutor(
             description = current_creation_text(getattr(self, "_parent_messages", None))
             if description:
                 args = {**args, "description": description}
+        managed_key = None
+        if call_id and action != "list":
+            from services.task_execution.scheduled_operations import native_request_key
+            managed_key = await native_request_key(self, call_id, dispatch_arguments)
         if call_id and direct_task_management(context):
             manager = ChatTaskManager(
                 self.db, self.user_id, self.org_id, submission_mode="apply_if_allowed",
-                idempotency_key=f"task-chat:{self.user_id}:{self.conversation_id}:{call_id}",
+                idempotency_key=managed_key or f"task-chat:{self.user_id}:{self.conversation_id}:{call_id}",
                 structured_input=structured_chat,
             )
         else:
-            manager = ChatTaskManager(self.db, self.user_id, self.org_id, structured_input=structured_chat)
+            manager = ChatTaskManager(self.db, self.user_id, self.org_id, structured_input=structured_chat,
+                                      **({"idempotency_key": managed_key} if managed_key else {}))
         result = await manager.handle(action, args)
 
         if result.get("type") == "form":
+            if managed_key:
+                result = {**result, "form_id": "task_effect_" + managed_key.removeprefix("agent-task-scheduled:")}
             return FormBlockResult(
                 form=result,
                 llm_hint=f"已向用户展示{result.get('title', '表单')}，等待用户确认。不要重复展示表单内容。",

@@ -808,7 +808,7 @@ class TestRequestCtxFallback:
         # 关键：不设置 request_ctx → getattr 返回 None → 触发 fallback
         del mixin.request_ctx
 
-        with patch("services.agent.tool_executor.ToolExecutor") as MockExecutor, \
+        with patch("services.tool_executor.ToolExecutor") as MockExecutor, \
              patch("services.handlers.chat_tool_mixin.logger") as mock_logger:
             mock_exec = MagicMock()
             # emit_payloads 由 tool_loop_executor 处理 (沙盒 IO 统一协议)
@@ -838,7 +838,7 @@ class TestRequestCtxFallback:
         mixin.org_id = None
         mixin.request_ctx = RequestContext.build(user_id="u1")
 
-        with patch("services.agent.tool_executor.ToolExecutor") as MockExecutor, \
+        with patch("services.tool_executor.ToolExecutor") as MockExecutor, \
              patch("services.handlers.chat_tool_mixin.logger") as mock_logger:
             mock_exec = MagicMock()
             # emit_payloads 由 tool_loop_executor 处理 (沙盒 IO 统一协议)

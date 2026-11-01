@@ -1,3 +1,4 @@
+import { observeChatBody } from '../../../utils/chatTiming';
 import { KnowledgeReferenceTags } from '../../knowledge/KnowledgeReferenceTags';
 /**
  * 单条消息组件
@@ -38,6 +39,7 @@ export default memo(function MessageItem({
   isRegenerating = false,
   onRegenerate,
   onResume,
+  onTaskResume,
   onDelete,
   onMediaLoaded,
   allImageAssets = [],
@@ -50,6 +52,12 @@ export default memo(function MessageItem({
   enableLayoutAnimation = true,
   suggestions,
 }: MessageItemProps) {
+  const timingRef = useRef<HTMLDivElement>(null);
+  const hasTimedBody = message.content.some(part => part.type === 'text' && typeof part.text === 'string' && !!part.text.trim());
+  useEffect(() => {
+    if (message.role !== 'assistant' || !timingRef.current) return;
+    return observeChatBody(message.id, timingRef.current);
+  }, [message.id, message.role, hasTimedBody, isStreaming]);
   const isUser = message.role === 'user';
   const chatImage = isChatImage(message);
   const mediaCellRef = useRef<HTMLDivElement>(null);
@@ -82,7 +90,7 @@ export default memo(function MessageItem({
   const hasMultiBlocks = useMemo(() => {
     if (!Array.isArray(message.content)) return false;
     return message.content.some((p) =>
-      p.type === 'skill_step' || p.type === 'tool_step' || p.type === 'tool_result' ||
+      p.type === 'task_progress' || p.type === 'skill_step' || p.type === 'tool_step' || p.type === 'tool_result' ||
       p.type === 'image' || p.type === 'file' || p.type === 'form' ||
       p.type === 'chart' || p.type === 'diagram' || p.type === 'table' ||
       p.type === 'changeset' || p.type === 'interrupt_marker' ||
@@ -336,6 +344,7 @@ export default memo(function MessageItem({
 
   return (
     <m.div
+      ref={timingRef}
       data-message-id={message.id}
       className={`flex mb-4 ${MESSAGE_ALIGNMENT[isUser ? 'user' : 'assistant']} ${entryAnimationClass} ${deleteAnimationClass}`}
       // framer layout：消息删除/插入/重排时其他消息 spring 过渡到新位置
@@ -402,6 +411,7 @@ export default memo(function MessageItem({
             agentStepHint={agentStepHint}
             streamingThinking={streamingThinking}
             thinkingStartTime={thinkingStartTime}
+            onTaskResume={onTaskResume}
             onImageClick={handleImageClick}
             onRegenerateSingle={onRegenerateSingle ? handleRegenerateSingle : undefined}
           />

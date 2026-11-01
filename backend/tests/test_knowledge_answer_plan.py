@@ -57,7 +57,7 @@ def test_long_text_and_wide_matches_fall_back_instead_of_truncating_answer(deriv
 
 
 @pytest.mark.asyncio
-async def test_engine_fast_answer_calls_model_once_with_no_tools(derived_db,monkeypatch):
+async def test_engine_leaves_retrieval_and_answer_to_model_without_explicit_source_gate(derived_db,monkeypatch):
  from services.handlers.chat.execution_engine import execute_chat
  from services.handlers.chat.execution_sink import CollectingExecutionSink
  from tests.test_chat_execution_engine import _request
@@ -72,13 +72,17 @@ async def test_engine_fast_answer_calls_model_once_with_no_tools(derived_db,monk
  prepared.budget.use_turn=lambda:setattr(prepared.budget,'turns_used',prepared.budget.turns_used+1)
  monkeypatch.setattr('services.handlers.chat.execution_engine.prepare_chat_stream',AsyncMock(return_value=prepared))
  monkeypatch.setattr('services.knowledge_workspace.materialize.cleanup',lambda _:None)
+ monkeypatch.setattr('services.knowledge_workspace.answer_plan.collect',lambda *_:pytest.fail('automatic pre-model retrieval'))
  handler=SimpleNamespace(org_id=r.scope.org_id,_knowledge_run=run,_personal_context_allowed=True,_calculate_credits=lambda u:u['completion_tokens'])
  req=replace(_request(),content=[TextPart(text='拼多多漏发如何处理？食品拆封可以吗？')],user_id=r.scope.actor_user_id,conversation_id=cid)
  result=await execute_chat(handler=handler,request=req,sink=CollectingExecutionSink())
- assert len(seen)==1 and seen[0]['tools']==[]
- assert any(m.get('content','').startswith(PREFIX) for m in seen[0]['messages'] if isinstance(m.get('content'),str))
- assert '/knowledge?' in ''.join(p.text for p in result.parts if isinstance(p,TextPart))
- invalidate_for_steer(prepared,run);assert prepared.knowledge_answer_plan['mode']=='expand'
+ assert len(seen)==1 and 'knowledge_read' in {t['function']['name'] for t in seen[0]['tools']}
+ assert not any(m.get('content','').startswith(PREFIX) for m in seen[0]['messages'] if isinstance(m.get('content'),str))
+ assert '核对订单照片后免费补寄；食品拆封转人工。' in ''.join(p.text for p in result.parts if isinstance(p,TextPart))
+ assert not any(getattr(p,'tool_name',None)=='knowledge_answer_verification' for p in result.parts)
+ with r.cursor() as c:
+  c.execute('SELECT count(*) AS n FROM kb_read_receipts WHERE snapshot_id=%s',(run.id,))
+  assert c.fetchone()['n']==0
 
 
 @pytest.mark.asyncio
@@ -94,6 +98,35 @@ async def test_skill_host_restrictions_and_other_actor_do_not_enter_fast_path(de
  await prepare(handler,prepared,req,SimpleNamespace(active={'manual-skill':object()}));assert not hasattr(prepared,'knowledge_answer_plan')
  from core.exceptions import AppException
  with pytest.raises(AppException):await prepare(handler,prepared,replace(req,user_id='another-user'))
+
+
+@pytest.mark.asyncio
+async def test_saved_automatic_answer_reuses_exact_snapshot_and_question_without_search(derived_db,monkeypatch):
+ from uuid import uuid4
+ from services.knowledge_workspace.chat import KnowledgeRun
+ from tests.test_chat_execution_engine import _request
+ from schemas.message import TextPart
+ r=derived_db[0]();title='复用验收'+uuid4().hex
+ root=create(r,title=title);leaf=create(r,root['container_id'],root['id'],'拼多多漏发')
+ r.command(command('save_document',{'object_id':leaf['id'],'expected_revision':1,
+     'body':'拼多多漏发：先核对订单数量和照片，免费补寄；食品拆封不适用，需人工确认。'}))
+ _,mid,cid=start(derived_db[0],r,[])
+ question=title+'中拼多多漏发如何处理？食品拆封可以吗？'
+ run=KnowledgeRun.start(r,conversation_id=cid,input_message_id=mid,default_scope=True,
+     question=question,allow_self_contained=False)
+ assert run.snapshot['automatic']
+ original=collect(run,question)
+ assert original['mode']=='answer'
+ monkeypatch.setattr('services.knowledge_workspace.answer_plan.collect',lambda *_:pytest.fail('duplicate search'))
+ req=replace(_request(),content=[TextPart(text=question)],user_id=r.scope.actor_user_id)
+ p=SimpleNamespace(execution_context=SimpleNamespace(context_scope='user',authorized_tool_names=None),messages=[])
+ h=SimpleNamespace(_knowledge_run=run,org_id=r.scope.org_id)
+ await prepare(h,p,req)
+ assert p.knowledge_answer_plan['cache_hit']
+ assert p.knowledge_answer_plan['items']==original['items']
+ other=SimpleNamespace(execution_context=p.execution_context,messages=[])
+ await prepare(h,other,replace(req,content=[TextPart(text='普通文案怎么写？')]))
+ assert not hasattr(other,'knowledge_answer_plan')
 
 
 def test_frozen_production_corpus_prefetches_originals_without_rollup_speculation(derived_db):

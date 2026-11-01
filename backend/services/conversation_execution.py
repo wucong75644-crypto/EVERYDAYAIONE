@@ -136,6 +136,8 @@ class ConversationExecutionService:
         self._terminal_observer = terminal_observer
 
     async def claim_serial(self, conversation_id: str) -> GenerationClaim | None:
+        from time import monotonic_ns
+        rpc_started_ns = monotonic_ns()
         data = await self._rpc(
             "claim_next_serial_generation_turn",
             {
@@ -144,13 +146,19 @@ class ConversationExecutionService:
                 "p_max_attempts": self._max_attempts,
             },
         )
-        return GenerationClaim.from_rpc(data, conversation_id, "serial")
+        claim = GenerationClaim.from_rpc(data, conversation_id, "serial")
+        if claim is not None:
+            from services.agent.observability.chat_lifecycle import chat_phase
+            chat_phase('claim.end', task_id=claim.task_id, turn_id=claim.turn_id, attempt=claim.execution_attempt, rpc_started_ns=rpc_started_ns)
+        return claim
 
     async def claim_branch(
         self,
         task_id: str,
         conversation_id: str,
     ) -> GenerationClaim | None:
+        from time import monotonic_ns
+        rpc_started_ns = monotonic_ns()
         data = await self._rpc(
             "claim_branch_generation_turn",
             {
@@ -159,9 +167,18 @@ class ConversationExecutionService:
                 "p_max_attempts": self._max_attempts,
             },
         )
-        return GenerationClaim.from_rpc(data, conversation_id, "branch")
+        claim = GenerationClaim.from_rpc(data, conversation_id, "branch")
+        if claim is not None:
+            from services.agent.observability.chat_lifecycle import chat_phase
+            chat_phase('claim.end', task_id=claim.task_id, turn_id=claim.turn_id, attempt=claim.execution_attempt, rpc_started_ns=rpc_started_ns)
+        return claim
 
     async def execute_claim(self, claim: GenerationClaim) -> dict[str, Any]:
+        from services.agent.observability.chat_lifecycle import chat_lifecycle_scope
+        with chat_lifecycle_scope(claim.task_id, turn_id=claim.turn_id, attempt=claim.execution_attempt):
+            return await self._execute_claim_traced(claim)
+
+    async def _execute_claim_traced(self, claim: GenerationClaim) -> dict[str, Any]:
         task = await self._load_task(claim.task_id)
         if task.get("conversation_id") != claim.conversation_id:
             raise RuntimeError("ACTOR_TASK_SCOPE_MISMATCH")
@@ -203,11 +220,14 @@ class ConversationExecutionService:
 
             if ownership_lost.is_set():
                 return {"outcome": "ownership_lost"}
+            from services.agent.observability.chat_lifecycle import chat_phase
+            chat_phase('terminal.commit.begin')
             result = await self._commit(
                 claim,
                 str(output_message_id),
                 outcome,
             )
+            chat_phase('terminal.commit.end')
             await self._notify_terminal(task, result)
             return result
         finally:
@@ -399,7 +419,26 @@ class ConversationExecutionService:
         name: str,
         params: dict[str, Any],
     ) -> dict[str, Any]:
-        result = await self._db.rpc(name, params).execute()
+        database = self._db
+        if name in {'commit_generation_turn', 'fail_generation_turn',
+                    'cancel_generation_turn_owned', 'pause_generation_turn_owned'}:
+            from core.local_db import AsyncLocalDBClient
+            from core.db_scope import (AsyncScopedDatabaseClient, DatabaseScope,
+                                       DatabaseAccessKind, database_scope_from_client)
+            if isinstance(database, (AsyncLocalDBClient, AsyncScopedDatabaseClient)):
+                # The claim/fence is unchanged. Terminal SQL also touches the
+                # logical task's RLS rows, so carry its actual DB-owned actor.
+                task = await self._load_task(str(params['p_task_id']))
+                scope = database_scope_from_client(database)
+                if scope is not None and scope.access_kind == DatabaseAccessKind.WORKER:
+                    database = AsyncScopedDatabaseClient(database, DatabaseScope(
+                        str(task['user_id']), task.get('org_id'), DatabaseAccessKind.RUNTIME))
+                else:
+                    from services.task_execution.database_scope import task_database
+                    from types import SimpleNamespace
+                    database = task_database(database, SimpleNamespace(
+                        actor_user_id=task['user_id'], org_id=task.get('org_id')))
+        result = await database.rpc(name, params).execute()
         if not result or not isinstance(result.data, dict):
             raise RuntimeError(f"ACTOR_RPC_RESULT_INVALID:{name}")
         return result.data

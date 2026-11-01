@@ -58,3 +58,14 @@ def test_cancel_paused_actor_task_uses_final_cancel_rpc():
             "p_org_id": None,
         },
     )
+
+
+def test_control_target_uses_continuation_gate_and_slot_without_changing_source():
+    from services.conversation_task import actor_control_target
+    source={'id':'original','client_task_id':'old-gate','request_params':{'_task_slot_id':'old-slot'}}
+    result={'task_id':'continuation','client_task_id':'current-gate','external_task_id':None,
+        'assistant_message_id':'current-output','task_slot_id':'current-slot'}
+    target=actor_control_target(source,result)
+    assert target['id']=='continuation' and target['client_task_id']=='current-gate'
+    assert target['request_params']['_task_slot_id']=='current-slot'
+    assert source['id']=='original' and source['request_params']['_task_slot_id']=='old-slot'

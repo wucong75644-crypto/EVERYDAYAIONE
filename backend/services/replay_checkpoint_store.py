@@ -64,6 +64,17 @@ class DatabaseReplayCheckpointStore:
             state.setdefault("context_revision", context_revision)
         if checkpoint_id is not None:
             state.setdefault("checkpoint_id", checkpoint_id)
+        if '_task_execution' in state:
+            from services.task_execution.contracts import TaskError, TaskState
+            from services.task_execution.store import TaskCheckpointStore
+            expected = state.get('_task_execution_expected_revision')
+            if type(expected) is not int or expected < 0:
+                raise TaskError('TASK_EXECUTION_EXPECTED_REVISION_REQUIRED')
+            task_state = TaskState.model_validate(state['_task_execution'])
+            return await TaskCheckpointStore(self._db).write(
+                task_id=task_id, execution_token=execution_token, boundary=boundary,
+                payload=state, state=task_state, expected_revision=expected,
+            )
         response = await self._db.rpc(
             "save_generation_checkpoint",
             {

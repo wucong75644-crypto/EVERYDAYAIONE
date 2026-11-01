@@ -168,7 +168,7 @@ class Connections:
                 scope_id=self.scope.org_id, secret_name='agent_reach.' + str(row['id']))
             return row
 
-    def reserve(self, call_id, connection, digest):
+    def reserve(self, call_id, connection, digest, *, native_owner=None):
         with self.cursor() as cursor:
             # Refresh write authorization immediately before reserving dispatch.
             cursor.execute("""SELECT c.id FROM public.reach_connections c
@@ -177,11 +177,25 @@ class Connections:
             if not cursor.fetchone():
                 raise ReachError('ACCESS_DENIED', '写入权限或账号凭据已变化')
             # Uniqueness is durable across API workers and runtime restarts.
-            cursor.execute('''INSERT INTO public.reach_operations
-                (org_id,connection_id,actor_user_id,call_id,payload_digest,credential_version,state)
-                VALUES (%s,%s,%s,%s,%s,%s,'executing') ON CONFLICT DO NOTHING RETURNING id''',
-                (self.scope.org_id, connection['id'], self.scope.actor_user_id, call_id, digest,
-                 connection['credential_version']))
+            values=(self.scope.org_id,connection['id'],self.scope.actor_user_id,call_id,digest,connection['credential_version'])
+            native_id=None
+            if native_owner is not None:
+                cursor.execute('SELECT public.agent_task_reach_invocation(%s,%s,%s) AS id',
+                    (native_owner['task_id'],native_owner['execution_token'],call_id))
+                native_id=cursor.fetchone()['id']
+                # Provider call IDs are only unique within a model response.
+                # The native UUID separates legitimate tasks/turns without
+                # weakening the logical effect slot's no-second-send guard.
+                call_id='native-'+str(native_id)
+                values=(self.scope.org_id,connection['id'],self.scope.actor_user_id,call_id,digest,connection['credential_version'])
+                cursor.execute('''INSERT INTO public.reach_operations
+                    (org_id,connection_id,actor_user_id,call_id,payload_digest,credential_version,state,native_invocation_id)
+                    VALUES (%s,%s,%s,%s,%s,%s,'executing',%s) ON CONFLICT DO NOTHING RETURNING id''',(*values,native_id))
+            else:
+                # Legacy callers retain their pre-upgrade schema and semantics.
+                cursor.execute('''INSERT INTO public.reach_operations
+                    (org_id,connection_id,actor_user_id,call_id,payload_digest,credential_version,state)
+                    VALUES (%s,%s,%s,%s,%s,%s,'executing') ON CONFLICT DO NOTHING RETURNING id''',values)
             inserted = cursor.fetchone()
             if inserted:
                 return str(inserted['id']), None
@@ -191,6 +205,10 @@ class Connections:
             existing = cursor.fetchone()
             if not existing or existing['payload_digest'] != digest:
                 raise ReachError('REPLAY_CONFLICT', '操作内容已变化，不能复用原执行身份')
+            if native_id is not None:
+                cursor.execute('SELECT native_invocation_id FROM public.reach_operations WHERE id=%s',(existing['id'],))
+                if cursor.fetchone()['native_invocation_id']!=native_id:
+                    raise ReachError('REPLAY_CONFLICT','原操作不属于当前持久调用，不能重新认领')
             return str(existing['id']), existing
 
     def settle(self, operation_id, state, receipt):

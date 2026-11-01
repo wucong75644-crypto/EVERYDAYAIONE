@@ -9,7 +9,7 @@ from typing import Dict, Any
 from uuid import UUID
 from typing import Literal
 
-from fastapi import APIRouter, Path, Request
+from fastapi import APIRouter, Path, Request, Response
 from loguru import logger
 from pydantic import BaseModel, Field
 
@@ -75,6 +75,14 @@ async def estimate_image(body: ImageEstimateRequest, ctx: OrgCtx):
         "within_budget":total<=settings.chat_image_max_credits,
         "max_concurrent_requests":settings.chat_image_max_requests,
         "max_requests":settings.chat_image_max_requests,"max_credits":settings.chat_image_max_credits}
+
+
+@router.get("/{root_task_id}/execution", summary="查看原任务真实执行进度")
+@limiter.limit("120/minute")
+async def get_execution_progress(request: Request, response: Response, root_task_id: UUID, message_id: UUID, ctx: OrgCtx, db: ScopedDB):
+    from services.task_execution.progress import read
+    response.headers["Cache-Control"] = "no-store"
+    return read(db, root_task_id=root_task_id, message_id=message_id, user_id=ctx.user_id, org_id=ctx.org_id)
 
 
 @router.get("/{task_id}/image", summary="查看聊天图片实际冻结输入")
@@ -377,7 +385,7 @@ async def cancel_task_by_message_id(
             ).eq(
                 field, message_id
             ).eq("user_id", ctx.user_id).in_(
-                "status", ["pending", "running", "paused"]
+                "status", ["pending", "running", "paused", "completed"]
             )
             if ctx.org_id:
                 q = q.eq("org_id", ctx.org_id)
@@ -385,7 +393,9 @@ async def cancel_task_by_message_id(
                 q = q.is_("org_id", "null")
             result = q.execute()
 
-            if result.data:
+            tasks = [task for task in result.data or [] if task.get('status')!='completed'
+                or (task.get('request_params') or {}).get('_agent_task_root')]
+            if tasks:
                 from services.websocket_manager import ws_manager
                 from services.conversation_task import (
                     control_actor_task,
@@ -394,7 +404,7 @@ async def cancel_task_by_message_id(
 
                 actor_tasks_present = False
                 media_outcomes = []
-                for task in result.data:
+                for task in tasks:
                     if (task.get("request_params") or {}).get("_media_request_v1"):
                         actor_tasks_present = True  # child snapshot must not get a chat interrupt marker
                         media_outcomes.append(_image_scope(db,ctx).rpc("stop_queued_chat_image", {"p_task_id":task["id"],"p_org_id":ctx.org_id}).execute().data)
@@ -409,6 +419,8 @@ async def cancel_task_by_message_id(
                         actor_control_outcome = control.get("outcome")
                         if actor_control_outcome == "terminal":
                             continue
+                        from services.conversation_task import actor_control_target
+                        task = actor_control_target(task, control)
                     else:
                         db.table("tasks").update({
                             "status": "failed",
@@ -453,12 +465,12 @@ async def cancel_task_by_message_id(
                 # 主动创建 stub。
                 # 详见 docs/document/TECH_用户中断与恢复机制.md §四.2
                 if not actor_tasks_present:
-                    _conv_id = result.data[0].get("conversation_id") if result.data else None
+                    _conv_id = tasks[0].get("conversation_id")
                     _anchor_messages_immediately(db, message_id, conversation_id=_conv_id)
 
                 if media_outcomes:
                     return {"success":True,"cancelled_count":sum(item["outcome"]=="stopped" for item in media_outcomes),"media_outcomes":media_outcomes}
-                return {"success": True, "cancelled_count": len(result.data)}
+                return {"success": True, "cancelled_count": len(tasks)}
 
         return {"success": True, "cancelled_count": 0}
     except (
@@ -500,25 +512,29 @@ async def pause_task_by_message_id(
         for field in ("placeholder_message_id", "assistant_message_id"):
             query = db.table("tasks").select(
                 "id, external_task_id, client_task_id, user_id, conversation_id, "
-                "org_id, delivery_context"
+                "org_id, delivery_context, request_params, status"
             ).eq(field, message_id).eq(
                 "user_id", ctx.user_id,
-            ).in_("status", ["pending", "running"])
+            ).in_("status", ["pending", "running", "completed"])
             if ctx.org_id:
                 query = query.eq("org_id", ctx.org_id)
             else:
                 query = query.is_("org_id", "null")
             result = query.execute()
-            if not result.data:
+            tasks = [task for task in result.data or [] if task.get('status')!='completed'
+                or (task.get('request_params') or {}).get('_agent_task_root')]
+            if not tasks:
                 continue
 
             paused_count = 0
             requested_count = 0
-            for task in result.data:
+            for task in tasks:
                 if not is_actor_task(task):
                     continue
                 control = pause_actor_task(db, task, ctx.user_id, ctx.org_id)
                 outcome = control.get("outcome")
+                from services.conversation_task import actor_control_target
+                task = actor_control_target(task, control)
                 if outcome in {"paused", "already_paused"}:
                     paused_count += 1
                     await release_task_slot(task)
@@ -579,10 +595,10 @@ async def resume_task_by_message_id(
 
         query = db.table("tasks").select(
             "id, external_task_id, client_task_id, user_id, conversation_id, "
-            "org_id, delivery_context, status"
+            "org_id, delivery_context, request_params, status"
         ).eq("assistant_message_id", message_id).eq(
             "user_id", ctx.user_id,
-        ).eq("status", "paused")
+        ).in_("status", ["paused", "completed"])
         if ctx.org_id:
             query = query.eq("org_id", ctx.org_id)
         else:
@@ -593,9 +609,13 @@ async def resume_task_by_message_id(
 
         resumed: list[dict[str, Any]] = []
         for task in result.data:
+            if task.get('status')=='completed' and not (task.get('request_params') or {}).get('_agent_task_root'):
+                continue
             if not is_actor_task(task):
                 continue
             outcome = resume_actor_task(db, task, ctx.user_id, ctx.org_id)
+            from services.conversation_task import actor_control_target
+            task = actor_control_target(task, outcome)
             if outcome.get("outcome") in {
                 "resumed", "already_pending", "enqueued", "already_enqueued",
             }:

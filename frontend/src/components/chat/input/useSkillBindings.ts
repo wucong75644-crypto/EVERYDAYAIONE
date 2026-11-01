@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { addSkillBinding, getAvailableSkills, getSkillBindings, removeSkillBinding,
   type SkillBinding, type SkillSummary, type SkillTaskMode } from '../../../services/skills';
+import { ApiRequestError } from '../../../services/api';
 
 interface Confirmation {
   matches: (bindings: SkillBinding[]) => boolean;
@@ -14,6 +15,8 @@ export function useSkillBindings(conversationId: string | null, enabled: boolean
   const [pending, setPending] = useState(false);
   const [needsRefresh, setNeedsRefresh] = useState(false);
   const [error, setError] = useState('');
+  const [rejected, setRejected] = useState(false);
+  const [managementRequest, setManagementRequest] = useState(0);
   const requests = useRef({ version: 0, pending: false, confirmation: null as Confirmation | null,
     conversationId, refresh: async () => {} });
   const currentData = enabled && data?.id === conversationId && data.mode === taskMode ? data : null;
@@ -24,6 +27,7 @@ export function useSkillBindings(conversationId: string | null, enabled: boolean
     const version = ++requests.current.version;
     setLoading(true);
     setError('');
+    setRejected(false);
     try {
       const result = await getSkillBindings(conversationId, ...(taskMode !== 'smart' ? [taskMode] as const : []));
       if (version !== requests.current.version) return;
@@ -53,6 +57,7 @@ export function useSkillBindings(conversationId: string | null, enabled: boolean
       setNeedsRefresh(sameConversation && (lifecycle.pending || !!lifecycle.confirmation));
       setLoading(false);
       setError('');
+      setRejected(false);
       if (!sameConversation) {
         lifecycle.pending = false;
         lifecycle.confirmation = null;
@@ -62,7 +67,7 @@ export function useSkillBindings(conversationId: string | null, enabled: boolean
     return () => { active = false; lifecycle.version++; };
   }, [refresh, conversationId]);
 
-  const ready = !!currentData && !loading && !pending && !needsRefresh && !error;
+  const ready = !!currentData && !loading && !pending && !needsRefresh && (!error || rejected);
   const mutate = async (operation: (isCurrent: () => boolean, recordIntent: () => void) => Promise<SkillBinding[]>, confirmation: Confirmation) => {
     if (!enabled || !conversationId || !ready || requests.current.pending) return;
     const version = requests.current.version;
@@ -70,14 +75,22 @@ export function useSkillBindings(conversationId: string | null, enabled: boolean
     requests.current.confirmation = null;
     setPending(true);
     setError('');
+    setRejected(false);
     try {
       const result = await operation(() => version === requests.current.version, () => { requests.current.confirmation = confirmation; });
       if (version !== requests.current.version) return;
       setData({ id: conversationId, mode: taskMode, bindings: result });
       requests.current.confirmation = null;
       confirmation.complete();
-    } catch {
+    } catch (failure) {
       if (version === requests.current.version) {
+        if (failure instanceof ApiRequestError && failure.details?.state_unchanged === true) {
+          requests.current.confirmation = null;
+          setNeedsRefresh(false);
+          setRejected(true);
+          setError(failure.message);
+          return;
+        }
         const uncertain = !!requests.current.confirmation;
         setNeedsRefresh(uncertain);
         setError(uncertain
@@ -99,7 +112,11 @@ export function useSkillBindings(conversationId: string | null, enabled: boolean
   };
 
   return {
-    bindings, loading, pending, error, ready,
+    bindings, loading, pending, error, ready, rejected,
+    dismissError: () => { setRejected(false); setError(''); },
+    managementRequest,
+    manageBindingId: bindings[0]?.binding_id,
+    manageBindings: () => { setRejected(false); setError(''); setManagementRequest(value => value + 1); },
     blocked: enabled && (pending || needsRefresh),
     refresh,
     pin: (skill: SkillSummary, complete: () => void) => {

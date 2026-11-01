@@ -33,6 +33,7 @@ def build_sandbox_executor(
     conversation_id: str = "",
     files_dict: Optional[Dict[str, str]] = None,  # 兼容保留,已不使用
     kernel_manager=None,
+    managed_task: bool = False,
 ) -> SandboxExecutor:
     """构建沙盒执行器(Kernel 模式)。
 
@@ -72,6 +73,7 @@ def build_sandbox_executor(
         skills_dir=_skills_dir,
         user_id=user_id,
         org_id=org_id,
+        managed_task=managed_task,
     )
 
 

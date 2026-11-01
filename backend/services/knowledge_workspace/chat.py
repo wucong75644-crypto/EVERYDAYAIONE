@@ -65,7 +65,7 @@ class KnowledgeRun(DerivedChat):
         self.repo,self.id,self.snapshot=repo,str(snapshot_id),snapshot
 
     @classmethod
-    def start(cls, repo, *, conversation_id, input_message_id, default_scope=False, question=None):
+    def start(cls, repo, *, conversation_id, input_message_id, default_scope=False, question=None, allow_self_contained=True, defer_default=False):
         with repo.cursor() as c:
             # Message visibility verifies conversation ownership. Refs are loaded
             # from persistence, not restored from an untrusted params dictionary.
@@ -74,17 +74,19 @@ class KnowledgeRun(DerivedChat):
             msg=c.fetchone()
             if msg is None: unavailable()
             refs=msg['knowledge_refs']
-            if not refs and not default_scope:return None
             c.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))',(f'kb-run:{repo.scope.actor_user_id}:{input_message_id}',))
             c.execute('SELECT id,snapshot FROM public.kb_read_snapshots WHERE input_message_id=%s AND conversation_id=%s',
                       (input_message_id,conversation_id))
             previous=c.fetchone()
             if previous:
-                if not refs and default_scope:
+                if not refs and (default_scope or previous['snapshot'].get('automatic') is True):
                     refs = previous['snapshot']['refs']
                 check_roots(c,refs,include_hidden=True)
                 if previous['snapshot']['refs']!=refs: unavailable('KNOWLEDGE_SNAPSHOT_MISMATCH')
                 return cls(repo,previous['id'],previous['snapshot'])
+            # A self-contained new request may avoid default snapshot work, but
+            # a saved snapshot always restores first (pause/resume and steering).
+            if not refs and not default_scope:return None
             if not refs and default_scope:
                 # Existing callers without a question retain compatibility. The
                 # chat runtime supplies the actual input for task scope selection.
@@ -95,8 +97,11 @@ class KnowledgeRun(DerivedChat):
                     refs = [{'root': {'kind': 'container', 'id': str(row['id'])}} for row in allowed]
                 else:
                     from .scope_selection import roots
-                    refs, scope_reason = roots(c, question)
+                    refs, scope_reason = roots(c, question, allow_self_contained=allow_self_contained)
                 if not refs: return None
+                if defer_default:
+                    from .answer_policy import DeferredKnowledgeScope
+                    return DeferredKnowledgeScope(repo, str(conversation_id), str(input_message_id), tuple(refs))
             containers=check_roots(c,refs)
             # Collect metadata optimistically, then lock containers in sorted
             # order and verify these revisions before persisting the snapshot.
@@ -262,6 +267,15 @@ class KnowledgeRun(DerivedChat):
         if item['type']=='generated':return self._generated_text(c,item)
         if item['type']=='file':
             return self._file_view(c,item).get('extracted_text') or ''
+        cached = getattr(self, '_candidate_bodies', {}).get((str(item['id']), int(item['revision'])))
+        if cached is not None:
+            # Keep the original authorization and version-existence guarantee;
+            # preparation is neither a permission grant nor a read receipt.
+            c.execute('SELECT revision FROM public.kb_object_versions WHERE object_id=%s AND revision=%s',
+                      (item['id'], item['revision']))
+            if c.fetchone() is None:unavailable()
+            self._candidate_hits = getattr(self, '_candidate_hits', 0) + 1
+            return cached+'\n\n'+'\n\n'.join(v['text'] for v in item['manual_corrections']) if item.get('manual_corrections') else cached
         c.execute('SELECT body FROM public.kb_object_versions WHERE object_id=%s AND revision=%s',(item['id'],item['revision']))
         row=c.fetchone()
         if row is None:unavailable()

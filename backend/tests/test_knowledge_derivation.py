@@ -323,7 +323,12 @@ async def test_default_runtime_uses_live_scope_without_noise_for_unrelated_chat(
  handler=SimpleNamespace(db=SimpleNamespace(pool=r.pool),org_id=r.scope.org_id,_personal_context_allowed=True)
  anchor=ContextAnchor(task_id=str(uuid4()),conversation_id=cid,turn_id=str(uuid4()),input_message_id=mid,base_revision=0,through_message_id=None,org_id=r.scope.org_id)
  await prepare_knowledge_run(handler,anchor,r.scope.actor_user_id,cid)
- assert handler._knowledge_run and handler._knowledge_run.snapshot['automatic']
+ assert handler._knowledge_run is None and handler._knowledge_answer_guard is None
+ # Only an actual model-requested scope is subsequently restored on this input.
+ from services.knowledge_workspace.chat import KnowledgeRun
+ requested=KnowledgeRun.start(r,conversation_id=cid,input_message_id=mid,default_scope=True)
+ await prepare_knowledge_run(handler,anchor,r.scope.actor_user_id,cid)
+ assert handler._knowledge_run.id==requested.id
  assert handler._knowledge_run.evidence_footer()==''
  text='用户要求的代码 /knowledge?object=example&revision=1'
  assert handler._knowledge_run.normalize_citations(text)==text

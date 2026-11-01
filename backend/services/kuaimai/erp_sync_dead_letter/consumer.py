@@ -12,6 +12,7 @@ import json
 from typing import Any
 
 from loguru import logger
+from services.kuaimai.session_rotations import rotation_recorder
 
 from utils.time_context import now_cn
 
@@ -186,6 +187,7 @@ async def _get_or_create_client(
             refresh_token=creds["kuaimai_refresh_token"],
             org_id=org_id,
             token_persister=_persist,
+            token_rotation_recorder=rotation_recorder(db,org_id),
         )
         await client.load_cached_token()  # 从 Redis 拿最新热缓存
         org_clients[org_id] = client

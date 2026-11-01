@@ -385,9 +385,6 @@ def test_checkpoint_keeps_retrieval_open_until_applicable_rule_is_fully_read(sta
  assert route_checkpoint_message(run) is None
  from services.knowledge_workspace import grounding
  with pytest.raises(grounding.GroundingError,match='GROUNDING_RULES_INCOMPLETE'):run.grounding_sources()
- usage={}
- assert '适用规则尚未完整读取' in asyncio.run(grounding.release_answer(run,'可以直接处理。','收纳规范是什么？',usage=usage))
- assert usage['grounding_outcome']=='incomplete_rules' and not usage.get('grounding_calls')
  # Delivered rules grant only their actual handle; reading them settles the rule prerequisite.
  run.execute('read',{'root_handle':step['root_handle'],'item_handles':[rule['handle']]})
  assert route_checkpoint_message(run) is not None

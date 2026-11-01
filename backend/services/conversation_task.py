@@ -18,15 +18,29 @@ def is_actor_task(task: Mapping[str, Any]) -> bool:
     return isinstance(context, dict) and context.get("actor") is True
 
 
+def actor_control_target(task, result):
+    """Use the actual controlled window for websocket gates and slot release."""
+    target = {**task, 'id':result.get('task_id',task['id']), **{
+        key:result.get(key,task.get(key)) for key in (
+            'client_task_id','external_task_id','assistant_message_id')}}
+    if 'task_slot_id' in result:
+        target['request_params'] = {**(task.get('request_params') or {}),'_task_slot_id':result['task_slot_id']}
+    return target
+
+
 def control_actor_task(
     db: Any,
     task: Mapping[str, Any],
     user_id: str,
     org_id: str | None,
     control: str,
+    _logical_delegate: bool = False,
 ) -> dict[str, Any]:
     if control not in {"cancel", "pause"}:
         raise ValueError("unsupported actor control")
+    if not _logical_delegate and (task.get('request_params') or {}).get('_agent_task_root'):
+        from services.task_execution.user_control import control as logical_control
+        return logical_control(db,task,user_id=user_id,org_id=org_id,action=control)
 
     if control == "cancel":
         rpc_name = (
@@ -106,8 +120,12 @@ def resume_actor_task(
     task: Mapping[str, Any],
     user_id: str,
     org_id: str | None,
+    _logical_delegate: bool = False,
 ) -> dict[str, Any]:
     """把 paused Actor task 原子放回 pending，等待新 execution token。"""
+    if not _logical_delegate and (task.get('request_params') or {}).get('_agent_task_root'):
+        from services.task_execution.user_control import control as logical_control
+        return logical_control(db,task,user_id=user_id,org_id=org_id,action='resume')
     response = db.rpc(
         "resume_paused_generation_turn",
         {

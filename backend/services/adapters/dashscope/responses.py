@@ -8,6 +8,7 @@ from urllib.parse import urlsplit
 
 from ..types import StreamChunk, ToolCallDelta
 from ..chat_protocol import chat_messages as normalize_chat_messages
+from .call_identity import wire_messages
 
 # Explicit model capabilities; never infer built-in tools from the provider name.
 BUILTIN_TOOLS = {
@@ -27,7 +28,7 @@ def stable_tools(tools: list[dict]) -> list[dict]:
 def chat_messages(messages: list[dict], *, cache: bool | None) -> list[dict]:
     """Never leak provider replay metadata to Chat or another model."""
     result = []
-    for message in normalize_chat_messages(messages):
+    for message in normalize_chat_messages(wire_messages(messages)):
         item = {k: copy.deepcopy(v) for k, v in message.items()
                 if k in {"role", "content", "tool_calls", "tool_call_id", "name", "reasoning_content"}}
         if cache is False and isinstance(item.get("content"), list):
@@ -61,7 +62,7 @@ def chat_messages(messages: list[dict], *, cache: bool | None) -> list[dict]:
 
 def response_input(messages: list[dict], model: str) -> list[dict]:
     result = []
-    for message in messages:
+    for message in wire_messages(messages):
         role = message.get("role")
         if role == "tool":
             output = message.get("content") or ""

@@ -235,6 +235,23 @@ class TestTaskRouteSlotRelease:
         mock_release.assert_awaited_once_with(task_row)
 
     @pytest.mark.asyncio
+    async def test_completed_ordinary_message_is_not_reopened_or_interrupted(self):
+        from starlette.requests import Request as Req
+        from api.routes.task import cancel_task_by_message_id
+        row = {"id":"old", "status":"completed", "user_id":"u1", "org_id":None,
+            "conversation_id":"c1", "request_params":{}}
+        db, chain = self._make_scoped_db([row])
+        with patch("api.routes.task._anchor_messages_immediately") as anchor, \
+             patch("api.routes.task.release_task_slot",new_callable=AsyncMock) as release:
+            result=await cancel_task_by_message_id(
+                request=Req(scope={"type":"http","method":"POST","path":"/","headers":[],"query_string":b""}),
+                ctx=OrgContext(user_id="u1"),db=db,message_id="original-output")
+        assert result=={"success":True,"cancelled_count":0}
+        chain.update.assert_not_called()
+        anchor.assert_not_called()
+        release.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_cancel_actor_uses_atomic_cancel_rpc_path(self):
         from starlette.requests import Request as Req
 

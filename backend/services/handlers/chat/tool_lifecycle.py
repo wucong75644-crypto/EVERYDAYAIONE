@@ -7,11 +7,12 @@ from services.tools.spec import thaw
 
 
 class ActorToolLifecycle:
-    def __init__(self, handler, context):
+    def __init__(self, handler, context, *, recovery_only=False):
         self.handler = handler
         self.store = getattr(handler, "_actor_invocation_store", None)
         self.context = context
         self.call = None
+        self.recovery_only = recovery_only
 
     def _enabled(self, decision):
         h = self.handler
@@ -30,6 +31,8 @@ class ActorToolLifecycle:
 
     async def replay(self, call, context, decision):
         if not self._enabled(decision):
+            if self.recovery_only and decision.effects != ('none',):
+                raise UncertainToolInvocationError('ACTOR_RECOVERY_UNRECORDED_EFFECT')
             return None
         from services.tool_invocation_store import hash_tool_arguments
         row = await asyncio.to_thread(
@@ -37,6 +40,8 @@ class ActorToolLifecycle:
             turn_id=self.handler._actor_turn_id, tool_call_id=call.call_id,
         )
         if not row:
+            if self.recovery_only and decision.effects != ('none',):
+                raise UncertainToolInvocationError('ACTOR_RECOVERY_UNRECORDED_EFFECT')
             return None
         if row["tool_name"] != call.name or row["args_hash"] != hash_tool_arguments(thaw(call.arguments)):
             raise PermissionError("ACTOR_TOOL_INVOCATION_ARGUMENT_MISMATCH")

@@ -132,6 +132,9 @@ class ToolRuntime:
                 from .argument_validation import validate_model_image_arguments
                 validate_model_image_arguments(self.registry.get(name), call.arguments)
             if file_call is not None:
+                prepare_resume=getattr(lifecycle,'prepare_file_resume',None)
+                if prepare_resume is not None:
+                    await prepare_resume(file_call,call,context)
                 async with workspace_lock(file_call.resolver.root, check=lambda: self.check_lifetime(context)):
                     await file_call.prepare()
                 context = replace(context, resource_versions=file_call.binding)
@@ -157,13 +160,15 @@ class ToolRuntime:
 
             async def before_dispatch(call, context, decision):
                 self.check_lifetime(context)
+                from services.task_execution.requirement_changes import gate as user_change_gate
+                await user_change_gate(self.executor)
                 if file_call is not None:
                     # Membership/manifest may have changed while approval waited.
                     resolve_resources(self.executor, name, call.arguments)
                     from .resource_access import resource_boundary
                     file_call.resolver.access = resource_boundary(self.executor)
                     await file_call.verify()
-                if cache is not None and decision.cacheable:
+                if cache is not None and decision.cacheable and not getattr(lifecycle,'requires_fresh_read',False):
                     try:
                         raw = cache.get(name, cache_arguments(call))
                     except Exception as error:
@@ -185,7 +190,10 @@ class ToolRuntime:
                         if result.execution.status != "succeeded":
                             from .result import UncertainToolInvocationError
                             raise UncertainToolInvocationError("CACHED_TOOL_RESULT_NOT_COMPLETED")
-                        return result.reused(call=call, context=context, decision=decision, cached=True)
+                        result=result.reused(call=call, context=context, decision=decision, cached=True)
+                        consume_cached=(getattr(lifecycle,'consume_cached',None)
+                            if getattr(lifecycle,'records_cache_consumption',False) is True else None)
+                        return await consume_cached(call,context,decision,result) if consume_cached is not None else result
                 if lifecycle is not None:
                     return await lifecycle.begin(call, context, decision)
                 return None

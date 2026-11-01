@@ -128,6 +128,11 @@ async def bind_scheduled_skills(db, *, owner, org, task_id, selections):
             body_sha256=validated.body_sha256,
             allowed_tool_names=skill_tool_ceiling(metadata, permitted, permitted),
         ))
+    from services.skills.coordination import Participant, validate_configuration
+    from services.skills.workflow_contracts import contract_for
+    validate_configuration([Participant(package_id=str(p.candidate.package_id),
+        skill_key=p.candidate.skill_key, revision=p.candidate.revision, body_sha256=p.body_sha256,
+        sources=('scheduled',), contract=contract_for(p.candidate, p.body_sha256)) for p in pins])
     return ScheduledSkillSnapshot(skills=tuple(pins)).model_dump(mode="json")
 
 

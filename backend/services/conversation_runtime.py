@@ -15,6 +15,7 @@ from services.conversation_worker import ConversationWorker, RedisConversationWa
 from services.handlers.chat.actor_sink import ActorDelivery, ActorWebSink
 from services.handlers.chat.executor import ChatGenerationExecutor, _normalize_model_id
 from services.replay_checkpoint_store import DatabaseReplayCheckpointStore
+from services.task_execution.continuation_consumer import TaskContinuationConsumer
 
 
 class ConversationActorRuntime:
@@ -48,6 +49,7 @@ class ConversationActorRuntime:
             db,
             execution,
             wakeup_bus=RedisConversationWakeup(),
+            continuation_consumer=TaskContinuationConsumer(db),
         )
         self._worker_task: asyncio.Task[Any] | None = None
 

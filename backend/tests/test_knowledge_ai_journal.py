@@ -168,8 +168,8 @@ def test_discovery_selection_is_not_authorization():
     from services.knowledge_workspace.scope_selection import select
     nodes = [{'id': 'personal', 'kind': 'personal', 'title': '个人'}, {'id': 'team', 'kind': 'team', 'title': '团队'},
              {'id': 'project', 'kind': 'project', 'title': '春季上新'}]
-    assert select(nodes, '你好')[0] == []
-    assert select(nodes, '翻译下面的文字：hello')[0] == []
+    assert {n['id'] for n in select(nodes, '你好')[0]} == {'personal', 'team'}
+    assert {n['id'] for n in select(nodes, '翻译下面的文字：hello')[0]} == {'personal', 'team'}
     assert {n['id'] for n in select(nodes, '退款怎么处理？')[0]} == {'personal', 'team'}
     assert len(select(nodes, '春季上新项目的流程？')[0]) == 3
     selected, reason = select(nodes + [dict(nodes[-1], id='another')], '春季上新项目的流程？')
@@ -225,6 +225,17 @@ async def test_discovery_returns_persisted_snapshot_and_respects_actor(journal_d
         c.execute('GRANT SELECT ON tasks TO everydayai_runtime')
         tid = c.execute('SELECT task_id FROM kb_ai_events WHERE id=%s', (eid,)).fetchone()[0]
         cid = c.execute('SELECT conversation_id FROM tasks WHERE id=%s', (tid,)).fetchone()[0]
+    from services.knowledge_workspace.chat import KnowledgeRun
+    from services.knowledge_workspace.answer_policy import DeferredKnowledgeScope
+    from tests.test_knowledge_workspace_v2 import document
+    document(repo)
+    with psycopg.connect(**make.admin_args) as c:
+        message = c.execute('SELECT input_message_id FROM tasks WHERE id=%s',(tid,)).fetchone()[0]
+    policy=KnowledgeRun.start(repo,conversation_id=str(cid),input_message_id=str(message),
+        default_scope=True,question='知识库中的报告规则是什么？',defer_default=True,allow_self_contained=False)
+    assert isinstance(policy,DeferredKnowledgeScope)
+    with psycopg.connect(**make.admin_args) as c:
+        assert c.execute('SELECT count(*) FROM kb_read_snapshots WHERE input_message_id=%s',(message,)).fetchone()[0]==0
     executor = ToolExecutor(SimpleNamespace(pool=repo.pool), repo.scope.actor_user_id, str(cid), repo.scope.org_id)
     executor.task_id = str(tid)
     executor._task_id = str(tid)

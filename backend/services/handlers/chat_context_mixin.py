@@ -136,6 +136,10 @@ class ChatContextMixin:
                 self.db, context_anchor, text_content,
             )
             self._resource_manifest = context_snapshot.resource_manifest
+            from services.knowledge_workspace.input_facts import KnowledgeInputFacts
+            self._knowledge_input_facts = KnowledgeInputFacts.from_snapshot(
+                context_snapshot, context_snapshot.input_content,
+            )
 
         from services.handlers.chat_context.image_sources import discovered_image_sources
         input_parts = [p.model_dump(mode="json") if hasattr(p, "model_dump") else p for p in content]

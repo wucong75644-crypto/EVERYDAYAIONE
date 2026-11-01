@@ -30,6 +30,24 @@ def named_titles(question):
     return set(re.findall(r'[“「《"]([^”」》"\n]{6,180})[”」》"]',question))
 
 
+def saved_plan(cursor, snapshot_id, fingerprint):
+    """Only an answer for this frozen snapshot and exact question can resume."""
+    cursor.execute("SELECT to_regclass('public.kb_retrieval_states') IS NOT NULL AS enabled")
+    if not cursor.fetchone()['enabled']:
+        return False, None
+    cursor.execute('SELECT state FROM public.kb_retrieval_states WHERE snapshot_id=%s', (snapshot_id,))
+    row = cursor.fetchone()
+    saved = row['state'].get('program_answer') if row else None
+    return True, saved['plan'] if saved and saved.get('question_hash') == fingerprint else None
+
+
+def restore_saved_plan(run, question):
+    run.revalidate()
+    with run.repo.cursor() as cursor:
+        _, plan = saved_plan(cursor, run.id, hashlib.sha256(question.encode()).hexdigest())
+    return {**plan, 'cache_hit': True} if plan is not None else None
+
+
 def named_source_plan(run, question):
     """Bind explicit document names across the frozen scope before model routing.
 
@@ -77,13 +95,9 @@ def collect(run,question):
     started=time.monotonic();run.revalidate()
     fingerprint=hashlib.sha256(question.encode()).hexdigest()
     with run.repo.cursor() as c:
-        c.execute("SELECT to_regclass('public.kb_retrieval_states') IS NOT NULL AS enabled")
-        cache_enabled=c.fetchone()['enabled']
-        if cache_enabled:
-            c.execute('SELECT state FROM public.kb_retrieval_states WHERE snapshot_id=%s',(run.id,));row=c.fetchone()
-            saved=(row['state'].get('program_answer') if row else None)
-            if saved and saved.get('question_hash')==fingerprint:
-                return {**saved['plan'],'cache_hit':True,'retrieval_ms':round((time.monotonic()-started)*1000)}
+        cache_enabled, saved = saved_plan(c, run.id, fingerprint)
+        if saved is not None:
+            return {**saved,'cache_hit':True,'retrieval_ms':round((time.monotonic()-started)*1000)}
     words=keywords(question)
     if not words:return {'mode':'expand','reason':'ambiguous_question'}
     vector=query_embedding(question);groups={};parts={};unreadable=False;relevant_unreadable=False
@@ -205,7 +219,17 @@ async def prepare(handler,prepared,request,skills=None):
             await asyncio.to_thread(run.revalidate)
             prepared.knowledge_answer_plan={'mode':mode,'reason':restored.get('reason'),'replay':True}
         return
-    plan=await asyncio.to_thread(named_source_plan,run,question)
+    # A saved automatic snapshot is availability, not a fresh request to run
+    # retrieval before the main model. Explicit knowledge requests retain the
+    # existing optimization; replay above always reuses its frozen evidence.
+    plan = None
+    if (run.snapshot.get('automatic') is True and not named_titles(question)
+            and not re.search(r'知识库|内部(?:资料|文档|制度|规则|流程)|公司(?:制度|规则|流程)', question)):
+        plan = await asyncio.to_thread(restore_saved_plan, run, question)
+        if plan is None:
+            return
+    if plan is None:
+        plan=await asyncio.to_thread(named_source_plan,run,question)
     if plan is None:
         if not eligible(question,hierarchical=hierarchical):return
         plan=await asyncio.to_thread(collect,run,question)

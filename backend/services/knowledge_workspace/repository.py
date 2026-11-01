@@ -11,9 +11,14 @@ class Repository:
         self.pool, self.scope = pool, scope
 
     @contextmanager
-    def cursor(self):
-        with self.pool.connection() as connection, connection.transaction():
+    def cursor(self, *, connection_timeout=None, read_only=False, statement_timeout_ms=None):
+        options = {} if connection_timeout is None else {'timeout': connection_timeout}
+        with self.pool.connection(**options) as connection, connection.transaction():
             with connection.cursor(row_factory=dict_row) as c:
+                if read_only:
+                    c.execute('SET TRANSACTION READ ONLY')
+                if statement_timeout_ms is not None:
+                    c.execute("SELECT set_config('statement_timeout',%s,true)", (str(int(statement_timeout_ms)),))
                 c.execute(SET_DATABASE_SCOPE_SQL, self.scope.settings)
                 yield c
 

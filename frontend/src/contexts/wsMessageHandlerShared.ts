@@ -1,3 +1,4 @@
+import { appliedChatChunk } from '../utils/chatTiming';
 /** WebSocket 消息处理器的共享类型与基础操作。 */
 
 import type { OperationContext } from './WebSocketContext';
@@ -173,6 +174,7 @@ export function flushChunkBuffer(deps: HandlerDeps): void {
   buffer.forEach((data, messageId) => {
     if (data.conversationId) {
       store.appendStreamingContent(data.conversationId, data.chunk);
+      if (data.chunk) appliedChatChunk(messageId);
     } else {
       store.appendContent(messageId, data.chunk);
     }
