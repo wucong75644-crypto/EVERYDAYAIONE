@@ -5,7 +5,9 @@ DO $install$ DECLARE installed record; permission record; BEGIN
     SELECT proowner,prosrc,proacl,prosecdef,pg_get_userbyid(proowner) owner_name INTO installed FROM pg_proc
       WHERE oid='public.pause_generation_turn_owned(uuid,uuid,text)'::regprocedure;
     IF installed.owner_name NOT IN ('everydayai','everydayai_owner') OR installed.prosecdef
-       OR md5(installed.prosrc)<>'4b315fa32edae89ca625d343cd51b20e'
+       -- Exact reviewed repository and installed production variants. Keep the
+       -- original body (including its snapshot helper choice) behind the wrapper.
+       OR md5(installed.prosrc) NOT IN ('4b315fa32edae89ca625d343cd51b20e','c21ad0c393cf26acaa85375f757cfd19')
        OR to_regprocedure('public.agent_task_legacy_pause_generation_turn_owned(uuid,uuid,text)') IS NOT NULL THEN
         RAISE EXCEPTION 'TASK_ACTOR_CONTROL_CONTRACT_UNSUPPORTED';
     END IF;
@@ -37,7 +39,7 @@ DO $install$ DECLARE installed record; permission record; BEGIN
     SELECT proowner,prosrc,proacl,prosecdef,pg_get_userbyid(proowner) owner_name INTO installed FROM pg_proc
       WHERE oid='public.cancel_generation_turn_owned(uuid,uuid,text)'::regprocedure;
     IF installed.owner_name NOT IN ('everydayai','everydayai_owner') OR installed.prosecdef
-       OR md5(installed.prosrc)<>'83bee41969f36ac93b23dad23f5c582b'
+       OR md5(installed.prosrc) NOT IN ('83bee41969f36ac93b23dad23f5c582b','bd171df8d471c36ab93aa1a3d7383997')
        OR to_regprocedure('public.agent_task_legacy_cancel_generation_turn_owned(uuid,uuid,text)') IS NOT NULL THEN
         RAISE EXCEPTION 'TASK_ACTOR_CONTROL_CONTRACT_UNSUPPORTED';
     END IF;

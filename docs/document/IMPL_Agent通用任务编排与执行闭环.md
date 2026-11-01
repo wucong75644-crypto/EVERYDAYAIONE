@@ -826,3 +826,14 @@ Chrome原页面在动作间持续被切回另一个活跃任务，工具stale-in
 11失败集中在5个旧测试文件：不安全目录mkdir权限受发布umask077掩盖（现显式chmod755后仍断言blocked）；worker.__new__夹具未初始化新增video loop/pool（现同时断言三路取消/关闭）；确认测试动态Mock把未配置prepare_file_resume当异步能力（显式None/boolean，真实确认断言保留）；旧Actor Mock动态生成新增reader/followup属性（改用真实ConversationTurnRuntime，仅safe_point为AsyncMock）；6项ERP契约期望尚未登记既有purchase_strategy_calculate从读改为异步写的安全修正。新增静态两schema升级，原不可变baseline不改，registry仅核对该条is_write/描述后还原两字段继续整表hash，其他接口/权限/确认契约不放松。原ERP Agent及延期ERP写开关未改。
 
 550项定向回归通过，独立只读窄审无阻塞发现。修复仅测试/证据文档，不改应用行为；仍按新候选重新执行完整受控发布，不能复用失败结果冒充成功。不新增付费模型调用、生图或业务写验收。最终结果以新入口结构化RELEASE_RESULT为准。
+
+
+### 382 同SHA续发的权限故障、受控恢复与生产Actor兼容
+
+67b8c47bbd6eee7e210e6bbb7d53254f29716897已完成完整前端2731/后端13822通过（1215按条件跳过、4xfail）。首次远端写入后因操作调用继承umask077，使SQL新文件600，postgres无法读取340，事务未提交且340账本无记录。前端同样403，后端health正常；属本次调用错误，已明确向用户说明。核实无writer/原锁/健康后通过release.sh --recover-lock归档，不删锁、不伪造成功。正常022环境补795项权限及兼容检查通过，同一SHA沿原入口复用通过测试、保留构建/身份/账本/健康门。正常权限续发已使前端HTTP200、index644；340–345事务成功记账。
+
+随后346精确hash检查拒绝原生产Actor定义，事务回滚，未建立wrapper/迁移账本；发布再次停止并保留锁，服务尚未重启。只读获取两函数定义/owner/ACL/definer，owner=everydayai、invoker、仅原执行权限。生产pause body c21ad0c393cf26acaa85375f757cfd19，cancel bd171df8d471c36ab93aa1a3d7383997；原346只接受repo239的4b315fa32edae89ca625d343cd51b20e/83bee41969f36ac93b23dad23f5c582b。生产pause原调用cancel_snapshot，repo239调用pause_snapshot。不得用本地正文覆盖生产现有上下文行为。
+
+仅为尚未应用的346补精确已核实hash，原owner/invoker/alias/未知hash守卫不变，仍rename-delegate原体并保留owner/执行ACL；不改已成功340–345。新增原生产定义静态测试夹具，无用户数据。真实隔离PG在两种表owner下验证repo/production原体与wrapper、rollback owner/body/ACL/definer一致，有效ACL不扩大，未知body拒绝无部分alias。原7条Actor协议在repo版本全过；production原7条在包装前后均6过/1既有pause marker失败，未修改原断言。进一步固定该失败最终行231及归一化失败信息，防止仅凭longtrace关键词误放行；另独立SQL roundtrip验证暂停状态/owner token释放、最后文本保留、input/output修订均1、原marker分别user_pause/user_cancel、重复暂停幂等及取消胜出，比较包装前后完全相同。该既有生产marker问题未修，不称生产7全过。最终本地20项通过、独立审查P2已关闭。
+
+已确认后端health正常、前端恢复200、无在途writer、346未记账，再由原入口恢复原锁并归档。后续新提交须以其发布结果为准，不绕过迁移或健康门，不自动启用新编排/ERP写、不追加付费验收。调用日志必须单独预建0600，不再向整个发布进程传播umask077；公共构建/迁移文件沿正常022权限。
