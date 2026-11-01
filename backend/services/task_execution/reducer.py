@@ -50,7 +50,7 @@ def ready_steps(state: TaskState):
         return ()
     completed = {result.step_id for result in state.results}
     missing = set(missing_requirements(state))
-    return tuple(step for step in state.steps if step.id not in completed
+    return tuple(step for step in state.steps if step.id not in completed and step.id not in state.retired_call_steps
                  and set(step.depends_on) <= completed
                  and not any(missing & set(g.requirement_ids) for g in state.capability_gates
                              if g.capability == step.capability))

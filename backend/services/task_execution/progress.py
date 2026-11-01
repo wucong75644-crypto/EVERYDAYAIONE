@@ -10,6 +10,8 @@ def marker(blocks, state):
     if any(b.get('type') == 'task_progress' and b.get('root_task_id') == root for b in blocks):
         return None
     block = {'type': 'task_progress', 'root_task_id': root}
+    if state.model_directed:
+        block['presentation'] = 'model_directed'
     blocks.append(block)
     return block
 
@@ -39,7 +41,7 @@ def project(state: TaskState):
         else:
             status = 'waiting_dependency'
         steps.append({'id': step.id, 'title': step.title, 'status': status})
-    return {
+    result = {
         'root_task_id': str(state.root_task_id), 'revision': state.revision,
         'status': state.status, 'steps': steps,
         'completed_steps': sum(s['status'] == 'completed' for s in steps),
@@ -49,6 +51,13 @@ def project(state: TaskState):
         'pending_results': sum(o.status == 'accepted' and not needs_verification(o) for o in state.operations),
         'unconfirmed_results': sum(needs_verification(o) for o in state.operations),
     }
+    if state.model_directed:
+        image_steps = [s for s in state.steps if s.capability == 'platform.generate_image' and s.id not in state.retired_call_steps]
+        result.update(presentation='model_directed', image_jobs={
+            'completed': sum(s.id in done for s in image_steps), 'total': len(image_steps)})
+        if state.working_plan is not None:
+            result['working_plan'] = state.working_plan.model_dump(mode='json')
+    return result
 
 
 def read(db, *, root_task_id, message_id, user_id, org_id):

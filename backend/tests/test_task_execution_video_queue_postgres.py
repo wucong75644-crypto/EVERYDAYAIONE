@@ -59,7 +59,7 @@ def rpc(f,name,worker=True,**params):
     with connection(f,worker) as c:return c.execute(query,tuple(Jsonb(v) if isinstance(v,(dict,list)) else v for v in params.values())).fetchone()[0]
 
 
-def setup(dsn,org=False):
+def setup(dsn,org=False,model_directed=False):
     f=seed(dsn);f['org']=str(uuid4()) if org else None
     if org:
         with psycopg.connect(dsn) as c:
@@ -72,9 +72,21 @@ def setup(dsn,org=False):
     raw['requirements'][0]['artifact_kind']='file'
     raw['steps']=[{'id':'video','title':'真实视频','capability':'platform.generate_video','requirement_ids':['report']}]
     state=TaskState.model_validate(raw)
+    bound=None
+    if model_directed:
+        from services.task_execution.bootstrap import TaskBootstrap
+        from services.task_execution.model_directed import record_calls,operation_binding
+        from services.tools import ToolCall
+        from services.tools.catalog import build_capability_catalog
+        b=TaskBootstrap(task_id=state.root_task_id,actor_user_id=state.actor_user_id,conversation_id=state.conversation_id,
+            input_message_id=state.source_message_ids[0],org_id=state.org_id,execution_identity=state.execution_identity,
+            original_goal=state.original_goal,model_directed=True)
+        call=ToolCall('video-1','generate_video',{'prompt':'桌面文具视频'})
+        state=record_calls(None,b,[call],build_capability_catalog())
+        bound=operation_binding(state,call)
     with connection(f) as c:
         save(c,f,{'messages':[{'role':'system','content':'原记忆'}],'opaque_context':{'keep':True},'_task_execution':state.model_dump(mode='json')})
-        started=begin(c,f,state.revision,call='video-1',tool='generate_video',capability='platform.generate_video',step='video',args_hash=hash_tool_arguments({'prompt':'桌面文具视频'}))
+        started=begin(c,f,state.revision,call='video-1',tool='generate_video',capability='platform.generate_video',step=bound[0] if bound else 'video',effect=bound[1] if bound else 'image-slot-1',args_hash=hash_tool_arguments({'prompt':'桌面文具视频'}))
     state=TaskState.model_validate(started['state'])
     origin={'parent_task_id':f['task'],'logical_task_id':f['task'],'actor_user_id':f['user'],'org_id':f['org'],
         'workspace_owner_id':f['user'],'context_scope':'user','conversation_id':f['conv'],'turn_id':f['turn'],
@@ -174,14 +186,15 @@ def test_rollback_refuses_other_tenant_facts_and_keeps_force_rls(video_db):
         assert c.execute("SELECT relforcerowsecurity FROM pg_class WHERE oid='tasks'::regclass").fetchone()[0]
 
 
-def register_output(f):
+def register_output(f,storage_output=None):
     from services.assets.asset_registry import AssetRegistryService,ReadyAssetDraft,AssetRefDraft
     def call(name,params):return SimpleNamespace(execute=lambda:SimpleNamespace(data=rpc(f,name,**params)))
     output={'url':'https://owned.invalid/'+f['child']+'.mp4','content_sha256':'a'*64,'etag':'own-etag','size':42,
         'object_key':'personal/test/'+f['child']+'.mp4','name':f['child']+'.mp4','mime_type':'video/mp4'}
+    if storage_output is not None:output=dict(storage_output)
     asset=AssetRegistryService(SimpleNamespace(rpc=call)).register_ready_asset(
         ReadyAssetDraft(org_id=None,storage_scope='user',storage_owner_key=f['user'],media_type='video',original_url=output['url'],
-            download_url=output['url'],name=output['name'],size=42,content_sha256=output['content_sha256']),
+            download_url=output['url'],name=output['name'],size=output['size'],content_sha256=output['content_sha256']),
         AssetRefDraft(ref_key='task:'+f['child']+':0',actor_user_id=f['user'],source_type='generated',source_kind='video_task',ref_kind='task',
             conversation_id=f['conv'],source_task_id=f['child'],source_message_id=f['assistant'],content_index=0))
     output['asset_id']=asset['asset']['id']
@@ -189,12 +202,12 @@ def register_output(f):
     return output
 
 
-def publish_success(f):
+def publish_success(f,storage_output=None):
     token=dispatch(f)
     rpc(f,'bind_agent_video_submission',p_task_id=f['child'],p_claim_token=token,p_external_task_id='success-'+f['child'])
     rpc(f,'record_agent_video_result',p_task_id=f['child'],p_external_task_id='success-'+f['child'],
         p_result={'task_id':'success-'+f['child'],'status':'success','video_url':'https://provider.invalid/temp.mp4'})
-    output=register_output(f)
+    output=register_output(f,storage_output)
     content=[{'type':'video','url':output['url'],'asset_id':output['asset_id'],'content_sha256':output['content_sha256']}]
     rpc(f,'publish_agent_video',p_task_id=f['child'],p_content=content,p_status='completed')
     return output

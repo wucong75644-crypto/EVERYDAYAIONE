@@ -30,14 +30,14 @@ deploy_backend
     return result,(tmp_path/'trace').read_text().splitlines()
 
 
-def test_explicit_activation_patches_only_two_keys_between_prepare_and_restart(tmp_path):
+def test_explicit_activation_patches_only_three_keys_between_prepare_and_restart(tmp_path):
     result,trace=invoke(tmp_path)
     assert result.returncode==0
     assert len(trace)==3 and trace[0]==trace[2]=='bash'
     assert trace[1].endswith('deploy/env-patch.py --lock-token owned-test-token')
     patch=json.loads((tmp_path/'patch').read_text())
-    assert patch=={'AGENT_TASK_EXECUTION_ENABLED':'true','AGENT_TASK_ERP_WRITE_ENABLED':'false'}
-    target=tmp_path/'.env';target.write_text('DATABASE_URL=unchanged-db\nAPI_KEY=unchanged-secret\nOTHER_FEATURE=true\nAGENT_TASK_ERP_WRITE_ENABLED=true\n')
+    assert patch=={'AGENT_TASK_EXECUTION_ENABLED':'true','AGENT_TASK_MODEL_DIRECTED_ENABLED':'true','AGENT_TASK_ERP_WRITE_ENABLED':'false'}
+    target=tmp_path/'.env';target.write_text('DATABASE_URL=unchanged-db\nAPI_KEY=unchanged-secret\nOTHER_FEATURE=true\nAGENT_TASK_MODEL_DIRECTED_ENABLED=false\nAGENT_TASK_ERP_WRITE_ENABLED=true\n')
     before=target.read_bytes();ENV.apply_patch_file(target,patch)
     assert dotenv_values(target)=={'DATABASE_URL':'unchanged-db','API_KEY':'unchanged-secret','OTHER_FEATURE':'true',**patch}
     backups=list(tmp_path.glob('.env.backup.patch.*'))

@@ -59,11 +59,12 @@ def advance_images(state, children, *, owner_task_id, base_revision):
             except TaskError as error:
                 if str(error) != 'TASK_STEP_DELIVERY_INCOMPLETE':
                     raise
-    try:
-        candidate = finish(candidate)
-    except TaskError as error:
-        if str(error) not in {'TASK_DELIVERY_INCOMPLETE','TASK_EFFECT_UNRESOLVED'}:
-            raise
+    if not candidate.model_directed:
+        try:
+            candidate = finish(candidate)
+        except TaskError as error:
+            if str(error) not in {'TASK_DELIVERY_INCOMPLETE','TASK_EFFECT_UNRESOLVED'}:
+                raise
     return candidate, sources, failures
 
 

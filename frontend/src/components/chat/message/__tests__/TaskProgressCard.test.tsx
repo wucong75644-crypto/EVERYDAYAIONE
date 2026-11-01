@@ -136,3 +136,24 @@ it('stops the logical task through the original entry without removing old outpu
   expect(screen.getByRole('status')).toHaveTextContent('已取消');
   expect(screen.queryByRole('button', { name: '继续任务' })).not.toBeInTheDocument();
 });
+
+it('shows actual image completion separately from the model working plan', async () => {
+  load.mockResolvedValue({ ...base, presentation: 'model_directed',
+    image_jobs: { completed: 0, total: 1 },
+    working_plan: { explanation: '继续复用原素材', steps: [{ step: '规划方案', status: 'completed' }] } });
+  render(<TaskProgressCard rootTaskId={root} messageId="message" presentation="model_directed" />);
+  await tick();
+  expect(screen.getByText('已有 0 张图片完成')).toBeInTheDocument();
+  expect(screen.getByText('工作计划')).toBeInTheDocument();
+  expect(screen.queryByText(/项交付要求/)).not.toBeInTheDocument();
+  expect(screen.getByRole('status')).toHaveTextContent('等待任务结果');
+  expect(screen.getByRole('button', { name: '停止任务' })).toBeInTheDocument();
+});
+
+it('does not claim all user goals are satisfied when the current execution closes', async () => {
+  load.mockResolvedValue({ ...base, status: 'completed', pending_results: 0, presentation: 'model_directed' });
+  render(<TaskProgressCard rootTaskId={root} messageId="message" />);
+  await tick();
+  expect(screen.getByRole('status')).toHaveTextContent('本轮执行结束');
+  expect(screen.queryByText('全部完成')).not.toBeInTheDocument();
+});

@@ -90,6 +90,7 @@ class ToolStepPart(BaseModel):
     """
     type: Literal["tool_step"] = "tool_step"
     tool_name: str
+    presentation: Literal['model_directed'] | None = None
     tool_call_id: str
     status: str = "running"  # "running" | "completed" | "error"
     input: Optional[str] = None      # 所有工具：调用参数（JSON）
@@ -102,6 +103,7 @@ class TaskProgressPart(BaseModel):
     """Discovery marker only; progress is fetched through authenticated reads."""
     type: Literal["task_progress"] = "task_progress"
     root_task_id: UUID
+    presentation: Literal['model_directed'] | None = None
 
 
 class SkillStepPart(BaseModel):

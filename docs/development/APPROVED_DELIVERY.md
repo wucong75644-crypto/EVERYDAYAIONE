@@ -55,6 +55,6 @@ bash deploy/release.sh --accept-and-close
 
 ### 新编排入口的明确启用
 
-用户明确授权启用新编排供验收时，在原正常发布入口追加 `--enable-agent-task-execution`。仅用于包含后端的正常发布，不允许与前端单发、回滚、锁恢复或验收关闭混用。入口沿原受控锁在依赖准备后、四服务重启前调用已有env-patch.py，原子设置`AGENT_TASK_EXECUTION_ENABLED=true`和`AGENT_TASK_ERP_WRITE_ENABLED=false`；保留私有原配置备份及所有其他键。配置失败停止，不继续重启。未传此参数的发布不改这两个键，不自动关闭已经启用的入口。默认配置值仍false，显式启用不改变既有个人会话受理边界、原任务/上下文恢复或原ERP Agent权限。
+用户明确授权启用新编排供验收时，在原正常发布入口追加 `--enable-agent-task-execution`。仅用于包含后端的正常发布，不允许与前端单发、回滚、锁恢复或验收关闭混用。入口沿原受控锁在依赖准备后、四服务重启前调用已有env-patch.py，原子设置`AGENT_TASK_EXECUTION_ENABLED=true`、`AGENT_TASK_MODEL_DIRECTED_ENABLED=true`和`AGENT_TASK_ERP_WRITE_ENABLED=false`；保留私有原配置备份及所有其他键。配置失败停止，不继续重启。未传此参数的发布不改这三个键，不自动关闭已经启用的入口。默认配置值仍false，显式启用不改变既有个人会话受理边界、原任务/上下文恢复或原ERP Agent权限。
 
 启用后的检查只读核实运行配置、服务和健康状态，不自动发送模型请求。业务验收由已获授权的实际任务另行完成，付费验收仍先报价确认。

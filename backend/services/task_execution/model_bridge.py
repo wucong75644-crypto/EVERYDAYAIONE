@@ -55,6 +55,15 @@ async def review_model_completion(*, runtime, prepared, blocks, build_checkpoint
     state = runtime.task_execution_state
     if state.status != 'active':
         return False
+    if state.model_directed:
+        from .direct_loop import advance_results,end_candidate
+        current=await advance_results(runtime,prepared)
+        candidate=end_candidate(current)
+        await commit_projection(runtime=runtime,candidate=candidate,prepared=prepared,blocks=blocks,
+            point=SafePoint.BEFORE_COMMIT,build_checkpoint=build_checkpoint,turn=turn,
+            next_model_round=next_model_round,repeated_tool_call_guard=repeated_tool_call_guard,
+            checkpoint_overlay=terminal_result)
+        return False
     from .requirement_changes import blocked as revision_blocked
     if revision_blocked(runtime):
         candidate=TaskState.model_validate({**state.model_dump(),'revision':state.revision+1,'status':'waiting_input'})
@@ -146,7 +155,7 @@ def controller_for(runtime, *, state=None):
 
 async def execute_control_batch(*, prepared, runtime, calls, assistant, blocks,
                                 turn, next_model_round, build_checkpoint, sink,
-                                repeated_tool_call_guard=None):
+                                repeated_tool_call_guard=None, assistant_already_present=False):
     """Consume the whole batch as a barrier; paired rejected tools never dispatch.
 
     A private controller stages changes. The real checkpoint contains the new
@@ -167,7 +176,7 @@ async def execute_control_batch(*, prepared, runtime, calls, assistant, blocks,
     original_blocks = copy.deepcopy(blocks)
     staged_messages = copy.deepcopy(prepared.messages)
     staged_blocks = copy.deepcopy(blocks)
-    staged_messages.append(copy.deepcopy(assistant))
+    if not assistant_already_present:staged_messages.append(copy.deepcopy(assistant))
 
     async def stage(candidate, expected):
         return {'outcome': 'saved'}  # Private staging only; never returned to the model.
@@ -196,7 +205,12 @@ async def execute_control_batch(*, prepared, runtime, calls, assistant, blocks,
     for call in calls:
         from .plan_facts import pending_review
         from .requirement_changes import blocked as revision_blocked
-        if revision_blocked(runtime) and call['name'] != REVISION_TOOL:
+        from .direct_loop import READ_CONTROLS
+        if original_state is not None and original_state.model_directed and call['name'] not in READ_CONTROLS:
+            result={'ok':False,'code':'TASK_DIRECT_CONTROL_UNAVAILABLE','state_unchanged':True,
+                'instruction':'直接使用当前披露的业务工具。工作计划是可选记录，宿主自动接收真实操作回执；不要再登记要求、导入或手动完成步骤。'}
+            display=None
+        elif revision_blocked(runtime) and call['name'] != REVISION_TOOL:
             result={'ok':False,'code':'TASK_USER_CHANGE_REVIEW_REQUIRED','state_unchanged':True,
                 'instruction':'真实追加要求尚未核验，先propose_task_revision；旧调用不会执行。'}
             display=None

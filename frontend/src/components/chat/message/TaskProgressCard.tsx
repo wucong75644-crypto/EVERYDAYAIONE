@@ -16,12 +16,12 @@ const stepLabels: Record<TaskProgress['steps'][number]['status'], string> = {
 };
 const pausable = new Set(['active', 'waiting_input', 'waiting_approval', 'waiting_dependencies']);
 
-type Props = { rootTaskId: string; messageId: string; onResume?: () => Promise<boolean> };
+type Props = { rootTaskId: string; messageId: string; presentation?: 'model_directed'; onResume?: () => Promise<boolean> };
 export default function TaskProgressCard(props: Props) {
   return <ProgressView key={`${props.rootTaskId}:${props.messageId}`} {...props} />;
 }
 
-function ProgressView({ rootTaskId, messageId, onResume }: Props) {
+function ProgressView({ rootTaskId, messageId, presentation, onResume }: Props) {
   const { ref, inView } = useInView({ rootMargin: '100px' });
   const [value, setValue] = useState<TaskProgress | null>(null);
   const [unavailable, setUnavailable] = useState(false);
@@ -30,6 +30,7 @@ function ProgressView({ rootTaskId, messageId, onResume }: Props) {
   const [busy, setBusy] = useState(false);
   const controlling = useRef(false);
   const latest = useRef<TaskProgress | null>(null);
+  const modelDirected = presentation === 'model_directed' || value?.presentation === 'model_directed';
   const control = async (action: 'pause' | 'resume' | 'cancel') => {
     if (controlling.current) return;
     controlling.current = true; setBusy(true); setNotice('');
@@ -94,12 +95,15 @@ function ProgressView({ rootTaskId, messageId, onResume }: Props) {
 
   return <section ref={ref} aria-label="任务进度" className="my-2 rounded-xl border border-border-default px-3 py-2 text-sm text-text-secondary">
     <div className="flex items-center justify-between gap-3">
-      <span role="status">{unavailable ? '暂时无法读取任务进度' : value ? labels[value.status] : '正在读取任务进度'}</span>
+      <span role="status">{unavailable ? '暂时无法读取任务进度' : value
+        ? modelDirected && value.status === 'completed' ? '本轮执行结束' : labels[value.status]
+        : '正在读取任务进度'}</span>
       <button type="button" className="text-xs text-text-tertiary hover:text-text-primary" onClick={() => setRefresh(n => n + 1)}>刷新进度</button>
     </div>
     {notice && <p aria-live="polite" className="mt-1 text-xs">{notice}</p>}
     {value && <>
-      <p className="mt-1 text-xs text-text-tertiary">已完成 {value.completed_steps}/{value.total_steps} 个步骤 · 已满足 {value.completed_requirements}/{value.total_requirements} 项交付要求</p>
+      {!modelDirected && <p className="mt-1 text-xs text-text-tertiary">已完成 {value.completed_steps}/{value.total_steps} 个步骤 · 已满足 {value.completed_requirements}/{value.total_requirements} 项交付要求</p>}
+      {modelDirected && value.image_jobs && value.image_jobs.total > 0 && <p className="mt-1 text-xs text-text-tertiary">已有 {value.image_jobs.completed} 张图片完成</p>}
       {value.pending_results > 0 && <p className="mt-1 text-xs">有 {value.pending_results} 项操作已受理，尚未确认最终结果。</p>}
       {value.unconfirmed_results > 0 && <p className="mt-1 text-xs">有 {value.unconfirmed_results} 项操作结果待核实，请勿重复提交。</p>}
       {(pausable.has(value.status) || value.status === 'paused') && <div className="mt-2 flex gap-3">
@@ -107,7 +111,16 @@ function ProgressView({ rootTaskId, messageId, onResume }: Props) {
         {value.status === 'paused' && onResume && <button type="button" disabled={busy} className="text-xs text-text-tertiary hover:text-text-primary disabled:opacity-50" onClick={() => { void control('resume'); }}>继续任务</button>}
         <button type="button" disabled={busy} className="text-xs text-text-tertiary hover:text-text-primary disabled:opacity-50" onClick={() => { void control('cancel'); }}>停止任务</button>
       </div>}
-      {value.steps.length > 0 && <details className="mt-2">
+      {modelDirected && value.working_plan && value.working_plan.steps.length > 0 && <details className="mt-2">
+        <summary className="cursor-pointer text-xs">工作计划</summary>
+        {value.working_plan.explanation && <p className="mt-1 text-xs">{value.working_plan.explanation}</p>}
+        <ul className="mt-1 space-y-1 text-xs">
+          {value.working_plan.steps.map((item, index) => <li key={index}>
+            {item.step} · {{ pending: '待处理', in_progress: '进行中', completed: '已记录完成' }[item.status]}
+          </li>)}
+        </ul>
+      </details>}
+      {value.steps.length > 0 && !modelDirected && <details className="mt-2">
         <summary className="cursor-pointer text-xs">查看步骤</summary>
         <ol className="mt-1 space-y-1">
           {value.steps.map(step => <li key={step.id} className="flex justify-between gap-3 text-xs">

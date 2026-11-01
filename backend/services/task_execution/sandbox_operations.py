@@ -14,6 +14,13 @@ VALIDATOR='native.sandbox.result'
 
 
 def binding(state,call):
+    if state.model_directed:
+        if state.status!='active':raise TaskError('TASK_NOT_ACTIVE')
+        from .model_directed import operation_binding
+        bound=operation_binding(state,call)
+        if any(op.capability=='sandbox.code.execute' and op.effect_key!=bound[1] and op.status in {'reserved','uncertain','accepted'} for op in state.operations):
+            raise TaskError('TASK_SANDBOX_PREVIOUS_EXECUTION_UNCERTAIN')
+        return bound
     steps=[s for s in ready_steps(state) if s.capability=='sandbox.code.execute']
     if state.status!='active' or len(steps)!=1:raise TaskError('TASK_SANDBOX_READY_STEP_REQUIRED')
     code=thaw(call.arguments).get('code')

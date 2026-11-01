@@ -122,6 +122,8 @@ class ChatGenerationExecutor:
             actor_user_id=execution_scope.actor_user_id, org_id=task.get('org_id'),
             execution_scope=execution_scope,
         ) if replay_context and '_task_execution' in replay_context else None
+        runtime.task_native_event_pending=((task.get('delivery_context') or {}).get('input_kind')=='agent_task_continuation'
+            and (task.get('delivery_context') or {}).get('source_kind') in {'scheduled','video'})
         if runtime.task_execution_state is not None:
             runtime.committed_task_execution_revision = runtime.task_execution_state.revision
         if (replay_context or {}).get('_task_requirement_review') is not None:
@@ -274,13 +276,17 @@ class ChatGenerationExecutor:
                               and admits_new_task(execution_scope))
                              or saved_bootstrap is not None)):
                     from services.task_execution.bootstrap import TaskBootstrap
+                    direct_policy=(saved_bootstrap.get('input',{}).get('model_directed',False)
+                        if saved_bootstrap else getattr(get_settings(),'agent_task_model_directed_enabled',False))
                     runtime.task_bootstrap = TaskBootstrap.from_input(anchor=anchor, scope=execution_scope,
                         content=content, task_id=claim.task_id, conversation_id=claim.conversation_id,
                         org_id=task.get('org_id'),require_coverage_review=(
                             saved_bootstrap.get('input',{}).get('require_coverage_review',False)
-                            if saved_bootstrap else True))
+                            if saved_bootstrap else not direct_policy),model_directed=direct_policy)
                     if saved_bootstrap is not None and runtime.task_bootstrap.checkpoint() != saved_bootstrap:
                         raise RuntimeError('TASK_BOOTSTRAP_REPLAY_MISMATCH')
+                from services.task_execution.direct_loop import restore_plan
+                restore_plan(runtime,replay_context)
                 if runtime.task_bootstrap is not None or runtime.task_execution_state is not None:
                     from services.task_execution.artifact_reader import TaskArtifactReader
                     runtime.task_artifact_reader = TaskArtifactReader(self._db,

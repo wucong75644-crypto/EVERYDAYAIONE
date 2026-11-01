@@ -138,7 +138,7 @@ def create_resolver(handler,request,context):
             intent,previous=native.size_context()
             return resolve_size_requirement(dict(arguments),references,intent=intent,previous=previous)
         return await asyncio.to_thread(read)
-    async def prepare_request(arguments,state,call_id):
+    async def prepare_request(arguments,state,call_id,*,binding_required=True):
         def read():
             from core.config import get_settings
             from core.db_scope import DatabaseScope,DatabaseAccessKind,ScopedDatabaseClient
@@ -153,7 +153,8 @@ def create_resolver(handler,request,context):
             composition=(parent.get('request_params') or {}).get('_skill_composition')
             composition=Composition.model_validate(composition) if composition is not None else None
             normalized,refs,_target,proof=prepare_input(native,dict(arguments),scoped=scoped,workflow=workflow,settings=get_settings(),composition=composition)
-            verify_native_resources(state.model_dump(mode='json'),call_id,arguments,normalized,refs,native=native)
+            verify_native_resources(state.model_dump(mode='json'),call_id,arguments,normalized,refs,native=native,
+                binding_required=binding_required)
             settings=validate_single_image_request(normalized,len(refs))
             native.verify(refs)
             return {**normalized,**{k:settings[k] for k in ('model','resolution','output_format','aspect_ratio')}},refs,proof
@@ -163,7 +164,7 @@ def create_resolver(handler,request,context):
     return resolve
 
 
-def verify_native_resources(raw_state,call_id,arguments,normalized,resolved,*,native=None):
+def verify_native_resources(raw_state,call_id,arguments,normalized,resolved,*,native=None,binding_required=True):
     from .contracts import TaskState
     from .image_binding import bind_image_call
     from services.tools import ToolCall
@@ -171,6 +172,21 @@ def verify_native_resources(raw_state,call_id,arguments,normalized,resolved,*,na
     state=TaskState.model_validate(raw_state)
     if state.image_binding_version<2:return
     binding=bind_image_call(state,ToolCall(call_id,'generate_image',arguments),build_capability_catalog())
+    if state.model_directed:
+        import json
+        recipe=next((a for a in state.artifacts if a.id==binding.planning_artifact_id
+            and a.step_id==binding.step_id and 'image.direct.recipe' in a.validations),None)
+        if recipe is None:
+            if not binding_required:return
+            raise TaskError('TASK_IMAGE_RESOURCE_BINDING_REQUIRED')
+        value=json.loads(recipe.inline_text)
+        from services.handlers.chat_image_request import validate_single_image_request
+        settings=validate_single_image_request(normalized,len(resolved))
+        actual={**normalized,**{k:settings[k] for k in ('model','resolution','output_format','aspect_ratio')}}
+        if (value.get('arguments_sha256')!=binding.arguments_sha256 or value.get('normalized')!=actual
+                or value.get('resolved')!=fingerprint(resolved)):
+            raise TaskError('TASK_IMAGE_ORIGINAL_RESOURCE_CHANGED')
+        return
     _artifact,document=planning_document(state,binding.planning_artifact_id)
     brief=document.image_plans[binding.item_index-1]
     if state.image_binding_version>=3:

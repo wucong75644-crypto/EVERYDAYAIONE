@@ -118,7 +118,7 @@ async def test_failed_initial_save_restores_uninitialized_state_and_transcript()
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('mode', ['new_enabled', 'legacy_enabled', 'resume_disabled', 'tampered'])
+@pytest.mark.parametrize('mode', ['new_enabled', 'new_model_directed', 'legacy_enabled', 'resume_disabled', 'tampered'])
 async def test_actual_executor_admission_and_frozen_bootstrap_recovery(monkeypatch, mode):
     from core.config import get_settings
     from services.conversation_execution import GenerationClaim
@@ -138,7 +138,7 @@ async def test_actual_executor_admission_and_frozen_bootstrap_recovery(monkeypat
     db.rpc = followup_rpc
     store = _ReplayCheckpointStore()
     store.write = AsyncMock(return_value={'outcome': 'saved'})
-    if mode != 'new_enabled':
+    if mode not in {'new_enabled','new_model_directed'}:
         payload = {'messages': [], 'content_blocks': [], 'turn_index': 0, 'tool_call_ids': []}
         if mode in {'resume_disabled', 'tampered'}:
             payload['_task_bootstrap'] = source.checkpoint()
@@ -146,6 +146,7 @@ async def test_actual_executor_admission_and_frozen_bootstrap_recovery(monkeypat
             payload['_task_bootstrap']['input']['original_goal'] = '替换原始用户目标'
         store.read_result = {'outcome': 'found', 'payload': payload}
     monkeypatch.setattr(get_settings(), 'agent_task_execution_enabled', mode != 'resume_disabled')
+    monkeypatch.setattr(get_settings(), 'agent_task_model_directed_enabled', mode in {'new_model_directed','resume_disabled'})
     captured = []
 
     async def execute_chat(**kwargs):
@@ -170,7 +171,7 @@ async def test_actual_executor_admission_and_frozen_bootstrap_recovery(monkeypat
         assert (captured[0] is not None) == (mode != 'legacy_enabled')
         if captured[0] is not None:
             from dataclasses import replace
-            expected=replace(source,require_coverage_review=mode=='new_enabled').checkpoint()
+            expected=replace(source,require_coverage_review=mode=='new_enabled',model_directed=mode=='new_model_directed').checkpoint()
             assert captured[0].checkpoint() == expected
             assert store.write.call_args.kwargs['payload']['_task_bootstrap'] == expected
 

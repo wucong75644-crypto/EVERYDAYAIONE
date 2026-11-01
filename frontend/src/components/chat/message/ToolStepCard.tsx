@@ -18,6 +18,7 @@ interface ToolStepCardProps {
   output?: string;
   input?: string;
   elapsedMs?: number;
+  displayLabel?: string;
 }
 
 /** 格式化耗时 */
@@ -53,9 +54,10 @@ export default memo(function ToolStepCard({
   output,
   input,
   elapsedMs,
+  displayLabel,
 }: ToolStepCardProps) {
   const [expanded, setExpanded] = useState(false);
-  const label = getToolLabel(toolName);
+  const label = displayLabel || getToolLabel(toolName);
   const hasContent = !!(code || output || input);
   // running 不可展开（无内容）；cancelled 即使无 output 也可展开（用户看输入参数）
   const canExpand = hasContent && status !== 'running';

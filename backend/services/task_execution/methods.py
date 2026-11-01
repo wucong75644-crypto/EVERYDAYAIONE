@@ -88,6 +88,7 @@ def validate_proposed_method_intent(proposal,skills):
 
 
 def attach_methods(state, skills, *, activated_skill_id=None):
+    if state.model_directed:return state  # Original SkillRuntime owns method bodies and ceilings.
     if skills is None:
         if state.applicable_method_ids:
             raise TaskError('TASK_METHOD_RUNTIME_UNAVAILABLE')

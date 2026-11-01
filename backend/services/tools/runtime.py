@@ -18,6 +18,7 @@ from .runtime_context import (
 from .spec import thaw
 from .file_calls import resolve_file_call, resolve_restore_record
 from services.workspace_coordination import workspace_lock
+from services.conversation_state import ConversationPauseRequested
 
 
 async def run_parallel(operations):
@@ -111,6 +112,7 @@ class ToolRuntime:
                 return self._observe_resource_result(ToolResult.not_executed(call=call, context=context, decision=decision), context)
             file_call = resolve_file_call(self.executor, name, call.arguments, selections=selections,
                                           check=lambda: self.check_lifetime(context))
+            original_call=call
             if file_call is not None:
                 call = ToolCall(call.call_id, name, file_call.arguments)
                 await resolve_restore_record(file_call)
@@ -118,6 +120,9 @@ class ToolRuntime:
             decision = self.policy.decide(name, context, call.arguments)
             if decision.outcome == "deny":
                 return self._observe_resource_result(ToolResult.not_executed(call=call, context=context, decision=decision), context)
+            bind_resolved=getattr(lifecycle,'bind_resolved_arguments',None)
+            if file_call is not None and bind_resolved is not None:
+                await bind_resolved(original_call,call,context,decision)
             # Read-only peek: completed business calls do not require a second
             # approval. Current policy/action/resources are checked above.
             if lifecycle is not None:
@@ -244,6 +249,8 @@ class ToolRuntime:
                         self.resource_selections.record_image_result(self.executor, text)
                 return self._observe_resource_result(result, context)
         except asyncio.CancelledError:
+            raise
+        except ConversationPauseRequested:
             raise
         except Exception as error:
             return self._observe_resource_result(ToolResult.from_exception(error, call=call, context=context,

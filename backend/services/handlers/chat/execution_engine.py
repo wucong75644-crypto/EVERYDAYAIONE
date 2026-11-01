@@ -284,7 +284,18 @@ async def execute_chat(
                 from services.tools.catalog import build_capability_catalog
                 from services.task_execution.contracts import TaskError
                 executor=getattr(handler,'_tool_executor',None)
-                if executor is None:raise TaskError('TASK_NATIVE_RESULT_CONTEXT_UNAVAILABLE')
+                if executor is None:
+                    # A receipt continuation can precede the first business
+                    # call in this Actor. Revalidate through the same identity
+                    # and resource boundary; do not construct/dispatch a tool.
+                    from types import SimpleNamespace
+                    executor=SimpleNamespace(db=handler.db,execution_mode=prepared.execution_context.execution_mode,
+                        execution_scope=getattr(handler,'execution_scope',None),
+                        channel_scope_id=getattr(getattr(handler,'execution_scope',None),'channel_scope_id',None),
+                        knowledge_run=getattr(handler,'_knowledge_run',None),
+                        resource_manifest_loader=getattr(handler,'_tool_resource_manifest_loader',None),
+                        resource_manifest=getattr(handler,'_resource_manifest',None),
+                        resource_access_boundary=getattr(handler,'_resource_access_boundary',None))
                 return await refresh_context(executor,prepared.execution_context,build_capability_catalog())
             runtime.task_result_context_provider=result_context
         completed_phase_ids = set()
@@ -625,7 +636,14 @@ async def _run_loop(
                 _apply_skill_context(prepared, runtime.skill_runtime)
             from services.task_execution.model_bridge import controller_for
             task_controller = controller_for(runtime)
-            if task_controller is None and runtime.task_bootstrap is not None:
+            from services.task_execution.model_directed import enabled as direct_enabled
+            if direct_enabled(runtime):
+                from services.task_execution.direct_loop import context_message as direct_context
+                prepared.messages[:]=[m for m in prepared.messages if not (
+                    m.get('role')=='system' and isinstance(m.get('content'),str)
+                    and m['content'].startswith('[Model-directed execution]'))]
+                prepared.messages.append(direct_context(runtime))
+            if task_controller is None and runtime.task_bootstrap is not None and not direct_enabled(runtime):
                 instruction = {'role': 'system', 'content': '[Task initialization]\n'
                     '先理解用户完整目标。需要多阶段或多项交付时先调用start_task_execution整理全部要求，'
                     '再规划执行；不要因商品词自动切换到另一方法。用户已选择的方法优先完成其适用阶段。'
@@ -645,7 +663,13 @@ async def _run_loop(
                 prepared.messages[:] = [m for m in prepared.messages if not (
                     m.get('role') == 'system' and isinstance(m.get('content'), str)
                     and m['content'].startswith('[Current task execution facts]'))]
-                prepared.messages.append(controller_for(runtime, state=task_candidate).context_message())
+                if not direct_enabled(runtime):
+                    prepared.messages.append(controller_for(runtime, state=task_candidate).context_message())
+                else:
+                    prepared.messages[:]=[m for m in prepared.messages if not (
+                        m.get('role')=='system' and isinstance(m.get('content'),str)
+                        and m['content'].startswith('[Model-directed execution]'))]
+                    prepared.messages.append(direct_context(runtime,state=task_candidate))
             runtime.set_state(ConversationState.RUNNING_MODEL)
             if task_controller is not None:
                 from services.task_execution.model_bridge import commit_projection
@@ -680,10 +704,20 @@ async def _run_loop(
             await refresh_user_changes(runtime)
             from services.task_execution.followup import settle_images
             await settle_images(runtime,prepared,blocks,turn=prepared.budget.turns_used,model_round=model_round,build_checkpoint=_build_replay_context)
+            from services.task_execution.model_directed import enabled as direct_enabled
+            if direct_enabled(runtime) and getattr(runtime,'task_native_event_pending',False):
+                from services.task_execution.direct_loop import advance_results
+                from services.task_execution.model_bridge import commit_projection
+                candidate=await advance_results(runtime,prepared,reconcile_pending=True)
+                if candidate is not runtime.task_execution_state:
+                    await commit_projection(runtime=runtime,candidate=candidate,prepared=prepared,blocks=blocks,
+                        point=SafePoint.BEFORE_MODEL,build_checkpoint=_build_replay_context,turn=prepared.budget.turns_used,
+                        next_model_round=model_round,repeated_tool_call_guard=repeated_tool_call_guard)
+                runtime.task_native_event_pending=False
         prepared.budget.use_turn()
         turn = prepared.budget.turns_used - 1
         followup=getattr(runtime,'task_followup_candidate',None) if runtime else None
-        if followup is not None and runtime.task_execution_state is None:
+        if followup is not None and runtime.task_execution_state is None and followup.get('state',{}).get('model_directed') is not True:
             import copy
             from services.task_execution.followup import review_messages as followup_messages,apply as apply_followup
             isolated=copy.copy(prepared);isolated.messages=followup_messages(followup)
@@ -807,13 +841,18 @@ async def _run_loop(
             tools=[]
         from services.knowledge_workspace.answer_plan import constrain_route_tools
         tools=await constrain_route_tools(prepared,getattr(handler,'_knowledge_run',None),tools)
-        if runtime and runtime.task_execution_state is not None and not fast_knowledge:
+        from services.task_execution.model_directed import enabled as direct_enabled
+        if direct_enabled(runtime) and not fast_knowledge:
+            from services.task_execution.direct_loop import schemas as direct_schemas
+            from services.task_execution.model_bridge import controller_for
+            tools.extend(direct_schemas(runtime,controller_for(runtime)))
+        elif runtime and runtime.task_execution_state is not None and not fast_knowledge:
             from services.task_execution.model_bridge import controller_for
             tools.extend(controller_for(runtime).schemas())
         elif runtime and runtime.task_bootstrap is not None and not fast_knowledge:
             from services.task_execution.bootstrap import START_TASK_SCHEMA
             tools.append(START_TASK_SCHEMA)
-        if runtime and (runtime.task_execution_state is not None or runtime.task_bootstrap is not None):
+        if runtime and (runtime.task_execution_state is not None or runtime.task_bootstrap is not None) and not direct_enabled(runtime):
             from services.task_execution.methods import blocked_tool_names
             from services.tools.catalog import build_capability_catalog
             from services.task_execution.dispatch import annotate_task_tools, plan_dispatch_blockers
@@ -831,6 +870,14 @@ async def _run_loop(
             tools=[REVISION_SCHEMA]
             if phase_repair(runtime):tools.extend([ACTIVATE_SKILL_SCHEMA,DEACTIVATE_SKILL_SCHEMA])
         current_model_round = model_round
+        if direct_enabled(runtime):
+            from services.task_execution.direct_loop import context_message as direct_context
+            prepared.messages[:]=[m for m in prepared.messages if not (
+                m.get('role')=='system' and isinstance(m.get('content'),str)
+                and m['content'].startswith('[Model-directed execution]'))]
+            prepared.messages.append(direct_context(runtime))
+        direct_snapshot=tuple(str(i.event_id) for i in runtime.task_user_changes.items if i.delivered) if (
+            direct_enabled(runtime) and runtime.task_user_changes is not None) else ()
         before_usage = dict(totals.usage) if correcting else {}
         try:
             turn_text, turn_thinking, calls, previewed_call_ids = await _read_turn(
@@ -845,6 +892,7 @@ async def _run_loop(
             if image_metrics is not None:
                 totals.usage["image_argument_metrics"] = image_metrics
         model_round += 1
+        if direct_enabled(runtime):runtime.task_direct_seen=tuple(sorted(set(runtime.task_direct_seen)|set(direct_snapshot)))
         if fast_knowledge and calls:
             raise RuntimeError('KNOWLEDGE_ANSWER_UNEXPECTED_TOOL_CALL')
         if runtime:
@@ -931,7 +979,7 @@ async def _run_loop(
             totals.usage["image_argument_metrics"] = image_metrics
         resource_stop = getattr(getattr(executor, "_tool_runtime", None), "resource_stop_reason", "")
         result_stop = getattr(handler, "_tool_result_stop_reason", "")
-        if getattr(handler, "_terminal_image_pending", False) and not resource_stop:
+        if getattr(handler, "_terminal_image_pending", False) and not resource_stop and not direct_enabled(runtime):
             return None
         stop_message = resource_stop or result_stop
         if isinstance(stop_message, str) and stop_message:
@@ -1123,6 +1171,8 @@ async def _read_turn(
                         "tool_call_id": preview_id,
                         "status": "running",
                     }
+                    from services.task_execution.model_directed import enabled as direct_enabled
+                    if direct_enabled(runtime):preview_block['presentation']='model_directed'
                     if not any(
                         block.get("tool_call_id") == preview_id
                         for block in blocks
@@ -1252,7 +1302,29 @@ async def _append_turn_blocks(
             await sink.on_block(block)
 
 
-async def _execute_tools(
+async def _execute_tools(**kwargs):
+    from services.task_execution.model_directed import enabled as direct_enabled
+    runtime=kwargs.get('runtime')
+    if not direct_enabled(runtime):return await _execute_tools_impl(**kwargs)
+    import copy
+    sequence=runtime.replay_save_sequence
+    original_state=runtime.task_execution_state
+    original_plan=runtime.task_direct_plan
+    original_plan_owner=runtime.task_direct_plan_owner
+    messages=copy.deepcopy(kwargs['prepared'].messages)
+    blocks=copy.deepcopy(kwargs['blocks'])
+    try:return await _execute_tools_impl(**kwargs)
+    except BaseException:
+        if runtime.replay_save_sequence==sequence:
+            runtime.task_execution_state=original_state
+            runtime.task_direct_plan=original_plan
+            runtime.task_direct_plan_owner=original_plan_owner
+            kwargs['prepared'].messages[:]=messages
+            kwargs['blocks'][:]=blocks
+        raise
+
+
+async def _execute_tools_impl(
     *,
     handler: Any,
     request: ChatExecutionRequest,
@@ -1278,10 +1350,43 @@ async def _execute_tools(
     from services.task_execution.plan_facts import pending_review
     from services.task_execution.requirement_changes import refresh as refresh_user_changes,blocked as revision_blocked,phase_repair
     if runtime is not None:await refresh_user_changes(runtime)
+    from services.task_execution.model_directed import enabled as direct_enabled
+    direct_errors={}
+    direct_reused=[]
+    if direct_enabled(runtime):
+        from services.task_execution.direct_loop import stage_plan_calls,stage_native_calls
+        assistant=_assistant_tool_message(turn_text,calls)
+        if getattr(prepared,'last_provider_output',None):assistant['_dashscope_output']=prepared.last_provider_output
+        if getattr(prepared,'last_reasoning_content',''):assistant['reasoning_content']=prepared.last_reasoning_content
+        if any(c['name']=='resume_task_execution' for c in calls):
+            from services.task_execution.direct_loop import resume_from_model
+            await resume_from_model(runtime,prepared,blocks,calls,assistant,turn=turn,
+                model_round=next_model_round,build_checkpoint=_build_replay_context)
+            return None
+        calls,staged=stage_plan_calls(runtime,prepared,blocks,calls,assistant)
+        assistant_already_present=assistant_already_present or staged
+        if not calls:
+            await runtime.safe_point(SafePoint.AFTER_TOOL,replay_payload=_build_replay_context(
+                prepared.messages,blocks,turn,next_model_round=next_model_round,
+                repeated_tool_call_guard=repeated_tool_call_guard))
+            return None
+        if not any(c['name'] in SKILL_CONTROL_TOOLS or c['name'] in TASK_CONTROL_TOOLS for c in calls):
+            from services.tools.catalog import build_capability_catalog
+            candidate,direct_errors=stage_native_calls(runtime,prepared,calls,build_capability_catalog())
+            if candidate is not runtime.task_execution_state:
+                if not assistant_already_present:
+                    prepared.messages.append(assistant);assistant_already_present=True
+                from services.task_execution.model_bridge import commit_projection
+                from services.task_execution.progress import marker
+                progress_marker=marker(blocks,candidate)
+                await commit_projection(runtime=runtime,candidate=candidate,prepared=prepared,blocks=blocks,
+                    point=SafePoint.BEFORE_TOOL,build_checkpoint=_build_replay_context,turn=turn,
+                    next_model_round=next_model_round,repeated_tool_call_guard=repeated_tool_call_guard)
+                if progress_marker is not None:await sink.on_block(progress_marker)
     # Exact native reuse takes place before effect reservation and charging.
     # Keep the original assistant tool call: its real result explains reuse.
     source_calls=calls
-    if (runtime and runtime.task_execution_state is not None and runtime.task_execution_state.image_binding_version>=3
+    if (runtime and not direct_enabled(runtime) and runtime.task_execution_state is not None and runtime.task_execution_state.image_binding_version>=3
             and runtime.task_execution_state.execution_identity.context_scope=='user' and not revision_blocked(runtime) and not pending_review(runtime) and not coverage_blocked(runtime)
             and hasattr(getattr(runtime,'task_artifact_reader',None),'reusable_images')):
         from services.task_execution.image_reuse import reuse,ReuseImageInput
@@ -1318,7 +1423,7 @@ async def _execute_tools(
         await execute_control_batch(prepared=prepared, runtime=runtime, calls=calls,
             assistant=assistant, blocks=blocks, turn=turn, next_model_round=next_model_round,
             build_checkpoint=_build_replay_context, sink=sink,
-            repeated_tool_call_guard=repeated_tool_call_guard)
+            repeated_tool_call_guard=repeated_tool_call_guard,assistant_already_present=assistant_already_present)
         return None
     if (runtime and (runtime.task_execution_state is not None or runtime.task_bootstrap is not None)
             and any(call['name'] in SKILL_CONTROL_TOOLS for call in calls)):
@@ -1333,7 +1438,7 @@ async def _execute_tools(
             assistant['_dashscope_output'] = prepared.last_provider_output
         if getattr(prepared, 'last_reasoning_content', ''):
             assistant['reasoning_content'] = prepared.last_reasoning_content
-        prepared.messages.append(assistant)
+        if not assistant_already_present:prepared.messages.append(assistant)
         for call in calls:
             if call['name'] not in SKILL_CONTROL_TOOLS:
                 blocks.append(build_running_step(call))
@@ -1356,11 +1461,34 @@ async def _execute_tools(
         from services.tools.catalog import build_capability_catalog
         from services.task_execution.dispatch import plan_dispatch_blockers
         catalog = build_capability_catalog()
-        task_blocked_names = blocked_tool_names(runtime.task_execution_state, catalog, runtime.skill_runtime)
-        plan_blockers = plan_dispatch_blockers(runtime.task_execution_state, catalog)
+        if direct_enabled(runtime):
+            from services.task_execution.direct_loop import bind_image_recipes
+            candidate,recipe_errors=await bind_image_recipes(runtime,
+                [c for c in calls if c['id'] not in direct_errors],catalog)
+            direct_errors.update(recipe_errors)
+            if candidate is not runtime.task_execution_state:
+                from services.task_execution.model_bridge import commit_projection
+                await commit_projection(runtime=runtime,candidate=candidate,prepared=prepared,blocks=blocks,
+                    point=SafePoint.BEFORE_TOOL,build_checkpoint=_build_replay_context,turn=turn,
+                    next_model_round=next_model_round,repeated_tool_call_guard=repeated_tool_call_guard)
+            from services.task_execution.direct_loop import reuse_images
+            candidate,direct_reused,reused_parts,reuse_errors=await reuse_images(runtime,
+                [c for c in calls if c['id'] not in direct_errors])
+            direct_errors.update(reuse_errors)
+            if candidate is not runtime.task_execution_state:
+                blocks.extend(reused_parts)
+                await commit_projection(runtime=runtime,candidate=candidate,prepared=prepared,blocks=blocks,
+                    point=SafePoint.BEFORE_TOOL,build_checkpoint=_build_replay_context,turn=turn,
+                    next_model_round=next_model_round,repeated_tool_call_guard=repeated_tool_call_guard)
+                for part in reused_parts:await sink.on_block(part)
+        if not direct_enabled(runtime):
+            task_blocked_names = blocked_tool_names(runtime.task_execution_state, catalog, runtime.skill_runtime)
+            plan_blockers = plan_dispatch_blockers(runtime.task_execution_state, catalog)
         from services.task_execution.image_operations import prepare_image_operations
         image_operations, image_binding_errors = prepare_image_operations(runtime,
-            [c for c in calls if c['name'] not in task_blocked_names and c['name'] not in plan_blockers], catalog)
+            [c for c in calls if c['name'] not in task_blocked_names and c['name'] not in plan_blockers and c['id'] not in direct_errors
+                and c['id'] not in {r[0]['id'] for r in direct_reused}], catalog)
+        image_binding_errors.update(direct_errors)
     if (runtime and runtime.skill_runtime is not None and runtime.skill_runtime.checkpoint_version == 2
             and not any(c['name'] in SKILL_CONTROL_TOOLS for c in calls)):
         from services.skills.contracts import SkillError
@@ -1436,6 +1564,8 @@ async def _execute_tools(
                 code, message = image_binding_errors[call['id']]
                 rejected.append((call, AgentResult(message, status='error', error_message=code), True, message))
         ready_calls = [call for call in ready_calls if call['id'] not in image_binding_errors]
+    if direct_reused:
+        ready_calls=[c for c in ready_calls if c['id'] not in {r[0]['id'] for r in direct_reused}]
     ecom_arguments = getattr(prepared, "ecom_arguments", None)
     if ecom_arguments:
         ready_calls, ecom_rejected = ecom_arguments.filter_calls(ready_calls)
@@ -1460,7 +1590,7 @@ async def _execute_tools(
             raise RuntimeError("IMAGE_ARGUMENT_CORRECTION_CHECKPOINT_REQUIRED")
     if runtime:
         runtime.set_state(ConversationState.WAITING_TOOL)
-        if (runtime.task_execution_state is not None
+        if (runtime.task_execution_state is not None or direct_enabled(runtime)
                 or (runtime.skill_runtime is not None and runtime.skill_runtime.checkpoint_version == 2)
                 or (guard and guard.repair and guard.repair.get("dispatch_reserved"))
                 or (ecom_arguments and ecom_arguments.state and ecom_arguments.state.get("dispatch_reserved"))):
@@ -1528,8 +1658,8 @@ async def _execute_tools(
             'image_binding_writer': persist_workflow_binding}
            if runtime and runtime.skill_runtime is not None and runtime.skill_runtime.checkpoint_version == 2 else {}),
     ) if ready_calls else []
-    if rejected:
-        by_call = {item[0]["id"]: item for item in [*results, *rejected]}
+    if rejected or direct_reused:
+        by_call = {item[0]["id"]: item for item in [*results, *rejected,*direct_reused]}
         results = [by_call[call["id"]] for call in calls]
     if ecom_arguments:
         ecom_arguments.observe(results)
@@ -1594,6 +1724,15 @@ async def _execute_tools(
         tool_context=prepared.tool_context,
     )
     append_tool_images(prepared.messages, image_urls)
+    if direct_enabled(runtime):
+        from services.task_execution.direct_loop import advance_results,retire_not_dispatched
+        runtime.task_execution_state=retire_not_dispatched(runtime.task_execution_state,{r[0]['id'] for r in rejected})
+        runtime.task_execution_state=await advance_results(runtime,prepared)
+        if getattr(runtime,'task_direct_result_issues',None):
+            notice={'type':'text','text':'部分工具成果未通过当前可用性核验，未计入有效成果；执行记录已保留，将依据真实结果继续处理。'}
+            blocks.append(notice)
+            await sink.on_block(notice)
+            runtime.task_direct_result_issues=[]
     if runtime:
         await runtime.safe_point(SafePoint.AFTER_TOOL)
         _inject_steer_messages(
@@ -1622,7 +1761,7 @@ async def _execute_tools(
             getattr(handler,'_terminal_form_pending',False) or getattr(handler,'_terminal_change_set_pending',False)))
         from services.task_execution.video_operations import pending as pending_video
         waiting_video=pending_video(runtime.task_execution_state)
-        if (managed_images and handler._terminal_image_pending) or waiting_schedule or waiting_video:
+        if waiting_schedule or (not direct_enabled(runtime) and ((managed_images and handler._terminal_image_pending) or waiting_video)):
             from services.task_execution.contracts import TaskState
             from services.task_execution.model_bridge import commit_projection
             current = runtime.task_execution_state

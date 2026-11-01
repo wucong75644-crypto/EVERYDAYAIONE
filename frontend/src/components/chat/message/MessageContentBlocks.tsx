@@ -15,6 +15,7 @@ import LoadingPlaceholder from './LoadingPlaceholder';
 import MarkdownRenderer from './MarkdownRenderer';
 import { TableBlock } from './TableBlock';
 import ThinkingBlock from './ThinkingBlock';
+import { taskStepPresentation } from './taskStepPresentation';
 import ToolResultBlock from './ToolResultBlock';
 import ToolStepCard from './ToolStepCard';
 import TaskProgressCard from './TaskProgressCard';
@@ -60,6 +61,7 @@ export default function MessageContentBlocks({
   onRegenerateSingle,
   animateInitialTail = false,
 }: MessageContentBlocksProps) {
+  const presentation = taskStepPresentation(message.content);
   const hasImageTool = message.content.some(part => part.type === 'tool_step' && part.tool_name === 'generate_image');
   const firstScheduledTaskFormIndex = message.content.findIndex((part) => (
     part.type === 'form'
@@ -84,7 +86,7 @@ export default function MessageContentBlocks({
       {message.content.map((part, idx) => {
         if (part.type === 'task_progress') {
           if (message.role !== 'assistant') return null;
-          return <TaskProgressCard key={`task-${part.root_task_id}`} rootTaskId={part.root_task_id} messageId={message.id} onResume={onTaskResume ? () => onTaskResume(message.id) : undefined} />;
+          return <TaskProgressCard key={`task-${part.root_task_id}`} rootTaskId={part.root_task_id} messageId={message.id} presentation={part.presentation} onResume={onTaskResume ? () => onTaskResume(message.id) : undefined} />;
         }
         if (part.type === 'skill_step') {
           if (!isSkillUiEnabled()) return null;
@@ -107,12 +109,14 @@ export default function MessageContentBlocks({
           );
         }
         if (part.type === 'tool_step') {
+          if (presentation.hidden.has(idx)) return null;
           const ts = part as { tool_name: string; tool_call_id: string; status: 'running' | 'completed' | 'error' | 'cancelled'; code?: string; output?: string; input?: string; elapsed_ms?: number };
           if (ts.tool_name === 'generate_image' && ts.status !== 'error') return null;
           return (
             <div key={ts.tool_call_id || idx} className={MESSAGE_CONTENT_LAYOUT.compact}>
               <ToolStepCard
                 toolName={ts.tool_name || 'tool'}
+                displayLabel={presentation.recovery.has(idx) ? '查找与复用已有成果' : undefined}
                 toolCallId={ts.tool_call_id || String(idx)}
                 status={ts.status || 'completed'}
                 code={ts.code}

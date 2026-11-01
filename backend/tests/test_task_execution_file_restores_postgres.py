@@ -40,7 +40,7 @@ def restore_db(write_db):
         c.execute('DROP TABLE deleted_files')
 
 
-async def setup(dsn,tmp_path,monkeypatch,*,mode='ok',artifact_kind='receipt',personal=False):
+async def setup(dsn,tmp_path,monkeypatch,*,mode='ok',artifact_kind='receipt',personal=False,state_factory=None):
     from services.tools.catalog import build_capability_catalog
     f=seed(dsn);f['org']=None if personal else str(uuid4())
     monkeypatch.setattr(get_settings(),'file_workspace_root',str(tmp_path))
@@ -57,6 +57,7 @@ async def setup(dsn,tmp_path,monkeypatch,*,mode='ok',artifact_kind='receipt',per
     value=task_payload(f)['_task_execution'];value.update(org_id=f['org'],image_binding_version=3,
         steps=[{'id':'restore','title':'恢复原文件','capability':'platform.restore_file','requirement_ids':['report']}])
     value['requirements'][0]['artifact_kind']=artifact_kind;state=TaskState.model_validate(value)
+    if state_factory is not None:state=state_factory(state,rid)
     cp={'messages':[{'role':'system','content':'原会话摘要'},{'role':'user','content':'恢复原文件'}],
         'opaque_context':{'preserve':True},'_task_execution':state.model_dump(mode='json')}
     with scoped(f) as c:save(c,f,cp)

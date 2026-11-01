@@ -22,6 +22,9 @@ def bind_write(state,call,registry):
     if spec is None or spec.name!='agent_reach' or spec.capability!='platform.agent_reach':
         raise TaskError('TASK_WRITE_DOMAIN_UNSUPPORTED')
     if state.status!='active':raise TaskError('TASK_NOT_ACTIVE')
+    if state.model_directed:
+        from .model_directed import operation_binding
+        return operation_binding(state,call)
     # One mutation per original user obligation. Renaming/adding model steps
     # cannot manufacture a second effect slot for the same obligation.
     candidates=[]

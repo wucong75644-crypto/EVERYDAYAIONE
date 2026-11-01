@@ -22,6 +22,9 @@ def binding(state,call):
     if state.status!='active':raise TaskError('TASK_NOT_ACTIVE')
     if call.name!='manage_scheduled_task' or thaw(call.arguments).get('action') not in ACTIONS:
         raise TaskError('TASK_SCHEDULED_MUTATION_REQUIRED')
+    if state.model_directed:
+        from .model_directed import operation_binding
+        return operation_binding(state,call)
     candidates=[]
     for step in ready_steps(state):
         targets=[r for r in state.requirements if r.id in (*step.requirement_ids,*step.contributes_to)]

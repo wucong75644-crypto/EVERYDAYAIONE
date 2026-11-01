@@ -27,7 +27,7 @@ def content(references):
     return [{k:r.get(k) for k in ('content_sha256','role')} for r in references]
 
 
-async def reuse(state,value,*,reader,resolver,owner_task_id):
+async def reuse(state,value,*,reader,resolver,owner_task_id,call_id='reuse-check'):
     if state.execution_identity.context_scope!='user':raise TaskError('TASK_IMAGE_REUSE_SCOPE_UNSUPPORTED')
     # Explicit regeneration without a stable retry identity means a new image.
     if 'source_task_id' in value.arguments and not value.arguments.get('variant_id'):
@@ -42,8 +42,14 @@ async def reuse(state,value,*,reader,resolver,owner_task_id):
     try:validate_model_image_arguments(catalog.get('generate_image'),value.arguments)
     except ToolArgumentValidationError:
         raise TaskError('IMAGE_TOOL_ARGUMENTS_INVALID') from None
-    binding=bind_image_call(state,ToolCall('reuse-check','generate_image',value.arguments),catalog)
+    binding=bind_image_call(state,ToolCall(call_id,'generate_image',value.arguments),catalog)
     resource=binding_for(state,binding.planning_artifact_id,binding.item_index)
+    if state.model_directed:
+        import json
+        recipe=next((a for a in state.artifacts if a.id==binding.planning_artifact_id and 'image.direct.recipe' in a.validations),None)
+        if recipe is None:raise TaskError('TASK_IMAGE_RESOURCE_BINDING_REQUIRED')
+        direct=json.loads(recipe.inline_text)
+        resource={'mode':direct['normalized']['mode'],'references':value.arguments.get('references',[]),'resolved':direct['resolved']}
     if reader is None or resolver is None:raise TaskError('TASK_IMAGE_REUSE_READER_UNAVAILABLE')
     async def resolve(references,*,require_originals):
         try:return await resolver(references,require_originals=require_originals)
@@ -52,7 +58,7 @@ async def reuse(state,value,*,reader,resolver,owner_task_id):
     prepare=getattr(resolver,'__dict__',{}).get('prepare_request')
     normalized=value.arguments;plan_proof=None
     if prepare is not None:
-        try:normalized,resolved,plan_proof=await prepare(value.arguments,state,'reuse-check')
+        try:normalized,resolved,plan_proof=await prepare(value.arguments,state,call_id)
         except (ValueError,PermissionError,OSError) as error:
             code=str(error)
             raise TaskError(code if code.replace('_','').isalnum() and code.isupper() else 'TASK_IMAGE_REUSE_INPUT_UNAVAILABLE') from None
@@ -80,6 +86,9 @@ async def reuse(state,value,*,reader,resolver,owner_task_id):
     if any(op.effect_key==binding.effect_key for op in state.operations):raise TaskError('TASK_IMAGE_SLOT_ALREADY_SUBMITTED')
     rows=await reader.reusable_images(state,source_task_id=value.source_task_id)
     current_steps={s.id for s in state.steps}
+    if state.model_directed:
+        current_input=next(b.input_sha256 for b in state.call_bindings if b.call_id==call_id)
+        current_steps={b.step_id for b in state.call_bindings if b.input_sha256==current_input}
     used={str(a.source_task_id) for a in state.artifacts if a.kind=='image' and a.step_id in current_steps and a.reference.startswith('task-image:')}
     matches=[r for r in rows if r['task_id'] not in used
         and all(key not in normalized or r['request'].get(key)==normalized[key]
