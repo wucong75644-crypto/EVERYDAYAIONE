@@ -90,7 +90,7 @@ export default memo(function MessageItem({
   const hasMultiBlocks = useMemo(() => {
     if (!Array.isArray(message.content)) return false;
     return message.content.some((p) =>
-      p.type === 'task_progress' || p.type === 'skill_step' || p.type === 'tool_step' || p.type === 'tool_result' ||
+      p.type === 'skill_step' || p.type === 'tool_step' || p.type === 'tool_result' ||
       p.type === 'image' || p.type === 'file' || p.type === 'form' ||
       p.type === 'chart' || p.type === 'diagram' || p.type === 'table' ||
       p.type === 'changeset' || p.type === 'interrupt_marker' ||
@@ -338,6 +338,12 @@ export default memo(function MessageItem({
       closeDeleteModal();
     }
   };
+
+  // A persisted progress-only update belongs to the header, not a cancelled
+  // message placeholder. Keep live thinking and actual errors visible.
+  const progressOnly = !isUser && Array.isArray(message.content) && message.content.some(part => part.type === 'task_progress')
+    && message.content.every(part => part.type === 'task_progress' || (part.type === 'text' && !part.text.trim()));
+  if (progressOnly && message.status === 'completed' && !isStreaming && !isRegenerating && !isErrorMessage) return null;
 
   // 判断是否有媒体内容（需要更宽的显示区域）
   const hasMedia = hasImage || hasVideo || hasFiles || !!mediaPlaceholderInfo;

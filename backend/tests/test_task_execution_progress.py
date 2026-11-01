@@ -93,3 +93,12 @@ async def test_accepted_erp_is_verification_work_not_an_automatically_arriving_r
     assert value['steps'][0]['status']=='needs_verification' and value['completed_steps']==0
     assert 'native-job' not in str(value) and 'postcondition' not in str(value)
     assert s.model_dump(mode='json')==before;io.assert_awaited_once()
+
+
+def test_planned_marker_revision_survives_message_serialization_without_private_state():
+    from services.handlers.chat.outcome_builder import build_content_parts
+    from schemas.message import serialize_content_parts
+    root=str(uuid4());block={'type':'task_progress','root_task_id':root,
+        'presentation':'model_directed','plan_revision':'a'*64,'state':{'private':'secret'}}
+    value=serialize_content_parts(build_content_parts([block],fallback_text=''))
+    assert value==[{key:block[key] for key in ('type','root_task_id','presentation','plan_revision')}]

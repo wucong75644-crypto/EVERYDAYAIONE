@@ -1365,10 +1365,20 @@ async def _execute_tools_impl(
             return None
         calls,staged=stage_plan_calls(runtime,prepared,blocks,calls,assistant)
         assistant_already_present=assistant_already_present or staged
+        planned_marker = None
+        if staged:
+            from services.task_execution.progress import plan_marker
+            planned_marker = plan_marker(blocks, runtime)
+            if planned_marker is not None and calls:
+                await runtime.safe_point(SafePoint.BEFORE_TOOL, replay_payload=_build_replay_context(
+                    prepared.messages, blocks, turn, next_model_round=next_model_round,
+                    repeated_tool_call_guard=repeated_tool_call_guard))
+                await sink.on_block(planned_marker)
         if not calls:
             await runtime.safe_point(SafePoint.AFTER_TOOL,replay_payload=_build_replay_context(
                 prepared.messages,blocks,turn,next_model_round=next_model_round,
                 repeated_tool_call_guard=repeated_tool_call_guard))
+            if planned_marker is not None:await sink.on_block(planned_marker)
             return None
         if not any(c['name'] in SKILL_CONTROL_TOOLS or c['name'] in TASK_CONTROL_TOOLS for c in calls):
             from services.tools.catalog import build_capability_catalog

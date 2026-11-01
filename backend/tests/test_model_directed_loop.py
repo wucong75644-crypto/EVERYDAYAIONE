@@ -244,3 +244,49 @@ async def test_async_image_acceptance_leaves_main_model_free_to_finish_independe
     assert len(rounds)==2 and r.task_execution_state.status=='waiting_dependencies'
     assert any('独立文字清单' in getattr(part,'text','') for part in outcome.parts)
     h._execute_tool_calls.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_code_only_keeps_native_journal_without_publishing_a_work_plan(monkeypatch):
+    r,p,h,req=case()
+    monkeypatch.setattr('services.handlers.chat.execution_engine.compact_tool_context',AsyncMock())
+    async def compute(calls,*args,**kwargs):return [(c,'代码计算结束',False,'代码计算结束') for c in calls]
+    h._execute_tool_calls.side_effect=compute
+    blocks=await execute(r,p,h,req,[call('code_execute',{'code':'print(1)'},'compute')])
+    assert r.task_execution_state is not None
+    assert r.task_execution_state.call_bindings[0].tool_name=='code_execute'
+    assert not any(b.get('type')=='task_progress' for b in blocks)
+    assert r.task_execution_state.working_plan is None
+
+
+@pytest.mark.asyncio
+async def test_plan_only_marker_is_saved_before_publication_without_native_state():
+    from services.task_execution.progress import plan_marker
+    saved=[]
+    async def save(point,payload):saved.append(copy.deepcopy(payload));return {'outcome':'saved'}
+    r,p,h,req=case(save)
+    blocks=await execute(r,p,h,req,[call('update_task_plan',{'steps':[
+        {'step':'读取表格','status':'pending'},{'step':'形成报告','status':'pending'}]},'plan')])
+    marker=next(b for b in blocks if b['type']=='task_progress')
+    assert saved[-1]['content_blocks'][-1]==marker
+    assert marker['root_task_id']==r.task_id and len(marker['plan_revision'])==64
+    assert r.task_execution_state is None
+    assert plan_marker(blocks,r) is None
+    previous_revision=marker['plan_revision']
+    blocks=await execute(r,p,h,req,[call('update_task_plan',{'steps':[]},'clear')],blocks)
+    assert next(b for b in blocks if b['type']=='task_progress')['plan_revision']!=previous_revision
+    assert r.task_direct_plan.steps==() and r.task_execution_state is None
+
+
+@pytest.mark.asyncio
+async def test_failed_plan_checkpoint_publishes_no_marker_and_restores_original_context():
+    async def fail(*args):raise RuntimeError('checkpoint failed')
+    r,p,h,req=case(fail);before=copy.deepcopy(p.messages);blocks=[]
+    sink=CollectingExecutionSink();sink.on_block=AsyncMock()
+    with pytest.raises(RuntimeError,match='checkpoint failed'):
+        await _execute_tools(runtime=r,prepared=p,handler=h,request=req,
+            calls=[call('update_task_plan',{'steps':[{'step':'读取表格','status':'pending'}]},'notes')],
+            blocks=blocks,turn=0,turn_text='',next_model_round=1,previewed_call_ids=set(),
+            cancellation_event=r.cancellation_event,sink=sink)
+    assert blocks==[] and p.messages==before and r.task_direct_plan is None
+    sink.on_block.assert_not_awaited()

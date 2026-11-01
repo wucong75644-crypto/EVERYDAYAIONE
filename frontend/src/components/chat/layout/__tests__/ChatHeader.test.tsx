@@ -1,3 +1,5 @@
+import { useState } from 'react';
+import { createPortal } from 'react-dom';
 /**
  * ChatHeader 测试
  *
@@ -135,4 +137,19 @@ describe('ChatHeader — 侧边栏切换', () => {
     fireEvent.click(screen.getByTitle('展开侧边栏'));
     expect(onToggleSidebar).toHaveBeenCalled();
   });
+});
+
+
+it('hosts task controls in the header through the same message-area portal boundary', () => {
+  function Layout() {
+    const [anchor, setAnchor] = useState<HTMLDivElement | null>(null);
+    return <><ChatHeader {...baseProps} taskStatusRef={setAnchor} />
+      <main data-testid="conversation-body">原回复与已有成果</main>
+      {anchor && createPortal(<button>查看任务</button>, anchor)}</>;
+  }
+  render(<Layout />);
+  const trigger = screen.getByRole('button', { name: '查看任务' });
+  expect(trigger.closest('header')).toBeInTheDocument();
+  expect(screen.getByTestId('conversation-body')).not.toContainElement(trigger);
+  expect(screen.getByText('原回复与已有成果')).toBeInTheDocument();
 });

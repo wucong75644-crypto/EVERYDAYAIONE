@@ -9,6 +9,7 @@ export const taskProgressSchema = z.object({
   completed_requirements: count, total_requirements: count,
   pending_results: count, unconfirmed_results: count,
   presentation: z.literal('model_directed').optional(),
+  plan_only: z.boolean().optional(),
   image_jobs: z.object({ completed: count, total: count }).optional(),
   working_plan: z.object({
     explanation: z.string().max(2000),

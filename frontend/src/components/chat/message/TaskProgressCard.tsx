@@ -16,12 +16,12 @@ const stepLabels: Record<TaskProgress['steps'][number]['status'], string> = {
 };
 const pausable = new Set(['active', 'waiting_input', 'waiting_approval', 'waiting_dependencies']);
 
-type Props = { rootTaskId: string; messageId: string; presentation?: 'model_directed'; onResume?: () => Promise<boolean> };
+type Props = { rootTaskId: string; messageId: string; presentation?: 'model_directed'; requirePlan?: boolean; onVisibility?: (visible: boolean | null) => void; onResume?: () => Promise<boolean> };
 export default function TaskProgressCard(props: Props) {
   return <ProgressView key={`${props.rootTaskId}:${props.messageId}`} {...props} />;
 }
 
-function ProgressView({ rootTaskId, messageId, presentation, onResume }: Props) {
+function ProgressView({ rootTaskId, messageId, presentation, onResume, requirePlan, onVisibility }: Props) {
   const { ref, inView } = useInView({ rootMargin: '100px' });
   const [value, setValue] = useState<TaskProgress | null>(null);
   const [unavailable, setUnavailable] = useState(false);
@@ -31,6 +31,12 @@ function ProgressView({ rootTaskId, messageId, presentation, onResume }: Props) 
   const controlling = useRef(false);
   const latest = useRef<TaskProgress | null>(null);
   const modelDirected = presentation === 'model_directed' || value?.presentation === 'model_directed';
+  const visibilityCallback = useRef(onVisibility);
+  useEffect(() => { visibilityCallback.current = onVisibility; }, [onVisibility]);
+  const hasPlan = !modelDirected || !!value?.working_plan?.steps.length;
+  useEffect(() => {
+    if (value || unavailable) visibilityCallback.current?.(unavailable ? null : !!value && (!requirePlan || hasPlan));
+  }, [value, unavailable, requirePlan, hasPlan]);
   const control = async (action: 'pause' | 'resume' | 'cancel') => {
     if (controlling.current) return;
     controlling.current = true; setBusy(true); setNotice('');
@@ -62,10 +68,17 @@ function ProgressView({ rootTaskId, messageId, presentation, onResume }: Props) 
       try {
         const next = await getTaskProgress(rootTaskId, messageId, request.signal);
         if (stopped || request.signal.aborted) return;
-        if (!latest.current || next.revision >= latest.current.revision) latest.current = next;
-        const current = latest.current;
+        const previous = latest.current;
+        // Checkpoint versions and execution revisions belong to different
+        // sources. Move forward to execution once; never adopt a stale plan.
+        const current = !previous ? next
+          : (previous.plan_only === true) !== (next.plan_only === true)
+            ? previous.plan_only === true ? next : previous
+            : next.revision >= previous.revision ? next : previous;
+        latest.current = current;
         setValue(current);
         setUnavailable(false);
+        if (requirePlan && current.presentation === 'model_directed' && !current.working_plan?.steps.length) return;
         // Closed windows can acquire a new authenticated follow-up owner.
         delay = current.status === 'active' ? 5_000 : pausable.has(current.status) || current.status === 'paused' ? 30_000 : 60_000;
       } catch (error) {
@@ -91,7 +104,9 @@ function ProgressView({ rootTaskId, messageId, presentation, onResume }: Props) 
       controller?.abort();
       document.removeEventListener('visibilitychange', visible);
     };
-  }, [rootTaskId, messageId, inView, refresh]);
+  }, [rootTaskId, messageId, inView, refresh, requirePlan]);
+
+  if (requirePlan && value && !hasPlan) return null;
 
   return <section ref={ref} aria-label="任务进度" className="my-2 rounded-xl border border-border-default px-3 py-2 text-sm text-text-secondary">
     <div className="flex items-center justify-between gap-3">
@@ -111,15 +126,15 @@ function ProgressView({ rootTaskId, messageId, presentation, onResume }: Props) 
         {value.status === 'paused' && onResume && <button type="button" disabled={busy} className="text-xs text-text-tertiary hover:text-text-primary disabled:opacity-50" onClick={() => { void control('resume'); }}>继续任务</button>}
         <button type="button" disabled={busy} className="text-xs text-text-tertiary hover:text-text-primary disabled:opacity-50" onClick={() => { void control('cancel'); }}>停止任务</button>
       </div>}
-      {modelDirected && value.working_plan && value.working_plan.steps.length > 0 && <details className="mt-2">
-        <summary className="cursor-pointer text-xs">工作计划</summary>
+      {modelDirected && value.working_plan && value.working_plan.steps.length > 0 && <section aria-label="工作计划" className="mt-2">
+        <p className="text-xs font-medium">工作计划</p>
         {value.working_plan.explanation && <p className="mt-1 text-xs">{value.working_plan.explanation}</p>}
         <ul className="mt-1 space-y-1 text-xs">
           {value.working_plan.steps.map((item, index) => <li key={index}>
             {item.step} · {{ pending: '待处理', in_progress: '进行中', completed: '已记录完成' }[item.status]}
           </li>)}
         </ul>
-      </details>}
+      </section>}
       {value.steps.length > 0 && !modelDirected && <details className="mt-2">
         <summary className="cursor-pointer text-xs">查看步骤</summary>
         <ol className="mt-1 space-y-1">

@@ -147,7 +147,7 @@ const contentPartSchema = z.preprocess(normalizeNullEquivalentFields, z.discrimi
     cancelled_at: optionalString,
   }).passthrough(),
   z.object({ type: z.literal('task_progress'), root_task_id: z.string().uuid(),
-    presentation: z.literal('model_directed').optional() }),
+    presentation: z.literal('model_directed').optional(), plan_revision: z.string().regex(/^[a-f0-9]{64}$/).optional() }),
   z.object({
     type: z.literal('skill_step'),
     step_id: z.string(),

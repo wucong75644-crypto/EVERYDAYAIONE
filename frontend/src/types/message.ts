@@ -38,6 +38,7 @@ export interface TaskProgressPart {
   type: 'task_progress';
   root_task_id: string;
   presentation?: 'model_directed';
+  plan_revision?: string;
 }
 
 export interface SkillStepPart {

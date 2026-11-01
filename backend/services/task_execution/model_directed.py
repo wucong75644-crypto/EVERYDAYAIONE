@@ -16,6 +16,7 @@ PREFIX = '[Model-directed execution]\n'
 PLAN_SCHEMA = {'type': 'function', 'function': {
     'name': 'update_task_plan',
     'description': '按需记录工作计划和进度，可随真实结果修改；不是执行审批，不授予权限。简单任务无需使用。'
+        '步骤名称应说明具体工作目标，不按工具调用次数拆成任务；多项工作分别命名并更新各自进度。'
         '用户明确要求的分析/完整提示词仍需交付；不要把计划更新、保存或结果登记当成独立业务任务。',
     'parameters': WorkingPlan.model_json_schema(),
 }}

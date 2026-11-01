@@ -608,3 +608,31 @@ it('does not render an empty user bubble when only an attachment is sent', () =>
   expect(screen.getByTestId('message-media')).toBeInTheDocument();
   expect(container.querySelector('[class*="bg-gradient-to-r"]')).toBeNull();
 });
+
+it('does not turn a completed progress-only message into a cancelled placeholder', () => {
+  const { container } = render(<MessageItem message={makeMessage({
+    role: 'assistant', status: 'completed', content: [{ type: 'task_progress',
+      root_task_id: '11111111-1111-4111-8111-111111111111', presentation: 'model_directed' }],
+  })} />);
+  expect(container.querySelector('[data-message-id]')).toBeNull();
+  expect(screen.queryByText(/已取消/)).not.toBeInTheDocument();
+});
+
+it('keeps the original answer when its task progress marker moves to the header', () => {
+  render(<MessageItem message={makeMessage({ role: 'assistant', status: 'completed', content: [
+    { type: 'task_progress', root_task_id: '11111111-1111-4111-8111-111111111111', presentation: 'model_directed' },
+    { type: 'text', text: '原表格分析结果保留。' },
+  ] })} />);
+  expect(screen.getByText('原表格分析结果保留。')).toBeInTheDocument();
+  expect(screen.queryByText('正在读取任务进度')).not.toBeInTheDocument();
+});
+
+
+it('retains original resume actions for an interrupted progress-only message', () => {
+  const { container } = render(<MessageItem message={makeMessage({
+    role: 'assistant', status: 'interrupted', content: [{ type: 'task_progress',
+      root_task_id: '11111111-1111-4111-8111-111111111111', presentation: 'model_directed' }],
+  })} onResume={vi.fn()} />);
+  expect(container.querySelector('[data-message-id]')).toBeInTheDocument();
+  expect(screen.getByTestId('message-actions')).toBeInTheDocument();
+});

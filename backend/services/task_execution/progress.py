@@ -3,17 +3,45 @@ from .contracts import TaskError, TaskState
 from .reducer import missing_requirements, ready_steps
 
 
+def _marker(blocks, root, *, plan=None, model_directed=False):
+    from .reducer import digest
+    block = {'type': 'task_progress', 'root_task_id': str(root)}
+    if model_directed:
+        block.update(presentation='model_directed', plan_revision=digest(plan.model_dump(mode='json')))
+    previous = next((b for b in blocks if b.get('type') == 'task_progress'
+                     and b.get('root_task_id') == str(root)), None)
+    if previous == block:
+        return None
+    if previous is not None:
+        previous.clear()
+        previous.update(block)
+    else:
+        blocks.append(block)
+    return block
+
+
 def marker(blocks, state):
     if state is None or state.image_binding_version < 3 or state.execution_identity.context_scope != 'user':
         return None
-    root = str(state.root_task_id)
-    if any(b.get('type') == 'task_progress' and b.get('root_task_id') == root for b in blocks):
+    if state.model_directed and not (state.working_plan and state.working_plan.steps):
+        return None  # Native receipts alone are not a user-facing work plan.
+    return _marker(blocks, state.root_task_id, plan=state.working_plan, model_directed=state.model_directed)
+
+
+def plan_marker(blocks, runtime):
+    from .model_directed import enabled
+    if not enabled(runtime):
         return None
-    block = {'type': 'task_progress', 'root_task_id': root}
-    if state.model_directed:
-        block['presentation'] = 'model_directed'
-    blocks.append(block)
-    return block
+    plan = getattr(runtime, 'task_direct_plan', None)
+    bootstrap = runtime.task_bootstrap
+    state = runtime.task_execution_state
+    identity = state.execution_identity if state else bootstrap.execution_identity if bootstrap else None
+    if not (plan is not None and identity and identity.context_scope == 'user'):
+        return None
+    root = state.root_task_id if state else bootstrap.task_id
+    if not plan.steps and not any(b.get('type') == 'task_progress' and b.get('root_task_id') == str(root) for b in blocks):
+        return None
+    return _marker(blocks, root, plan=plan, model_directed=True)
 
 
 def needs_verification(operation):
@@ -77,6 +105,21 @@ def read(db, *, root_task_id, message_id, user_id, org_id):
     data = result.data if result else None
     if not isinstance(data, dict) or data.get('outcome') != 'found':
         raise NotFoundError('任务进度不存在或不可访问')
+    if data.get('plan_only') is True:
+        from .contracts import WorkingPlan
+        try:
+            plan = WorkingPlan.model_validate(data['working_plan'])
+        except ValueError:
+            raise NotFoundError('任务进度不存在或不可访问') from None
+        if (data.get('root_task_id') != str(root_task_id) or data.get('actor_user_id') != str(user_id)
+            or data.get('org_id') != (str(org_id) if org_id else None)):
+            raise TaskError('TASK_PROGRESS_SCOPE_MISMATCH')
+        status = ('paused' if data['checkpoint_status'] == 'paused' else
+                  {'completed': 'completed', 'failed': 'failed', 'cancelled': 'cancelled'}.get(data['task_status'], 'active'))
+        return dict(root_task_id=str(root_task_id), revision=data['revision'], status=status,
+            presentation='model_directed', plan_only=True, working_plan=plan.model_dump(mode='json'),
+            completed_steps=0, total_steps=0, completed_requirements=0, total_requirements=0,
+            pending_results=0, unconfirmed_results=0, steps=[])
     state = TaskState.model_validate(data['state'])
     if (str(state.root_task_id) != str(root_task_id) or str(state.actor_user_id) != str(user_id)
         or (str(state.org_id) if state.org_id else None) != (str(org_id) if org_id else None)):

@@ -104,6 +104,7 @@ class TaskProgressPart(BaseModel):
     type: Literal["task_progress"] = "task_progress"
     root_task_id: UUID
     presentation: Literal['model_directed'] | None = None
+    plan_revision: str | None = Field(default=None, pattern=r'^[a-f0-9]{64}$')
 
 
 class SkillStepPart(BaseModel):

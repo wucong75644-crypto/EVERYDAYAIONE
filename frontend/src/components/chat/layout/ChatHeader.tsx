@@ -8,7 +8,7 @@
  * - 积分显示
  */
 
-import { memo } from 'react';
+import { memo, type Ref } from 'react';
 import { Brain, Clock, PanelLeftOpen, Search, Users } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useMemoryStore } from '../../../stores/useMemoryStore';
@@ -16,6 +16,7 @@ import { usePermission } from '../../../hooks/usePermission';
 
 /** 组件属性接口 */
 export interface ChatHeaderProps {
+  taskStatusRef?: Ref<HTMLDivElement>;
   /** 侧边栏是否收起 */
   sidebarCollapsed: boolean;
   /** 切换侧边栏 */
@@ -60,6 +61,7 @@ export const ChatHeader = memo(function ChatHeader({
   userCredits,
   onOpenSearch,
   onOpenScheduledTasks,
+  taskStatusRef,
 }: ChatHeaderProps) {
   const navigate = useNavigate();
   // 仅管理员（boss/vp/manager/deputy 中的人事主管）能进组织管理
@@ -103,6 +105,7 @@ export const ChatHeader = memo(function ChatHeader({
         )}
       </div>
       <div className="flex items-center space-x-3 text-sm text-text-tertiary">
+        <div ref={taskStatusRef} className="shrink-0 empty:hidden" />
         {onOpenSearch && (
           <button
             onClick={onOpenSearch}
