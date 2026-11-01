@@ -5,41 +5,10 @@ from types import SimpleNamespace
 
 import pytest
 from schemas.message import TextPart, ImagePart
-from services.knowledge_workspace.scope_selection import self_contained_reason
 from services.handlers.chat.execution_engine import _read_turn
 from services.handlers.chat.execution_sink import CollectingExecutionSink
 from services.handlers.chat.stream_session import StreamTotals
 from services.agent.observability.chat_stream import ModelTurnTiming
-
-
-@pytest.mark.parametrize('question,images,expected', [
-    ('你是谁？', False, 'self_contained_chat'),
-    ('请讲个笑话', False, 'self_contained_chat'),
-    ('请翻译：hello world', False, 'self_contained_transform'),
-    ('仅根据这张图片分析颜色和构图', True, 'user_images_only'),
-    ('分析这张图片', True, 'user_images_only'),  # Complete source-bound request, observed in production.
-    ('帮我分析一下图片', True, 'user_images_only'),
-    ('请描述我上传的照片。', True, 'user_images_only'),
-    ('分析这张图片', False, None),
-    ('分析这张图片后上网核实', True, None),
-    ('分析图片中的商品价格是否合理', True, None),
-    ('分析这张图片并按之前要求执行', True, None),
-    ('分析这张图片中的公司报销规则', True, None),
-    ('仅根据这张图片分析公司报销流程', True, None),
-    ('公司有哪些规则？', False, None),
-    ('帮我分析一下', False, None),
-    ('润色上一版', False, None),
-    ('翻译上面的内容', False, None),
-    ('仅根据以下内容分析', False, None),
-    ('写个程序查询库存', False, None),
-])
-def test_host_scope_is_conservative(question, images, expected):
-    content = [TextPart(text=question)]
-    if images:
-        content.append(ImagePart(url='https://example.invalid/original.png'))
-    assert self_contained_reason(question, content, []) == expected
-    assert self_contained_reason(question, content, [], required=True) is None
-    assert self_contained_reason(question, content, [{'role': 'assistant', 'content': '[来源](/knowledge?object=old)'}]) is None
 
 
 @pytest.mark.asyncio
@@ -91,90 +60,30 @@ def test_model_timing_uses_one_clock_and_fixed_scalar_state():
     }
 
 
-def test_checkpointed_user_steer_is_not_reclassified_from_original_request():
-    content = [TextPart(text='你是谁？')]
-    assert self_contained_reason('你是谁？', content, [
-        {'role': 'user', 'content': '你是谁？'},
-        {'role': 'user', 'content': '按公司规范解释'},
-    ]) is None
+@pytest.mark.parametrize('question', ['你好', '帮我分析一下', '换一种表达方式', '公司规则是什么', '写个程序查询库存'])
+def test_wording_does_not_create_an_answer_gate_or_hide_model_requested_roots(question):
+    from services.knowledge_workspace.answer_policy import bind_answer_policy
+    from services.knowledge_workspace.scope_selection import select
+    corpus = [{'id': 'personal', 'kind': 'personal', 'title': '个人资料'}]
+    assert select(corpus, question)[0] == corpus
+    assert bind_answer_policy(SimpleNamespace(), SimpleNamespace()).mode == 'stream'
 
 
 @pytest.mark.asyncio
-async def test_consumed_steer_keeps_pending_scope_refresh_until_next_model(monkeypatch):
+async def test_authenticated_steer_changes_question_without_automatic_retrieval(monkeypatch):
     from unittest.mock import AsyncMock
     from services.handlers.chat.execution_engine import _inject_steer_messages, _refresh_knowledge_after_steer
     from tests.test_chat_execution_engine import _request
-    p = SimpleNamespace(messages=[], text_content='你是谁？')
-    h = SimpleNamespace(_knowledge_self_contained=True, _knowledge_run=None)
-    run = SimpleNamespace(introduction=lambda: {'scope': 'authorized'})
-    async def prepare(handler, *args, **kwargs):
-        assert kwargs['question'] == '按公司规范改写'
-        assert 'self_contained' not in kwargs
-        handler._knowledge_run = run
-    prep = AsyncMock(side_effect=prepare)
-    monkeypatch.setattr('services.knowledge_workspace.runtime.prepare_knowledge_run', prep)
-    # All model-loop/tool/Skill consumption points use the same injector. The
-    # queue may now be empty, but its invalidation survives until the loop reads.
-    _inject_steer_messages(p.messages, ['按公司规范改写'], prepared=p)
-    assert p.knowledge_steer_pending
-    await _refresh_knowledge_after_steer(h, _request(), p)
-    assert not p.knowledge_steer_pending and not h._knowledge_self_contained
-    assert p.knowledge_question == '按公司规范改写'
-    assert '知识画布运行快照：' in p.messages[-1]['content']
-    await _refresh_knowledge_after_steer(h, _request(), p)
-    prep.assert_awaited_once()
-
-
-@pytest.mark.parametrize('question', ['润色上一版', '翻译上面的内容', '仅根据以下内容分析'])
-def test_legacy_scope_selection_does_not_reopen_ambiguous_exemption(question):
-    from services.knowledge_workspace.scope_selection import select
-    corpus = [{'id': 'authorized-personal', 'kind': 'personal', 'title': '个人资料'}]
-    selected, reason = select(corpus, question)
-    assert selected == corpus and reason == 'task_scope'
-
-
-@pytest.mark.parametrize('question', ['你好', '请翻译：hello', '仅根据以下内容回答：hello'])
-def test_host_denied_exemption_cannot_be_reopened_by_legacy_scope_rules(question):
-    from services.knowledge_workspace.scope_selection import select
-    corpus = [{'id': 'authorized-personal', 'kind': 'personal', 'title': '个人资料'}]
-    assert select(corpus, question, allow_self_contained=False)[0] == corpus
-
-
-@pytest.mark.parametrize('cached', [False, True])
-@pytest.mark.parametrize('question,images,reason', [
-    ('你好', False, 'self_contained_chat'),
-    ('你都能帮我做什么？', False, 'self_contained_chat'),
-    ('分析这张图片', True, 'user_images_only'),
-])
-def test_real_prompt_tool_documentation_does_not_become_knowledge_evidence(monkeypatch, cached, question, images, reason):
-    from config.chat_tools import TOOL_SYSTEM_PROMPT
-    from services.prompt_builder.builder import PromptBuilder
-    monkeypatch.setattr('core.config.get_settings', lambda: SimpleNamespace(prompt_cache_control_enabled=cached))
-    assert 'knowledge_search' in TOOL_SYSTEM_PROMPT
-    messages = PromptBuilder._compose_messages(
-        TOOL_SYSTEM_PROMPT, '当前可用工具及权限', '当前时间', [], None,
-        SimpleNamespace(workspace_system_block='', attachments_system_block='',
-                        user_message={'role': 'user', 'content': question}))
-    content = [TextPart(text=question)]
-    if images:
-        content.append(ImagePart(url='https://example.invalid/original.png'))
-    assert self_contained_reason(question, content, messages) == reason
-    assert self_contained_reason(question, content, messages, required=True) is None
-
-
-@pytest.mark.parametrize('packet', [
-    {'role': 'system', 'content': '知识画布运行快照：{"roots":[]}'},
-    {'role': 'system', 'content': [{'type':'text','text':'知识库程序检索依据：实际证据'}]},
-    {'role': 'system', 'content': '知识查询答复阶段：实际证据'},
-    {'role': 'system', 'content': '以下是之前对话的摘要：已读取 knowledge_search'},
-    {'role': 'assistant', 'content': '', 'tool_calls':[{'function':{'name':'knowledge_search'}}]},
-    {'role': 'tool', 'name': 'knowledge_read', 'content': '{}'},
-    {'role': 'assistant', 'content': '[来源](/knowledge?object=old)'},
-])
-def test_real_knowledge_provenance_still_requires_verification(packet):
-    messages = [packet, {'role':'user','content':'你好'}]
-    assert self_contained_reason('你好', [TextPart(text='你好')], messages) is None
-
+    prepared = SimpleNamespace(messages=[], text_content='原任务')
+    bound = object()
+    handler = SimpleNamespace(_knowledge_run=bound)
+    prepare = AsyncMock()
+    monkeypatch.setattr('services.knowledge_workspace.runtime.prepare_knowledge_run', prepare)
+    _inject_steer_messages(prepared.messages, ['按公司规范改写'], prepared=prepared)
+    await _refresh_knowledge_after_steer(handler, _request(), prepared)
+    assert prepared.knowledge_question == '按公司规范改写'
+    assert handler._knowledge_run is bound
+    prepare.assert_not_awaited()
 
 @pytest.mark.asyncio
 async def test_tool_round_is_not_presented_as_answer_audit_and_final_body_stays_held(monkeypatch):
@@ -209,8 +118,9 @@ async def test_tool_round_is_not_presented_as_answer_audit_and_final_body_stays_
     audit=AsyncMock(side_effect=verify)
     monkeypatch.setattr('services.handlers.chat.execution_engine._execute_tools',execute)
     monkeypatch.setattr('services.handlers.chat.execution_engine._verify_knowledge_answer',audit)
-    await _run_loop(handler=SimpleNamespace(org_id=None,
-        _knowledge_answer_guard=prepared.knowledge_answer_policy.verifier),request=_request(),prepared=prepared,
+    from services.knowledge_workspace.chat import KnowledgeRun
+    bound = KnowledgeRun(object(), 'snapshot', {'automatic': False})
+    await _run_loop(handler=SimpleNamespace(org_id=None, _knowledge_run=bound),request=_request(),prepared=prepared,
         cancellation_event=asyncio.Event(),sink=sink,totals=StreamTotals(),blocks=blocks,runtime=None)
     assert len(rounds)==2
     execute.assert_awaited_once();audit.assert_awaited_once()

@@ -220,16 +220,17 @@ class ToolExecutor(
                               (self.task_id, self.conversation_id, self.user_id, self.org_id))
                     task = c.fetchone()
                 if not task or not task['input_message_id']:unavailable()
-                from services.knowledge_workspace.scope_selection import SOURCE_ONLY
-                from services.knowledge_workspace.ai_journal_extract import message_text
-                if SOURCE_ONLY.search(message_text(task['content'])):
-                    return None
-                return KnowledgeRun.start(repo, conversation_id=self.conversation_id,
-                    input_message_id=task['input_message_id'], default_scope=True, question=args['query'])
-            self.knowledge_run = await asyncio.to_thread(start)
+                return (KnowledgeRun.start(repo, conversation_id=self.conversation_id,
+                    input_message_id=task['input_message_id'], default_scope=True, question=args['query'],
+                    allow_self_contained=False), str(task['input_message_id']))
+            self.knowledge_run, input_message_id = await asyncio.to_thread(start)
+            candidates = getattr(self, 'knowledge_candidates', None)
+            if self.knowledge_run is not None and candidates is not None:
+                await candidates.attach(self.knowledge_run, input_message_id)
         if self.knowledge_run is None:
             return AgentResult(summary='当前任务未找到可用知识范围，不能据此断言整个知识库没有资料。', status='empty')
         await asyncio.to_thread(self.knowledge_run.revalidate)
+        self.knowledge_run.answer_obligation = True  # Authenticated model tool entry.
         return AgentResult(summary=json.dumps(self.knowledge_run.introduction(), ensure_ascii=False), status='success')
 
     def _knowledge_handler(self, action):
@@ -239,6 +240,7 @@ class ToolExecutor(
             from services.knowledge_workspace.chat import unavailable
             if self.knowledge_run is None or not self.personal_context_allowed: unavailable()
             result = await asyncio.to_thread(self.knowledge_run.execute, action, args)
+            self.knowledge_run.answer_obligation = True
             from services.knowledge_workspace.model_view import present
             return AgentResult(summary=json.dumps(present(result), ensure_ascii=False), status='success')
         return execute

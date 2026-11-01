@@ -60,130 +60,80 @@ def prepared(policy,steps,max_turns=6):
         messages=[{'role':'user','content':'请按照内部规则处理'}],
         tool_context=SimpleNamespace(discovered_tools=set(),build_context_prompt=lambda:''),
         permission=SimpleNamespace(mode=SimpleNamespace(value='auto'),need_exit_attachment=False,get_reminder=lambda _:''),
-        knowledge_answer_policy=KnowledgeAnswerPolicy('audit_claims','test',policy))
+        knowledge_answer_policy=KnowledgeAnswerPolicy('audit_claims','test',policy) if policy is not None else None)
     return p,calls
 
 
 @pytest.mark.asyncio
-async def test_real_loop_repairs_once_then_switches_to_actual_read_evidence(monkeypatch):
-    policy,_=guard(monkeypatch)
-    p,calls=prepared(policy,[('不能发布的私有猜测',None),('', 'knowledge_discover'),('仅限未拆封。',None)])
-    h=SimpleNamespace(org_id=None,_knowledge_run=None,_knowledge_answer_guard=policy)
+async def test_model_requested_knowledge_switches_next_round_to_real_scope(monkeypatch):
+    p,calls=prepared(None,[('', 'knowledge_discover'),('仅限未拆封。',None)])
+    h=SimpleNamespace(org_id=None,_knowledge_run=None)
     sink=CollectingExecutionSink();blocks=[];totals=StreamTotals()
     actual=KnowledgeRun(object(),'snapshot',{'automatic':True})
     actual.revalidate=lambda:None;actual.normalize_citations=lambda t:t
     actual.grounding_sources=lambda:[{'key':'raw','text':'仅限未拆封。'}]
     async def discover(**kwargs):
-        assert sink.text=='' and sink.thinking==''
         assert kwargs['calls'][0]['name']=='knowledge_discover'
         h._knowledge_run=actual
     async def audit(candidate,*args,**kwargs):
         assert candidate==['仅限未拆封。'] and sink.text==''
     business=AsyncMock(side_effect=discover)
     monkeypatch.setattr('services.handlers.chat.execution_engine._execute_tools',business)
-    monkeypatch.setattr(grounding,'request',AsyncMock(return_value={'requires_sources':True}))
     monkeypatch.setattr(grounding,'audit',audit)
     await _run_loop(handler=h,request=_request(),prepared=p,cancellation_event=asyncio.Event(),
         sink=sink,totals=totals,blocks=blocks,runtime=None)
-    assert len(calls)==3 and business.await_count==1
-    assert 'knowledge_discover' in {t['function']['name'] for t in calls[0]['tools']}
-    assert 'knowledge_read' in {t['function']['name'] for t in calls[-1]['tools']}
+    assert len(calls)==2 and business.await_count==1
     assert p.knowledge_answer_policy.verifier is actual
-    assert sink.text=='仅限未拆封。' and sink.thinking==''
-    assert '不能发布的私有猜测' not in json.dumps(blocks,ensure_ascii=False)
-    assert '不能发布的私有猜测' not in json.dumps([c['messages'] for c in calls],ensure_ascii=False)
-    assert all(t['held_for_knowledge'] for t in p.model_turn_timings)
+    assert sink.text=='仅限未拆封。'
+    assert sink.thinking=='不展示的内部思考'  # Only the pre-binding tool round streams thinking.
+    assert [t['held_for_knowledge'] for t in p.model_turn_timings]==[False,True]
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('active_task',[False,True])
-async def test_repeated_private_draft_finishes_safely_without_infinite_retry(monkeypatch,active_task):
-    from tests.test_task_execution_model_bridge import setup_case
-    policy,_=guard(monkeypatch);p,calls=prepared(policy,[('不应发布的结论',None)]*2)
-    runtime,_,h,_=setup_case()
-    if not active_task:runtime.task_execution_state=None
-    h.org_id=None;h._knowledge_run=None;h._knowledge_answer_guard=policy
-    h._calculate_credits=lambda _:0;h._get_conv_source=lambda _:'web';h._pending_emit_payloads=[]
-    sink=CollectingExecutionSink();blocks=[];totals=StreamTotals()
-    monkeypatch.setattr(grounding,'request',AsyncMock(return_value={'requires_sources':True}))
-    await _run_loop(handler=h,request=_request(),prepared=p,cancellation_event=runtime.cancellation_event,
-        sink=sink,totals=totals,blocks=blocks,runtime=runtime)
-    assert len(calls)==2 and '不应发布的结论' not in json.dumps(blocks,ensure_ascii=False)
-    h._execute_tool_calls.assert_not_called()
-    saved=runtime._replay_checkpoint_callback.call_args.args[1]
-    assert any(m.get('role')=='system' and m['content'].startswith('[Knowledge evidence repair]') for m in saved['messages'])
-    if active_task:
-        assert runtime.task_execution_state.status=='partial'
-        assert saved['_task_execution']['status']=='partial' and saved['checkpoint_kind']=='commit_ready'
-        assert '不应发布的结论' not in json.dumps(saved['result_content'],ensure_ascii=False)
+async def test_bound_scope_without_evidence_does_not_publish_guess_or_loop(monkeypatch):
+    actual=KnowledgeRun(object(),'snapshot',{'automatic':False})
+    actual.revalidate=lambda:None
+    actual.grounding_sources=lambda:[]
+    p,calls=prepared(None,[('不应发布的结论',None)])
+    h=SimpleNamespace(org_id=None,_knowledge_run=actual)
+    sink=CollectingExecutionSink();blocks=[]
+    audit=AsyncMock(side_effect=AssertionError('No source-free classification needed'))
+    monkeypatch.setattr(grounding,'request',audit)
+    await _run_loop(handler=h,request=_request(),prepared=p,cancellation_event=asyncio.Event(),
+        sink=sink,totals=StreamTotals(),blocks=blocks,runtime=None)
+    assert len(calls)==1 and '不应发布的结论' not in sink.text
+    assert sink.text and sink.thinking==''
+    audit.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_repair_budget_exhaustion_does_not_sample_extra_wrap_up(monkeypatch):
-    policy,_=guard(monkeypatch);p,calls=prepared(policy,[('不应发布的结论',None)],max_turns=1)
-    h=SimpleNamespace(org_id=None,_knowledge_run=None,_knowledge_answer_guard=policy,_pending_emit_payloads=[])
-    sink=CollectingExecutionSink();blocks=[];totals=StreamTotals();event=asyncio.Event()
-    monkeypatch.setattr(grounding,'request',AsyncMock(return_value={'requires_sources':True}))
-    synthesis=AsyncMock(side_effect=AssertionError('uncounted model call'))
-    monkeypatch.setattr('services.agent.stop_policy.synthesize_wrap_up',synthesis)
-    await _run_loop(handler=h,request=_request(),prepared=p,cancellation_event=event,
-        sink=sink,totals=totals,blocks=blocks,runtime=None)
-    parts=await _finalize_output_parts(handler=h,prepared=p,totals=totals,blocks=blocks,sink=sink,
-        cancellation_event=event,runtime=None)
-    assert len(calls)==1 and blocks[-1]['task_status']=='partial'
-    assert parts[-1].text==blocks[-1]['text'] and '不应发布的结论' not in parts[-1].text
-    synthesis.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_pause_after_independent_decision_preserves_repair_limit_and_context(monkeypatch):
+@pytest.mark.parametrize('control',['cancel','pause'])
+async def test_control_during_actual_scope_audit_never_releases_draft(monkeypatch,control):
     from services.conversation_commands import ConversationCommand,CommandType
     from services.conversation_state import ConversationPauseRequested
     from tests.test_task_execution_model_bridge import setup_case
-    policy,_=guard(monkeypatch);p,calls=prepared(policy,[('不应发布的结论',None)])
+    actual=KnowledgeRun(object(),'snapshot',{'automatic':False})
+    actual.revalidate=lambda:None
+    actual.grounding_sources=lambda:[{'key':'real','text':'原始规则'}]
+    actual.normalize_citations=lambda text:text
+    p,calls=prepared(None,[('不应发布的结论',None)])
     runtime,_,h,_=setup_case();runtime.task_execution_state=None
-    h.org_id=None;h._knowledge_run=None;h._knowledge_answer_guard=policy
-    class PauseSink(CollectingExecutionSink):
-        async def on_block_update(self,block):
-            await super().on_block_update(block)
-            if '正在补充资料' in block.get('output',''):
-                runtime.push(ConversationCommand(command_id='pause-after-source-audit',command_type=CommandType.PAUSE,
-                    conversation_id=runtime.conversation_id,task_id=runtime.task_id))
-    sink=PauseSink();blocks=[]
-    audit=AsyncMock(return_value={'requires_sources':True})
-    monkeypatch.setattr(grounding,'request',audit)
-    with pytest.raises(ConversationPauseRequested):
-        await _run_loop(handler=h,request=_request(),prepared=p,cancellation_event=runtime.cancellation_event,
-            sink=sink,totals=StreamTotals(),blocks=blocks,runtime=runtime)
-    saved=runtime._replay_checkpoint_callback.call_args.args[1]
-    assert saved['next_model_round']==1 and len(calls)==1
-    assert saved['messages'][0]=={'role':'user','content':'请按照内部规则处理'}
-    assert any(m.get('role')=='system' and m['content'].startswith('[Knowledge evidence repair]') for m in saved['messages'])
-    assert '不应发布的结论' not in json.dumps(saved,ensure_ascii=False)
-    resumed,again=prepared(policy,[('仍然不应发布',None)])
-    resumed.messages=copy.deepcopy(saved['messages'])
-    await _run_loop(handler=h,request=_request(),prepared=resumed,cancellation_event=asyncio.Event(),
-        sink=CollectingExecutionSink(),totals=StreamTotals(),blocks=[],runtime=None,model_round=1)
-    assert len(again)==1 and audit.await_count==2
-
-
-@pytest.mark.asyncio
-async def test_cancellation_during_deferred_audit_stops_provider_and_never_releases(monkeypatch):
-    policy,_=guard(monkeypatch);p,calls=prepared(policy,[('不应发布的结论',None)])
-    h=SimpleNamespace(org_id=None,_knowledge_run=None,_knowledge_answer_guard=policy)
-    started=asyncio.Event();closed=asyncio.Event();event=asyncio.Event()
+    h.org_id=None;h._knowledge_run=actual
+    started=asyncio.Event();closed=asyncio.Event();event=runtime.cancellation_event
     async def audit(*args,**kwargs):
         started.set()
         try:await asyncio.Event().wait()
         finally:closed.set()
-    monkeypatch.setattr(grounding,'request',audit)
+    monkeypatch.setattr(grounding,'audit',audit)
     sink=CollectingExecutionSink();blocks=[]
     task=asyncio.create_task(_run_loop(handler=h,request=_request(),prepared=p,cancellation_event=event,
-        sink=sink,totals=StreamTotals(),blocks=blocks,runtime=None))
-    await asyncio.wait_for(started.wait(),2);event.set()
-    with pytest.raises(asyncio.CancelledError):await task
+        sink=sink,totals=StreamTotals(),blocks=blocks,runtime=runtime))
+    await asyncio.wait_for(started.wait(),2)
+    if control=='cancel':event.set()
+    else:runtime.push(ConversationCommand(command_id='pause',command_type=CommandType.PAUSE,
+        conversation_id=runtime.conversation_id,task_id=runtime.task_id))
+    with pytest.raises(asyncio.CancelledError if control=='cancel' else ConversationPauseRequested):await task
     assert closed.is_set() and sink.text=='' and sink.thinking=='' and len(calls)==1
-    assert not any(m.get('role')=='system' and m['content'].startswith('[Knowledge evidence repair]') for m in p.messages)
 
 
 @pytest.mark.asyncio

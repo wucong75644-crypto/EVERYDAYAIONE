@@ -28,6 +28,7 @@ class PreparedChatStream:
     knowledge_question: str | None = None
     knowledge_answer_policy: Any = None
     knowledge_input_facts: Any = None
+    knowledge_candidates: Any = None
 
     @property
     def adapter(self) -> Any:
@@ -86,33 +87,24 @@ async def prepare_chat_stream(
     messages, handler._web_link_refs = prepare_links(
         messages, org_id=handler.org_id, user_id=user_id, conversation_id=conversation_id,
     )
-    from services.knowledge_workspace.scope_selection import self_contained_reason, latest_user_text
     from services.knowledge_workspace.input_facts import KnowledgeInputFacts, restore_facts
     facts = (restore_facts(replay_context, context_anchor) if replay_context is not None
              else getattr(handler, '_knowledge_input_facts', None))
     if not isinstance(facts, KnowledgeInputFacts):
         facts = None
-    source_reason = self_contained_reason(text_content, content, messages,
-        required=params.get('_knowledge_refs_required') is True, input_facts=facts)
-    # A legacy replay cannot establish that host/user changes were accounted for.
-    from services.handlers.context_snapshot import ContextAnchor
-    if facts is None and (replay_context is not None or isinstance(context_anchor, ContextAnchor)):
-        source_reason = None
-    knowledge_question = facts.question if facts else (latest_user_text(messages) or text_content)
+    knowledge_question = facts.question if facts else text_content
     knowledge_started_at = time.monotonic()
     from services.knowledge_workspace.runtime import prepare_knowledge_run
-    await prepare_knowledge_run(handler, context_anchor, user_id, conversation_id, required=params.get('_knowledge_refs_required') is True, question=knowledge_question, self_contained=source_reason is not None, defer_default=True)
-    logger.info('Chat knowledge preparation | task={} | self_contained={} | active={} | elapsed_ms={} | input_facts={} | input_changed={} | history_evidence={}',
-                task_id, source_reason, getattr(handler, '_knowledge_run', None) is not None,
+    await prepare_knowledge_run(handler, context_anchor, user_id, conversation_id,
+        required=params.get('_knowledge_refs_required') is True, question=knowledge_question)
+    logger.info('Chat knowledge preparation | task={} | active={} | elapsed_ms={} | input_facts={}',
+                task_id, getattr(handler, '_knowledge_run', None) is not None,
                 round((time.monotonic() - knowledge_started_at) * 1000, 3),
-                facts.version if facts else None, facts.changed if facts else None,
-                (facts.history_evidence or facts.knowledge_used) if facts else None)
+                facts.version if facts else None)
     chat_phase('context.knowledge', task_id=task_id)
-    handler._knowledge_self_contained = source_reason is not None and getattr(handler, '_knowledge_run', None) is None
-    if getattr(handler,'_knowledge_answer_guard',None) is not None:
-        from services.knowledge_workspace.answer_policy import INSTRUCTIONS
-        if not any(m.get('role')=='system' and m.get('content')==INSTRUCTIONS for m in messages):
-            messages.append({'role':'system','content':INSTRUCTIONS})
+    from services.knowledge_workspace.answer_policy import INSTRUCTIONS
+    if not any(m.get('role')=='system' and m.get('content')==INSTRUCTIONS for m in messages):
+        messages.append({'role':'system','content':INSTRUCTIONS})
     if getattr(handler, '_knowledge_run', None):
         import json
         prefix='知识画布运行快照：'
@@ -230,6 +222,10 @@ async def prepare_chat_stream(
         from services.knowledge_workspace.answer_policy import bind_answer_policy
         bind_answer_policy(prepared, handler)
         chat_phase('context.ready', task_id=task_id)
+        from services.knowledge_workspace.candidates import start_preparation
+        handler._knowledge_candidates = start_preparation(handler, context_anchor, user_id, conversation_id,
+                                                         execution_context=execution_context)
+        prepared.knowledge_candidates = handler._knowledge_candidates
         return prepared
     except BaseException:
         await model_gateway.close()

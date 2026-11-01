@@ -205,7 +205,8 @@ async def execute_chat(
         # produced by task/Skill safe points outside this module.
         runtime.knowledge_input_provider = lambda: prepared.knowledge_input_facts.checkpoint(
             changed=getattr(runtime, 'knowledge_input_changed', False) is True,
-            knowledge_used=getattr(handler, '_knowledge_run', None) is not None,
+            knowledge_used=(getattr(handler, '_knowledge_run', None) is not None
+                            and getattr(handler._knowledge_run, 'answer_obligation', True)),
         )
     model_gateway = _get_model_gateway(prepared)
     handler._adapter = model_gateway
@@ -412,11 +413,6 @@ async def execute_chat(
                 ))
         if workflow:
             await workflow.activated()
-        from services.knowledge_workspace.answer_plan import prepare as prepare_knowledge_answer
-        from services.agent.observability.chat_lifecycle import chat_phase
-        chat_phase('answer.prepare.begin', task_id=request.task_id)
-        await prepare_knowledge_answer(handler,prepared,request,skills)
-        chat_phase('answer.prepare.end', task_id=request.task_id)
         bind_answer_policy(prepared, handler)
         finalized_parts = None
 
@@ -481,6 +477,11 @@ async def execute_chat(
                 await flush_progress()
         raise
     finally:
+        candidates = getattr(prepared, 'knowledge_candidates', None)
+        if candidates is not None:
+            await candidates.close()
+            if getattr(handler, '_knowledge_candidates', None) is candidates:
+                handler._knowledge_candidates = None
         from services.knowledge_workspace.chat import KnowledgeRun
         knowledge_run=getattr(handler,'_knowledge_run',None)
         if isinstance(knowledge_run,KnowledgeRun):
@@ -2220,15 +2221,14 @@ async def _refresh_knowledge_after_steer(handler, request, prepared):
         from dataclasses import replace
         prepared.knowledge_input_facts = replace(prepared.knowledge_input_facts,
             question=prepared.knowledge_question, changed=True)
-    if getattr(handler, '_knowledge_self_contained', False) or getattr(handler,'_knowledge_answer_guard',None) is not None:
-        from services.knowledge_workspace.runtime import prepare_knowledge_run
-        await prepare_knowledge_run(handler, request.context_anchor, request.user_id,
-            request.conversation_id, required=request.params.get('_knowledge_refs_required') is True,
-            question=prepared.knowledge_question,defer_default=True)
-        handler._knowledge_self_contained = False
-        if getattr(handler, '_knowledge_run', None) is not None:
-            prepared.messages.append({'role': 'system', 'content': '知识画布运行快照：' +
-                json.dumps(handler._knowledge_run.introduction(), ensure_ascii=False)})
+    candidates = getattr(prepared, 'knowledge_candidates', None)
+    if candidates is not None:
+        await candidates.close()
+        prepared.knowledge_candidates = None
+        if getattr(handler, '_knowledge_candidates', None) is candidates:
+            handler._knowledge_candidates = None
+    # Actual bound knowledge remains bound. A new directive alone never creates
+    # a default audit guard or starts an automatic knowledge tool chain.
     if getattr(prepared, 'knowledge_answer_plan', None):
         from services.knowledge_workspace.answer_plan import invalidate_for_steer
         invalidate_for_steer(prepared, handler._knowledge_run)

@@ -126,6 +126,7 @@ class ChatToolMixin(ChatToolResultMixin):
         # Request-local coordinator; never stored on a shared tool registry.
         executor_scope = (task_id, conversation_id, user_id, self.org_id)
         executor = getattr(self, "_tool_executor", None)
+        knowledge_candidates = getattr(self, '_knowledge_candidates', None)
         if getattr(self, "_tool_executor_scope", None) != executor_scope or executor is None:
             executor = ToolExecutor(**executor_kwargs)
             self._tool_executor, self._tool_executor_scope = executor, executor_scope
@@ -134,6 +135,7 @@ class ChatToolMixin(ChatToolResultMixin):
             # round facts, retaining consumed IDs and scoped confirmations.
             for key, value in executor_kwargs.items():
                 setattr(executor, key, value)
+        executor.knowledge_candidates = knowledge_candidates
         executor._task_image_operations = task_image_operations
         executor._task_execution_state = getattr(getattr(self,'_actor_runtime',None),'task_execution_state',None)
         executor._task_recovery_only = recovery_only

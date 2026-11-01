@@ -168,8 +168,8 @@ def test_discovery_selection_is_not_authorization():
     from services.knowledge_workspace.scope_selection import select
     nodes = [{'id': 'personal', 'kind': 'personal', 'title': '个人'}, {'id': 'team', 'kind': 'team', 'title': '团队'},
              {'id': 'project', 'kind': 'project', 'title': '春季上新'}]
-    assert select(nodes, '你好')[0] == []
-    assert select(nodes, '翻译下面的文字：hello')[0] == []
+    assert {n['id'] for n in select(nodes, '你好')[0]} == {'personal', 'team'}
+    assert {n['id'] for n in select(nodes, '翻译下面的文字：hello')[0]} == {'personal', 'team'}
     assert {n['id'] for n in select(nodes, '退款怎么处理？')[0]} == {'personal', 'team'}
     assert len(select(nodes, '春季上新项目的流程？')[0]) == 3
     selected, reason = select(nodes + [dict(nodes[-1], id='another')], '春季上新项目的流程？')

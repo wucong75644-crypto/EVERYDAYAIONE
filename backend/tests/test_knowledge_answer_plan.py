@@ -57,7 +57,7 @@ def test_long_text_and_wide_matches_fall_back_instead_of_truncating_answer(deriv
 
 
 @pytest.mark.asyncio
-async def test_engine_fast_answer_calls_model_once_with_no_tools(derived_db,monkeypatch):
+async def test_engine_leaves_retrieval_to_model_and_keeps_explicit_source_gate(derived_db,monkeypatch):
  from services.handlers.chat.execution_engine import execute_chat
  from services.handlers.chat.execution_sink import CollectingExecutionSink
  from tests.test_chat_execution_engine import _request
@@ -72,13 +72,16 @@ async def test_engine_fast_answer_calls_model_once_with_no_tools(derived_db,monk
  prepared.budget.use_turn=lambda:setattr(prepared.budget,'turns_used',prepared.budget.turns_used+1)
  monkeypatch.setattr('services.handlers.chat.execution_engine.prepare_chat_stream',AsyncMock(return_value=prepared))
  monkeypatch.setattr('services.knowledge_workspace.materialize.cleanup',lambda _:None)
+ monkeypatch.setattr('services.knowledge_workspace.answer_plan.collect',lambda *_:pytest.fail('automatic pre-model retrieval'))
  handler=SimpleNamespace(org_id=r.scope.org_id,_knowledge_run=run,_personal_context_allowed=True,_calculate_credits=lambda u:u['completion_tokens'])
  req=replace(_request(),content=[TextPart(text='拼多多漏发如何处理？食品拆封可以吗？')],user_id=r.scope.actor_user_id,conversation_id=cid)
  result=await execute_chat(handler=handler,request=req,sink=CollectingExecutionSink())
- assert len(seen)==1 and seen[0]['tools']==[]
- assert any(m.get('content','').startswith(PREFIX) for m in seen[0]['messages'] if isinstance(m.get('content'),str))
- assert '/knowledge?' in ''.join(p.text for p in result.parts if isinstance(p,TextPart))
- invalidate_for_steer(prepared,run);assert prepared.knowledge_answer_plan['mode']=='expand'
+ assert len(seen)==1 and 'knowledge_read' in {t['function']['name'] for t in seen[0]['tools']}
+ assert not any(m.get('content','').startswith(PREFIX) for m in seen[0]['messages'] if isinstance(m.get('content'),str))
+ assert '免费补寄' not in ''.join(p.text for p in result.parts if isinstance(p,TextPart))
+ with r.cursor() as c:
+  c.execute('SELECT count(*) AS n FROM kb_read_receipts WHERE snapshot_id=%s',(run.id,))
+  assert c.fetchone()['n']==0
 
 
 @pytest.mark.asyncio

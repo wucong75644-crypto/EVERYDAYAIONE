@@ -375,11 +375,11 @@ async def test_real_runtime_host_scope_cannot_be_reopened_by_legacy_selector(cur
         input_message_id=mid, base_revision=0, through_message_id=None, org_id=r.scope.org_id)
     await prepare_knowledge_run(h, anchor, r.scope.actor_user_id, cid, question='你好', self_contained=True)
     assert h._knowledge_run is None
-    # Same ambiguous transformation rejected by the host must keep a run even
-    # though the original legacy selector once treated all transforms as free.
+    # Different wording also cannot bind a default run before model tool use.
     await prepare_knowledge_run(h, anchor, r.scope.actor_user_id, cid, question='润色上一版', self_contained=False)
-    assert h._knowledge_run is not None
-    original = h._knowledge_run.id
+    assert h._knowledge_run is None
+    actual = KnowledgeRun.start(r,conversation_id=cid,input_message_id=mid,default_scope=True,question='润色上一版',allow_self_contained=False)
+    original = actual.id
     await prepare_knowledge_run(h, anchor, r.scope.actor_user_id, cid, question='你好', self_contained=True)
     assert h._knowledge_run.id == original
 
@@ -392,7 +392,6 @@ async def test_full_prompt_greeting_skips_default_snapshot_but_restores_explicit
     from schemas.message import TextPart
     from services.handlers.context_snapshot import ContextAnchor
     from services.knowledge_workspace.runtime import prepare_knowledge_run
-    from services.knowledge_workspace.scope_selection import self_contained_reason
     from services.prompt_builder.builder import PromptBuilder
     make,_=v3_db;r=make()
     run,input_id,conv=start(make,r,[])
@@ -403,7 +402,6 @@ async def test_full_prompt_greeting_skips_default_snapshot_but_restores_explicit
     monkeypatch.setattr('services.knowledge_workspace.runtime.repository',lambda *_:r)
     messages=PromptBuilder._compose_messages(TOOL_SYSTEM_PROMPT,'工具权限','时间',[],None,
         SimpleNamespace(workspace_system_block='',attachments_system_block='',user_message={'role':'user','content':'你好'}))
-    assert self_contained_reason('你好',[TextPart(text='你好')],messages)=='self_contained_chat'
     anchor=ContextAnchor(task_id=str(uuid4()),conversation_id=conv,turn_id=str(uuid4()),
         input_message_id=input_id,base_revision=0,through_message_id=None,org_id=r.scope.org_id)
     handler=SimpleNamespace(org_id=r.scope.org_id,db=object())
@@ -476,7 +474,7 @@ async def test_runtime_default_deferral_does_not_enter_program_retrieval(current
         input_message_id=message,base_revision=0,through_message_id=None,org_id=r.scope.org_id)
     h=SimpleNamespace(org_id=r.scope.org_id,db=object())
     await prepare_knowledge_run(h,anchor,r.scope.actor_user_id,conversation,question='公司规则是什么',defer_default=True)
-    assert h._knowledge_run is None and isinstance(h._knowledge_answer_guard,DeferredKnowledgeScope)
+    assert h._knowledge_run is None and h._knowledge_answer_guard is None
     await prepare(h,SimpleNamespace(),SimpleNamespace())
     # The default strategy must not weaken a new explicitly pinned request.
     pinned,new_input,new_conv=start(make,r,[ref(obj)])

@@ -335,12 +335,12 @@ async def test_internal_reply_with_empty_display_does_not_reactivate_completed_p
     monkeypatch.setattr('services.skills.runtime.create_skill_runtime',restore)
     monkeypatch.setattr('services.handlers.chat.execution_engine.prepare_chat_stream',AsyncMock(return_value=prepared))
     class PreparationReached(Exception): pass
-    async def after_activation(*args):
+    async def after_activation(*args,**kwargs):
         assert 'report' not in skills.active
         assert skills.effective_allowed_tool_names=={'generate_image','file_search'}
         assert skills.manual_skill_id=='report'
         raise PreparationReached()
-    monkeypatch.setattr('services.knowledge_workspace.answer_plan.prepare',after_activation)
+    monkeypatch.setattr('services.handlers.chat.execution_engine._run_loop',after_activation)
     request=ChatExecutionRequest(content=[],user_id=str(original.actor_user_id),conversation_id=str(original.conversation_id),
         task_id=str(original.root_task_id),message_id='new-reply',model_id='test',context_anchor=None,
         selected_skill=skills.manual_selection,replay_context={'messages':prepared.messages,'content_blocks':[],

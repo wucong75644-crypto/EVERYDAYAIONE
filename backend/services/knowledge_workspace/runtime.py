@@ -6,8 +6,8 @@ from .chat import KnowledgeRun, repository, unavailable
 async def prepare_knowledge_run(handler, anchor, user_id, conversation_id, *, required=False, question=None, self_contained=False, defer_default=False):
     handler._knowledge_run=None
     handler._knowledge_answer_guard=None
-    # Explicit references retain priority. Default scope is enabled only with
-    # the derivation rollout and is frozen per input under live actor/org RLS.
+    # Only explicit references and real previous tool snapshots bind answers.
+    # Default candidates are prepared independently and never become a guard.
     from core.config import get_settings
     settings = get_settings()
     default_scope = settings.knowledge_derivation_enabled and settings.knowledge_default_scope_enabled
@@ -24,14 +24,18 @@ async def prepare_knowledge_run(handler, anchor, user_id, conversation_id, *, re
         if not required:return
         unavailable()
     run=await asyncio.to_thread(KnowledgeRun.start,repository(handler.db,user_id,handler.org_id),
-                                conversation_id=conversation_id,input_message_id=anchor.input_message_id,default_scope=default_scope and not required and not self_contained,question=question,allow_self_contained=False,defer_default=defer_default)
+                                conversation_id=conversation_id,input_message_id=anchor.input_message_id,default_scope=False,question=question,allow_self_contained=False)
     if not run:
         if not required:return
         unavailable('KNOWLEDGE_UNAVAILABLE')
     if not getattr(handler,'_personal_context_allowed',True):unavailable()
     await asyncio.to_thread(run.revalidate)
-    from .answer_policy import DeferredKnowledgeScope
-    if isinstance(run,DeferredKnowledgeScope):
-        handler._knowledge_answer_guard=run
-        return
+    if run.snapshot.get('automatic') is True:
+        def consumed():
+            with run.repo.cursor() as c:
+                c.execute('SELECT 1 FROM public.kb_read_receipts WHERE snapshot_id=%s LIMIT 1', (run.id,))
+                return c.fetchone() is not None
+        # Older releases froze default navigation before the model requested
+        # knowledge. Restore its handles without inventing a reading obligation.
+        run.answer_obligation = await asyncio.to_thread(consumed)
     handler._knowledge_run=run

@@ -4,6 +4,7 @@ Only the provider and external WebSocket transport are synthetic. This checks
 host ordering, not a live model's understanding or production wall-clock SLO.
 """
 import asyncio
+import json
 from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock,Mock
@@ -35,7 +36,7 @@ from tests.test_chat_gateway_retry_integration import environment,make_adapter,w
 async def test_full_entry_starts_model_without_default_snapshot_and_obeys_release_policy(
         environment,current_snapshot_db,monkeypatch,question,image,held,prior_evidence,replay):
     make,_=current_snapshot_db;r=make();r.initialize();document(r)
-    held = held or replay in ('legacy', 'changed')
+    held = False  # Wording/history/unknown metadata do not create a default audit.
     _,mid,cid=start(make,r,[])
     settings=get_settings().model_copy(update={'knowledge_workspace_enabled':True,
         'knowledge_default_scope_enabled':True,'knowledge_derivation_enabled':True,
@@ -63,7 +64,7 @@ async def test_full_entry_starts_model_without_default_snapshot_and_obeys_releas
         # adds the production attachment locator to the same user message.
         snapshot=ContextSnapshot(context_anchor,messages[:-1],None,0,'')
         h._knowledge_input_facts=KnowledgeInputFacts.from_snapshot(snapshot,
-            [part.model_dump(mode='json') for part in parts])
+            json.dumps([part.model_dump(mode='json') for part in parts],ensure_ascii=False))
         return messages
     h._build_llm_messages=AsyncMock(side_effect=build)
     ready=asyncio.Event();finish=asyncio.Event();provider_done=asyncio.Event()
@@ -83,7 +84,7 @@ async def test_full_entry_starts_model_without_default_snapshot_and_obeys_releas
         from services.knowledge_workspace.input_facts import CHECKPOINT_KEY
         frozen=KnowledgeInputFacts.from_snapshot(
             ContextSnapshot(request.context_anchor,messages[:-1],None,0,''),
-            [part.model_dump(mode='json') for part in parts])
+            json.dumps([part.model_dump(mode='json') for part in parts],ensure_ascii=False))
         from services.handlers.chat.execution_engine import ChatExecutionRequest
         checkpoint={'messages':[*messages,preference_message({'source':'/knowledge?object=preference'})]}
         if replay != 'legacy':

@@ -24,6 +24,12 @@ class KnowledgeInputFacts:
 
     @classmethod
     def from_snapshot(cls, snapshot, content):
+        if isinstance(content, str):
+            import json
+            try:
+                content = json.loads(content)
+            except ValueError:
+                return None
         if not isinstance(content, list) or not all(isinstance(p, dict) for p in content):
             return None
         history = list(snapshot.history_messages)

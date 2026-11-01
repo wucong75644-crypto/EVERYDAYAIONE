@@ -267,6 +267,15 @@ class KnowledgeRun(DerivedChat):
         if item['type']=='generated':return self._generated_text(c,item)
         if item['type']=='file':
             return self._file_view(c,item).get('extracted_text') or ''
+        cached = getattr(self, '_candidate_bodies', {}).get((str(item['id']), int(item['revision'])))
+        if cached is not None:
+            # Keep the original authorization and version-existence guarantee;
+            # preparation is neither a permission grant nor a read receipt.
+            c.execute('SELECT revision FROM public.kb_object_versions WHERE object_id=%s AND revision=%s',
+                      (item['id'], item['revision']))
+            if c.fetchone() is None:unavailable()
+            self._candidate_hits = getattr(self, '_candidate_hits', 0) + 1
+            return cached+'\n\n'+'\n\n'.join(v['text'] for v in item['manual_corrections']) if item.get('manual_corrections') else cached
         c.execute('SELECT body FROM public.kb_object_versions WHERE object_id=%s AND revision=%s',(item['id'],item['revision']))
         row=c.fetchone()
         if row is None:unavailable()

@@ -20,12 +20,16 @@ def test_host_policy_separates_accessibility_evidence_and_display():
     assert bind_answer_policy(p, h).mode == 'stream'
     guard = DeferredKnowledgeScope(object(), 'conversation', 'input', ())
     h._knowledge_answer_guard = guard
-    assert bind_answer_policy(p, h).mode == 'audit_claims'
-    assert policy_for(p).hold_body and policy_for(p).verifier is guard
+    assert bind_answer_policy(p, h).mode == 'stream'
+    assert not policy_for(p).hold_body and policy_for(p).verifier is None
     run = KnowledgeRun(object(), 'snapshot', {'automatic': True})
     h._knowledge_run = run
     assert bind_answer_policy(p, h).mode == 'audit_scope'
     assert policy_for(p).verifier is run  # A real scope overrides a stale exemption.
+    run.answer_obligation = False
+    assert bind_answer_policy(p, h).mode == 'stream'  # Old navigation-only availability.
+    run.answer_obligation = True
+    assert bind_answer_policy(p, h).mode == 'audit_scope'  # Model-requested knowledge.
     h._knowledge_run = h._knowledge_answer_guard = None
     assert bind_answer_policy(p, h).mode == 'stream'  # No guard leaks into a new scope.
     assert policy_for(p).verifier is None
