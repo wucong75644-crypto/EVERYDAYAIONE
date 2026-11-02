@@ -32,6 +32,8 @@ import { slideDownVariants } from '../../utils/motion';
 
 interface PopoverProps {
   trigger: ReactNode;
+  /** 独立定位锚点；默认跟随触发按钮。 */
+  anchor?: ReactNode;
   children: ReactNode;
   align?: 'start' | 'center' | 'end';
   side?: 'top' | 'right' | 'bottom' | 'left';
@@ -53,6 +55,7 @@ interface PopoverProps {
 
 export function Popover({
   trigger,
+  anchor,
   children,
   align = 'center',
   side = 'bottom',
@@ -76,6 +79,7 @@ export function Popover({
   return (
     <RadixPopover.Root open={open} onOpenChange={setOpen}>
       <RadixPopover.Trigger asChild>{trigger}</RadixPopover.Trigger>
+      {anchor && <RadixPopover.Anchor asChild>{anchor}</RadixPopover.Anchor>}
 
       <AnimatePresence>
         {open && (

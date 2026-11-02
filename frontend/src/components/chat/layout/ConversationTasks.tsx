@@ -33,6 +33,7 @@ export default function ConversationTasks({ messages, onResume }: {
   const count = tasks.filter(task => visible[keyOf(task)]).length;
   const resolved = tasks.every(task => visible[keyOf(task)] != null);
   return <Popover align="end" maxWidth={400} className="w-[min(400px,calc(100vw-16px))]"
+    anchor={<span aria-hidden="true" className="fixed right-2 top-14 h-0 w-0 sm:right-4" />}
     trigger={<button type="button" aria-label="查看任务" title="查看当前会话任务"
       className="flex items-center gap-1 rounded-lg p-1.5 text-text-tertiary hover:bg-hover transition-base">
       <ListChecks className="h-5 w-5" />

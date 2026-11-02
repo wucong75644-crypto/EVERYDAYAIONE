@@ -940,9 +940,13 @@ async def _run_loop(
                 blocks.append({"type": "text", "text": fallback_text})
                 await sink.on_block(blocks[-1])
             return None
+        guard_calls=calls
+        if direct_enabled(runtime):
+            from services.task_execution.direct_loop import plan_guard_calls
+            guard_calls=plan_guard_calls(calls)
         repeated_tool_call_action = (
             "continue" if any(call["name"] in SKILL_CONTROL_TOOLS for call in calls)
-            else repeated_tool_call_guard.observe(calls)
+            else repeated_tool_call_guard.observe(guard_calls)
         )
         if repeated_tool_call_action == "stop":
             await _stop_repeated_tool_calls(

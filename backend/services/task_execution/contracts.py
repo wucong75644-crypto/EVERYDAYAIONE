@@ -248,7 +248,7 @@ class ResolvedCallBinding(Fact):
 
 
 class WorkItem(Fact):
-    step: str = Field(min_length=1, max_length=300)
+    step: str = Field(min_length=1, max_length=300, description='工作项名称，字段名为step。')
     status: Literal['pending', 'in_progress', 'completed']
 
 

@@ -88,6 +88,23 @@ def schemas(runtime,controller=None):
     return result
 
 
+def plan_guard_calls(calls):
+    """Use the existing replayable repeat guard for invalid plan variants.
+
+    Do not collapse valid updates or a batch containing business operations.
+    Renaming an invalid field is not progress towards a saved working plan.
+    """
+    if not calls or any(c['name']!='update_task_plan' for c in calls):return calls
+    normalized=[]
+    for call in calls:
+        try:
+            WorkingPlan.model_validate(json.loads(call.get('arguments','')))
+        except (ValueError,TypeError):
+            normalized.append({**call,'arguments':'{"invalid_working_plan":true}'})
+        else:normalized.append(call)
+    return normalized
+
+
 def stage_plan_calls(runtime,prepared,blocks,calls,assistant):
     """Plan notes and independent tool calls may share one model response.
 
@@ -107,8 +124,12 @@ def stage_plan_calls(runtime,prepared,blocks,calls,assistant):
                 from .model_directed import update_working_plan
                 runtime.task_execution_state=update_working_plan(state,plan.model_dump(mode='json'))
             result={'ok':True,'status':'recorded','instruction':'工作计划已记录；执行事实、权限和成果状态未改变。'}
-        except (ValueError,TypeError,ValidationError):
-            result={'ok':False,'code':'TASK_WORKING_PLAN_INVALID','state_unchanged':True}
+        except (ValueError,TypeError) as error:
+            errors=error.errors(include_input=False,include_url=False,include_context=False)[:12] if isinstance(error,ValidationError) else [
+                {'loc':[],'type':'json_object_required','msg':'arguments必须为JSON对象。'}]
+            result={'ok':False,'code':'TASK_WORKING_PLAN_INVALID','state_unchanged':True,
+                'errors':errors,'parameters':PLAN_SCHEMA['function']['parameters'],
+                'instruction':'按parameters和errors修正参数；未保存任何计划，不得声称登记成功。不要猜测字段名或状态值。'}
         prepared.messages.append({'role':'tool','tool_call_id':call['id'],
             'content':json.dumps(result,ensure_ascii=False)})
         block={'type':'tool_step','tool_name':call['name'],'tool_call_id':call['id'],

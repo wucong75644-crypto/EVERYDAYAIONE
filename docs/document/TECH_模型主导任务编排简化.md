@@ -14,7 +14,25 @@
 本地最终验证：后端140项通过，前端106项通过；生产构建、类型和PDF worker检查通过。验证使用禁用模型密钥的本地替身和独立 loopback PostgreSQL；涵盖普通计算、计划先于工具、计划清空/修改、多项名称、旧标记、跨会话、失败保存回滚、消息协议、原恢复/确认/去重，以及迁移前后/回滚、个人和企业权限撤销。未进行付费模型测试、未生图；发布状态以受控 release 记录为准，页面实际视觉及生产业务验收仍未进行。以下为原设计历史记录。
 
 
-状态：用户已确认方案与卡片清单，范围内本地开发和回归已接通，未部署；没有项目付费模型/图片调用。日期：2026-11-01。项目依据为已部署14077717ed36f8fab2884a75ea870b8ffc6472f8（验收后main合并提交22128ee11165571933fbde7efb4598954b931441）。当前工作树为20261101185605-model-led-orchestration，实施进度见同目录IMPL文档。
+### 2026-11-02 生产网页文字计划验收失败后的修复
+
+1b2f版本已受控发布，免费网页检查确认普通工具卡片与原成果仍可见，任务入口在右上角，普通执行不伪造工作计划。随后经用户批准仅发送一条真实文字任务，要求登记三项pending待办且不执行业务。该请求内部8次update_task_plan均被拒绝，无工作计划写入、无业务执行或生图，实际扣费27积分（预估6–15）。此次真实验收判为失败，不自动追加付费请求。
+
+持久化调用中的条目字段反复为title/name，契约为step/status；错误只返回通用INVALID，没有可执行的修正信息。原重复保护按完整参数指纹计数，修改字段/状态就重置计数，故未约束这类无效变体。本地DashScope两条工具格式转换均保留完整$defs/WorkItem；不能认定供应商丢失schema，也不能认定模型为何未遵循的机制已查明。
+
+修复保留WorkingPlan数据契约，补充step字段与状态说明；校验错误返回至多12项loc/type/msg（不包含input/context/url）和原参数schema。纯计划批次中无效条目归一为同类失败，使用原repeat guard的第三次停止及原checkpoint恢复，不新增模型调用或计费链路；合法计划更新和包含业务工具的批次不归一。原Skill选择、任务账本、权限、成果及ERP开关不动。15项针对性回归与相关模块合计87项通过，均禁用供应商密钥；涵盖真实8种参数变体、完整schema、原循环纠正/停止、消息上下文、原恢复指纹以及有效更新/业务批次边界。修复尚未发布，真实模型复验未获新授权，不能将替身循环视为生产登记成功。回退本批代码恢复原契约说明/错误/指纹处理，不涉及数据迁移。
+
+#### 后续免费协议排查：能证明与不能证明的范围
+
+沿prepare_tool_turn → direct_loop.schemas → _read_turn → ModelGateway → DashScopeChatAdapter → HTTP请求检查：新模式只追加WorkingPlan版本；旧controller同名工具不会经READ_CONTROLS进入。生产stream_setup的stream_kwargs为空，未覆盖本轮tools；Gateway没有注入prepare_stream改写；适配器排序/JSON转换保留完整parameters及WorkItem定义。原参数增量累加只拼接文本，不把step改成title/name。
+
+新增真实Gateway、适配器与_read_turn组合的MockTransport测试，在HTTP边界捕获qwen3.8-max的/chat/completions请求，确认Schema完整且只有一项update_task_plan；回放分段错误参数确认解析后逐字一致。Actor循环同时断言实际披露工具只有一项同名定义且匹配契约。相关适配器回归95项通过；补入Gateway后的最终定向组合42项通过（与前者重叠）。全部本地、无生产/供应商网络或付费，不是原生产请求体留档，也不是供应商内部Schema解析证据。
+
+2026-11-02核对[百炼Chat API](https://help.aliyun.com/zh/model-studio/qwen-api-via-openai-chat-completions)、[Function Calling](https://help.aliyun.com/zh/model-studio/qwen-function-calling)和[结构化输出](https://help.aliyun.com/zh/model-studio/qwen-structured-output)：tools.function.parameters定义工具参数；文档中的response_format.json_schema.strict用于正文结构化输出，不等同于工具参数约束。目前工具请求未启用严格生成约束，官方资料也未足以确认本型号工具参数的strict支持方式。不得把正文改成固定JSON以冒充修复，否则会改变现有正文流式/工具协议；不得盲加未核实的strict字段、切模型或固定额外纠错调用。
+
+结论：已确认的宿主缺陷是错误反馈不足和无效变体重复保护失效；具体为何供应商模型首轮及后续选错字段，尚无证据区分引用定义处理、模型遵循能力或上下文影响。未因猜测展平Schema、添加别名或修改执行链。下一阶段如需区分这些假设，使用同模型/同上下文可比的最小真实对照，先报价获准，不能从上述本地结果声称根治或真实登记通过。
+
+以下为原始方案历史状态：用户已确认方案与卡片清单，范围内本地开发和回归已接通，未部署；没有项目付费模型/图片调用。日期：2026-11-01。项目依据为已部署14077717ed36f8fab2884a75ea870b8ffc6472f8（验收后main合并提交22128ee11165571933fbde7efb4598954b931441）。当前工作树为20261101185605-model-led-orchestration，实施进度见同目录IMPL文档。
 
 > 范围更新：用户明确本轮只完成通用任务编排，原两个Skill后续单独修复。专项阶段交接实现与专项Skill验收不再纳入本轮；原Skill选择、加载、正文和旧任务兼容继续保留。实施状态以IMPL文档最新记录为准。
 
