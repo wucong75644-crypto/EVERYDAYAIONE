@@ -67,6 +67,8 @@ class ConversationTurnRuntime:
         self.task_bootstrap = None  # Trusted input only; never populated from request params.
         self.task_direct_plan = None  # Optional notes, never an execution grant.
         self.task_direct_plan_owner = None
+        self.task_direct_plan_id = None
+        self.task_plan_candidates = {}
         self.task_direct_seen = ()  # Steer events actually consumed by a completed main-model round.
         self.task_artifact_reader = None
         self.committed_task_execution_revision = 0
@@ -219,6 +221,10 @@ class ConversationTurnRuntime:
                 if not enabled(self):raise RuntimeError('TASK_DIRECT_PLAN_POLICY_MISMATCH')
                 payload['_task_direct_plan'] = self.task_direct_plan.model_dump(mode='json')
                 payload['_task_direct_plan_owner'] = self.task_direct_plan_owner or self.task_id
+                if self.task_direct_plan_id is not None:
+                    payload['_task_direct_plan_id'] = self.task_direct_plan_id
+                else:
+                    payload.pop('_task_direct_plan_id', None)
             from services.task_execution.model_directed import enabled as direct_enabled
             if direct_enabled(self):payload['_task_direct_seen']=list(self.task_direct_seen)
             if self.task_revision_review is not None:

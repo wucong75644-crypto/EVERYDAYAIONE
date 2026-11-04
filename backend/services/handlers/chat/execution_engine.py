@@ -1315,6 +1315,7 @@ async def _execute_tools(**kwargs):
     original_state=runtime.task_execution_state
     original_plan=runtime.task_direct_plan
     original_plan_owner=runtime.task_direct_plan_owner
+    original_plan_id=runtime.task_direct_plan_id
     messages=copy.deepcopy(kwargs['prepared'].messages)
     blocks=copy.deepcopy(kwargs['blocks'])
     try:return await _execute_tools_impl(**kwargs)
@@ -1323,6 +1324,7 @@ async def _execute_tools(**kwargs):
             runtime.task_execution_state=original_state
             runtime.task_direct_plan=original_plan
             runtime.task_direct_plan_owner=original_plan_owner
+            runtime.task_direct_plan_id=original_plan_id
             kwargs['prepared'].messages[:]=messages
             kwargs['blocks'][:]=blocks
         raise
@@ -1392,7 +1394,7 @@ async def _execute_tools_impl(
                     prepared.messages.append(assistant);assistant_already_present=True
                 from services.task_execution.model_bridge import commit_projection
                 from services.task_execution.progress import marker
-                progress_marker=marker(blocks,candidate)
+                progress_marker=marker(blocks,candidate,plan_id=runtime.task_direct_plan_id)
                 await commit_projection(runtime=runtime,candidate=candidate,prepared=prepared,blocks=blocks,
                     point=SafePoint.BEFORE_TOOL,build_checkpoint=_build_replay_context,turn=turn,
                     next_model_round=next_model_round,repeated_tool_call_guard=repeated_tool_call_guard)

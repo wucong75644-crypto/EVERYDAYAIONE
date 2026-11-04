@@ -3,13 +3,15 @@ from .contracts import TaskError, TaskState
 from .reducer import missing_requirements, ready_steps
 
 
-def _marker(blocks, root, *, plan=None, model_directed=False):
+def _marker(blocks, root, *, plan=None, model_directed=False, plan_id=None):
     from .reducer import digest
     block = {'type': 'task_progress', 'root_task_id': str(root)}
     if model_directed:
         block.update(presentation='model_directed', plan_revision=digest(plan.model_dump(mode='json')))
     previous = next((b for b in blocks if b.get('type') == 'task_progress'
                      and b.get('root_task_id') == str(root)), None)
+    if model_directed and (plan_id or (previous and previous.get('plan_id'))):
+        block['plan_id'] = plan_id or previous['plan_id']
     if previous == block:
         return None
     if previous is not None:
@@ -20,12 +22,12 @@ def _marker(blocks, root, *, plan=None, model_directed=False):
     return block
 
 
-def marker(blocks, state):
+def marker(blocks, state, *, plan_id=None):
     if state is None or state.image_binding_version < 3 or state.execution_identity.context_scope != 'user':
         return None
     if state.model_directed and not (state.working_plan and state.working_plan.steps):
         return None  # Native receipts alone are not a user-facing work plan.
-    return _marker(blocks, state.root_task_id, plan=state.working_plan, model_directed=state.model_directed)
+    return _marker(blocks, state.root_task_id, plan=state.working_plan, model_directed=state.model_directed, plan_id=plan_id)
 
 
 def plan_marker(blocks, runtime):
@@ -39,9 +41,9 @@ def plan_marker(blocks, runtime):
     if not (plan is not None and identity and identity.context_scope == 'user'):
         return None
     root = state.root_task_id if state else bootstrap.task_id
-    if not plan.steps and not any(b.get('type') == 'task_progress' and b.get('root_task_id') == str(root) for b in blocks):
+    if not plan.steps and not runtime.task_direct_plan_id and not any(b.get('type') == 'task_progress' and b.get('root_task_id') == str(root) for b in blocks):
         return None
-    return _marker(blocks, root, plan=plan, model_directed=True)
+    return _marker(blocks, root, plan=plan, model_directed=True, plan_id=runtime.task_direct_plan_id)
 
 
 def needs_verification(operation):

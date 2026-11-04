@@ -16,7 +16,7 @@ from services.tools import ToolCall
 from services.tools.policy import ToolPolicy
 from services.tools.spec import thaw
 from .contracts import Artifact, TaskError, TaskState, WorkingPlan
-from .model_directed import INSTRUCTIONS, PREFIX, PLAN_SCHEMA, enabled, record_calls
+from .model_directed import INSTRUCTIONS, PREFIX, PLAN_SCHEMA, WorkingPlanUpdate, enabled, record_calls
 from .reducer import digest, register_artifacts, complete_step
 
 PLAN_KEY='_task_direct_plan'
@@ -45,14 +45,17 @@ def restore_plan(runtime,payload):
         runtime.task_direct_seen=tuple(str(UUID(v)) for v in seen)
     raw=(payload or {}).get(PLAN_KEY)
     owner=(payload or {}).get('_task_direct_plan_owner')
+    plan_id=(payload or {}).get('_task_direct_plan_id')
     fresh=(payload or {}).get('_task_followup_input_checkpoint',{})
     if (owner!=runtime.task_id and (payload or {}).get('_task_followup')
             and fresh.get('_task_direct_plan_owner')==runtime.task_id and fresh.get(PLAN_KEY) is not None):
         raw=fresh[PLAN_KEY];owner=runtime.task_id
+        plan_id=fresh.get('_task_direct_plan_id')
     if raw is None:return
     if not enabled(runtime):raise TaskError('TASK_DIRECT_PLAN_POLICY_MISMATCH')
     runtime.task_direct_plan=WorkingPlan.model_validate(raw)
     runtime.task_direct_plan_owner=owner
+    runtime.task_direct_plan_id=str(UUID(plan_id)) if plan_id is not None else None
     state=runtime.task_execution_state
     if state is not None and runtime.task_direct_plan!=state.working_plan:
         from .model_directed import update_working_plan
@@ -65,6 +68,8 @@ def context_message(runtime,*,state=None):
     plan=getattr(runtime,'task_direct_plan',None) or (state.working_plan if state else None)
     facts={'original_goal':state.original_goal if state else bootstrap.original_goal,
         'working_plan':plan.model_dump(mode='json') if plan else None}
+    if state is None and plan is None and runtime.task_plan_candidates:
+        facts['editable_working_plans'] = list(runtime.task_plan_candidates.values())
     source=followup_source(runtime)
     if source is not None and state is None:
         facts['previous_task']={k:copy.deepcopy(source['state'].get(k)) for k in ('root_task_id','original_goal','status','operations','artifacts')}
@@ -98,7 +103,7 @@ def plan_guard_calls(calls):
     normalized=[]
     for call in calls:
         try:
-            WorkingPlan.model_validate(json.loads(call.get('arguments','')))
+            WorkingPlanUpdate.model_validate(json.loads(call.get('arguments','')))
         except (ValueError,TypeError):
             normalized.append({**call,'arguments':'{"invalid_working_plan":true}'})
         else:normalized.append(call)
@@ -116,14 +121,26 @@ def stage_plan_calls(runtime,prepared,blocks,calls,assistant):
     prepared.messages.append(copy.deepcopy(assistant))
     for call in plans:
         try:
-            plan=WorkingPlan.model_validate(json.loads(call.get('arguments','')))
-            runtime.task_direct_plan=plan
-            runtime.task_direct_plan_owner=runtime.task_id
-            state=runtime.task_execution_state
+            update = WorkingPlanUpdate.model_validate_json(call.get('arguments', ''))
+            plan = WorkingPlan(explanation=update.explanation, steps=update.steps)
+            state = runtime.task_execution_state
+            plan_id = runtime.task_direct_plan_id
+            if update.plan_id is not None or update.expected_plan_version is not None:
+                target = runtime.task_plan_candidates.get(str(update.plan_id))
+                if (state is not None or runtime.task_direct_plan is not None or target is None
+                        or update.expected_plan_version != target['version']):
+                    raise TaskError('TASK_WORKING_PLAN_TARGET_CHANGED')
+                plan_id = str(update.plan_id)
             if state is not None:
                 from .model_directed import update_working_plan
-                runtime.task_execution_state=update_working_plan(state,plan.model_dump(mode='json'))
+                runtime.task_execution_state = update_working_plan(state, plan.model_dump(mode='json'))
+            runtime.task_direct_plan = plan
+            runtime.task_direct_plan_owner = runtime.task_id
+            runtime.task_direct_plan_id = plan_id
             result={'ok':True,'status':'recorded','instruction':'工作计划已记录；执行事实、权限和成果状态未改变。'}
+        except TaskError as error:
+            result = {'ok': False, 'code': str(error), 'state_unchanged': True,
+                'instruction': '目标计划或版本不可用。核对当前候选及用户意图，不能为修改请求另建计划。'}
         except (ValueError,TypeError) as error:
             errors=error.errors(include_input=False,include_url=False,include_context=False)[:12] if isinstance(error,ValidationError) else [
                 {'loc':[],'type':'json_object_required','msg':'arguments必须为JSON对象。'}]

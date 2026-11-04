@@ -13,10 +13,11 @@ function conversationTasks(messages: readonly Message[]) {
     if (message.role !== 'assistant') continue;
     for (const part of message.content) {
       if (part.type !== 'task_progress') continue;
-      // Follow-ups retain the logical root but carry the current source message.
-      const previous = tasks.get(part.root_task_id);
-      tasks.delete(part.root_task_id);
-      tasks.set(part.root_task_id, { rootTaskId: part.root_task_id, messageId: message.id,
+      // A plan can outlive the chat turn that recorded it.
+      const planId = part.plan_id ?? part.root_task_id;
+      const previous = tasks.get(planId);
+      tasks.delete(planId);
+      tasks.set(planId, { rootTaskId: part.root_task_id, messageId: message.id,
         title: previous?.title || title || '工作计划', presentation: part.presentation, planRevision: part.plan_revision });
     }
   }

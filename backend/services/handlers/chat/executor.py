@@ -93,9 +93,25 @@ class ChatGenerationExecutor:
             from services.task_execution.database_scope import task_database
             from types import SimpleNamespace
             followup_db=task_database(self._db,SimpleNamespace(actor_user_id=execution_scope.actor_user_id,org_id=task.get('org_id')))
-            response=await followup_db.rpc('read_agent_task_followup',{'p_task_id':claim.task_id,'p_execution_token':claim.execution_token}).execute()
-            if not response or response.data.get('outcome') not in {'found','not_found'}:raise RuntimeError('TASK_FOLLOWUP_READ_UNCONFIRMED')
-            runtime.task_followup_candidate=response.data.get('source')
+            args = {'p_task_id': claim.task_id, 'p_execution_token': claim.execution_token}
+            followup_read = followup_db.rpc('read_agent_task_followup', args).execute()
+            saved_policy = (replay_context or {}).get('_task_bootstrap')
+            model_directed = (saved_policy['input'].get('model_directed', False) if saved_policy else
+                              getattr(get_settings(), 'agent_task_model_directed_enabled', False))
+            if model_directed and not (replay_context or {}).get('_task_direct_plan'):
+                response, plans = await asyncio.gather(
+                    followup_read, followup_db.rpc('read_agent_working_plan_candidates', args).execute(),
+                )
+                if not plans or plans.data.get('outcome') not in {'found', 'not_found'}:
+                    raise RuntimeError('TASK_WORKING_PLAN_CANDIDATES_UNCONFIRMED')
+                runtime.task_plan_candidates = {
+                    candidate['plan_id']: candidate for candidate in plans.data.get('candidates', [])
+                }
+            else:
+                response = await followup_read
+            if not response or response.data.get('outcome') not in {'found', 'not_found'}:
+                raise RuntimeError('TASK_FOLLOWUP_READ_UNCONFIRMED')
+            runtime.task_followup_candidate = response.data.get('source')
             async def adopt_followup(source,observation,payload):
                 parameters={'p_task_id':claim.task_id,'p_execution_token':claim.execution_token,
                     'p_root_task_id':source['state']['root_task_id'],'p_expected_revision':source['state']['revision'],

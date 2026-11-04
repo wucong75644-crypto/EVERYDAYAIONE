@@ -306,7 +306,8 @@ async def execute_control_batch(*, prepared, runtime, calls, assistant, blocks,
             published.append(text)
 
     from .progress import marker
-    progress_marker = marker(staged_blocks, controller.state if controller is not None else None)
+    progress_marker = marker(staged_blocks, controller.state if controller is not None else None,
+                             plan_id=runtime.task_direct_plan_id)
     if progress_marker is not None:
         published.append(progress_marker)
 

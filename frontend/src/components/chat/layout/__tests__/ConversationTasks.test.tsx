@@ -98,3 +98,31 @@ it('shows each real plan item by name and refreshes when a saved plan changes', 
   expect(await screen.findByText(/按新要求输出月度报告 · 待处理/)).toBeInTheDocument();
   expect(screen.queryByText(/统计并总结 · 进行中/)).not.toBeInTheDocument();
 });
+
+
+it('reloads only the latest edit of a plan and preserves a genuinely independent plan', async () => {
+  const editRoot = '22222222-2222-4222-8222-222222222222';
+  const independentRoot = '33333333-3333-4333-8333-333333333333';
+  vi.mocked(getTaskProgress).mockImplementation(async (taskId) => ({
+    ...base, root_task_id: taskId, plan_only: true,
+    working_plan: { explanation: '', steps: [{
+      step: taskId === editRoot ? '编写简短文字方案' : '独立的新计划', status: 'pending',
+    }] },
+  }));
+  const history = [...messages,
+    message('renamed', [{ ...marker, root_task_id: editRoot, plan_id: root }])];
+  const reopened = render(<ConversationTasks messages={history} onResume={vi.fn()} />);
+  fireEvent.click(screen.getByRole('button', { name: '查看任务' }));
+  expect(await screen.findByText(/编写简短文字方案/)).toBeInTheDocument();
+  expect(getTaskProgress).toHaveBeenCalledExactlyOnceWith(editRoot, 'renamed', expect.any(AbortSignal));
+  reopened.unmount();
+  vi.mocked(getTaskProgress).mockClear();
+
+  render(<ConversationTasks messages={[...history,
+    message('separate', [{ ...marker, root_task_id: independentRoot }])]} onResume={vi.fn()} />);
+  fireEvent.click(screen.getByRole('button', { name: '查看任务' }));
+  expect(await screen.findByText(/编写简短文字方案/)).toBeInTheDocument();
+  expect(await screen.findByText(/独立的新计划/)).toBeInTheDocument();
+  expect(vi.mocked(getTaskProgress).mock.calls.map(([id]) => id).sort())
+    .toEqual([editRoot, independentRoot].sort());
+});
