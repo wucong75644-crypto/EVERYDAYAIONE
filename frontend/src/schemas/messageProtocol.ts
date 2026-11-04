@@ -135,6 +135,7 @@ const contentPartSchema = z.preprocess(normalizeNullEquivalentFields, z.discrimi
   }).passthrough(),
   z.object({
     type: z.literal('tool_step'),
+    presentation: z.literal('model_directed').optional(),
     tool_name: z.string(),
     tool_call_id: z.string(),
     status: z.enum(['running', 'completed', 'error', 'cancelled']),
@@ -145,7 +146,8 @@ const contentPartSchema = z.preprocess(normalizeNullEquivalentFields, z.discrimi
     input: optionalString,
     cancelled_at: optionalString,
   }).passthrough(),
-  z.object({ type: z.literal('task_progress'), root_task_id: z.string().uuid() }),
+  z.object({ type: z.literal('task_progress'), root_task_id: z.string().uuid(),
+    presentation: z.literal('model_directed').optional(), plan_id: z.uuid().optional(), plan_revision: z.string().regex(/^[a-f0-9]{64}$/).optional() }),
   z.object({
     type: z.literal('skill_step'),
     step_id: z.string(),

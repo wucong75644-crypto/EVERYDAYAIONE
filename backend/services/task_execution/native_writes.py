@@ -31,6 +31,9 @@ def binding(state,call,registry,*,permitted=frozenset({'erp_execute'}),artifact_
     spec=registry.require(call.name)
     if call.name not in permitted or spec.capability!={'erp_execute':'platform.erp_execute','restore_file':'platform.restore_file','file_delete':'workspace.file.delete','generate_video':'platform.generate_video'}.get(call.name) or state.status!='active':
         raise TaskError('TASK_NATIVE_WRITE_DOMAIN_UNSUPPORTED')
+    if state.model_directed:
+        from .model_directed import operation_binding
+        return operation_binding(state,call)
     candidates=[]
     for step in ready_steps(state):
         targets=[r for r in state.requirements if r.id in (*step.requirement_ids,*step.contributes_to)]
@@ -159,6 +162,26 @@ class NativeWriteLifecycle(ScheduledOperationLifecycle):
     permitted_operations=frozenset({'business_write'})
 
     def bind(self,state,call):return binding(state,call,self.registry)
+
+    async def bind_resolved_arguments(self,original,call,context,decision):
+        if not self.runtime.task_execution_state.model_directed:return
+        from .model_directed import resolve_call
+        from services.conversation_commands import SafePoint
+        import copy
+        if not hasattr(self.runtime,'task_operation_lock'):self.runtime.task_operation_lock=asyncio.Lock()
+        async with self.runtime.task_operation_lock:
+            state=self.runtime.task_execution_state
+            candidate=resolve_call(state,original,call)
+            if candidate is state:return
+            sequence=self.runtime.replay_save_sequence
+            self.runtime.task_execution_state=candidate
+            try:
+                await self.runtime.safe_point(SafePoint.BEFORE_TOOL,replay_payload=copy.deepcopy(self.runtime.checkpoint_base))
+            except BaseException as error:
+                if self.runtime.replay_save_sequence==sequence:self.runtime.task_execution_state=state
+                from services.conversation_state import ConversationPauseRequested
+                if isinstance(error,(asyncio.CancelledError,ConversationPauseRequested)):raise
+                raise ConversationStopRequested('task_argument_binding_commit_unconfirmed') from None
 
     def verify(self,call,decision):
         if decision.operation not in self.permitted_operations or decision.outcome!='allow' or not self._enabled(decision):

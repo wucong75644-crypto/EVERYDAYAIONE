@@ -37,6 +37,9 @@ export interface TextPart {
 export interface TaskProgressPart {
   type: 'task_progress';
   root_task_id: string;
+  presentation?: 'model_directed';
+  plan_id?: string;
+  plan_revision?: string;
 }
 
 export interface SkillStepPart {
@@ -133,6 +136,7 @@ export interface ThinkingPart {
 export interface ToolStepPart {
   type: 'tool_step';
   tool_name: string;
+  presentation?: 'model_directed';
   tool_call_id: string;
   status: 'running' | 'completed' | 'error' | 'cancelled';
   summary?: string;

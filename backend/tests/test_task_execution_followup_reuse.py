@@ -176,6 +176,9 @@ async def test_real_executor_reloads_committed_followup_after_lost_ack_and_keeps
     def rpc(name,params):
         async def execute():
             if name=='read_agent_task_followup':return SimpleNamespace(data={'outcome':'found','source':source})
+            if name=='read_agent_working_plan_candidates':
+                assert params['p_task_id']==task_id
+                return SimpleNamespace(data={'outcome':'found','candidates':[]})
             if name=='read_agent_task_user_change_pending':return SimpleNamespace(data={'outcome':'found','events':[event]})
             assert name=='adopt_agent_task_followup';attempts.append(name)
             store.read_result={'outcome':'found','payload':copy.deepcopy(adopted)}

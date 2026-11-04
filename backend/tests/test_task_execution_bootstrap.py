@@ -118,7 +118,7 @@ async def test_failed_initial_save_restores_uninitialized_state_and_transcript()
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('mode', ['new_enabled', 'legacy_enabled', 'resume_disabled', 'tampered'])
+@pytest.mark.parametrize('mode', ['new_enabled', 'new_model_directed', 'legacy_enabled', 'resume_disabled', 'tampered'])
 async def test_actual_executor_admission_and_frozen_bootstrap_recovery(monkeypatch, mode):
     from core.config import get_settings
     from services.conversation_execution import GenerationClaim
@@ -131,14 +131,22 @@ async def test_actual_executor_admission_and_frozen_bootstrap_recovery(monkeypat
     db = _DB({'id': message_id, 'conversation_id': conversation, 'turn_id': 'turn', 'role': 'user',
         'content': [{'type': 'text', 'text': source.original_goal}]}, conversation={
         'id': conversation, 'org_id': None, 'user_id': actor, 'source': 'web', 'scope_type': 'user'})
+    plan_id = str(uuid4())
+    plan = {'plan_id': plan_id, 'version': f'{plan_id}:1',
+        'working_plan': {'steps': [{'step': '编写文字方案', 'status': 'pending'}]}}
     def followup_rpc(name, parameters):
-        assert name == 'read_agent_task_followup'
         assert parameters == {'p_task_id': task_id, 'p_execution_token': 'token'}
-        return SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(data={'outcome': 'not_found'})))
+        if name == 'read_agent_working_plan_candidates':
+            assert mode == 'new_model_directed'
+            data = {'outcome': 'found', 'candidates': [plan]}
+        else:
+            assert name == 'read_agent_task_followup'
+            data = {'outcome': 'not_found'}
+        return SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(data=data)))
     db.rpc = followup_rpc
     store = _ReplayCheckpointStore()
     store.write = AsyncMock(return_value={'outcome': 'saved'})
-    if mode != 'new_enabled':
+    if mode not in {'new_enabled','new_model_directed'}:
         payload = {'messages': [], 'content_blocks': [], 'turn_index': 0, 'tool_call_ids': []}
         if mode in {'resume_disabled', 'tampered'}:
             payload['_task_bootstrap'] = source.checkpoint()
@@ -146,10 +154,13 @@ async def test_actual_executor_admission_and_frozen_bootstrap_recovery(monkeypat
             payload['_task_bootstrap']['input']['original_goal'] = '替换原始用户目标'
         store.read_result = {'outcome': 'found', 'payload': payload}
     monkeypatch.setattr(get_settings(), 'agent_task_execution_enabled', mode != 'resume_disabled')
+    monkeypatch.setattr(get_settings(), 'agent_task_model_directed_enabled', mode in {'new_model_directed','resume_disabled'})
     captured = []
 
     async def execute_chat(**kwargs):
-        captured.append(kwargs['runtime'].task_bootstrap)
+        runtime = kwargs['runtime']
+        assert runtime.task_plan_candidates == ({plan_id: plan} if mode == 'new_model_directed' else {})
+        captured.append(runtime.task_bootstrap)
         return ChatExecutionResult(parts=[TextPart(text='结果')], content_blocks=[],
             usage={'prompt_tokens': 0, 'completion_tokens': 0}, credits_cost=0, tool_digest=None)
 
@@ -170,7 +181,7 @@ async def test_actual_executor_admission_and_frozen_bootstrap_recovery(monkeypat
         assert (captured[0] is not None) == (mode != 'legacy_enabled')
         if captured[0] is not None:
             from dataclasses import replace
-            expected=replace(source,require_coverage_review=mode=='new_enabled').checkpoint()
+            expected=replace(source,require_coverage_review=mode=='new_enabled',model_directed=mode=='new_model_directed').checkpoint()
             assert captured[0].checkpoint() == expected
             assert store.write.call_args.kwargs['payload']['_task_bootstrap'] == expected
 

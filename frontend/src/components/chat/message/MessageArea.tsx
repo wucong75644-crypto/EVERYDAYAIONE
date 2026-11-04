@@ -1,3 +1,5 @@
+import { createPortal } from 'react-dom';
+import ConversationTasks from '../layout/ConversationTasks';
 import { chatColumnLayout } from '../message/messageContentLayout';
 /**
  * 消息区域组件（use-stick-to-bottom 版本）
@@ -35,6 +37,7 @@ import { useTaskRestorationStore } from '../../../stores/useTaskRestorationStore
 import { useWebSocketContext } from '../../../contexts/WebSocketContext';
 
 interface MessageAreaProps {
+  taskStatusAnchor?: HTMLElement | null;
   conversationId: string | null;
   onDelete?: (messageId: string, newLastMessage?: string) => void;
   /** 紧凑模式：工作区打开时取消 max-w 限制 */
@@ -203,6 +206,7 @@ export default function MessageArea({
   conversationId,
   onDelete,
   compact = false,
+  taskStatusAnchor,
 }: MessageAreaProps) {
   // 使用消息加载 Hook（负责从后端加载并写入缓存）
   const { loading, hasMore, loadMessages, loadMore, loadingMore } = useMessageLoader({ conversationId });
@@ -446,6 +450,7 @@ export default function MessageArea({
 
   return (
     <div className="flex-1 overflow-hidden relative">
+      {taskStatusAnchor && createPortal(<ConversationTasks key={conversationId} messages={mergedMessages} onResume={handleResume} />, taskStatusAnchor)}
       {/* use-stick-to-bottom 核心容器 */}
       <StickToBottom
         key={conversationId}  // 切换对话时重新挂载，避免加载历史消息时触发初始滚动

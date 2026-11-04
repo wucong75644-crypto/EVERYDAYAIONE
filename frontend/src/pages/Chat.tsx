@@ -122,6 +122,7 @@ export default function Chat() {
 
   // 获取统一消息列表
   const mergedMessages = useUnifiedMessages(currentConversationId);
+  const [taskStatusAnchor, setTaskStatusAnchor] = useState<HTMLDivElement | null>(null);
 
   // 性能监控：测量 TTI（首次消息加载完成时）
   useEffect(() => {
@@ -381,6 +382,7 @@ export default function Chat() {
         >
           {/* 顶部导航栏 */}
           <ChatHeader
+            taskStatusRef={setTaskStatusAnchor}
             sidebarCollapsed={sidebarCollapsed}
             onToggleSidebar={toggleSidebar}
             conversationTitle={conversationTitle}
@@ -403,6 +405,7 @@ export default function Chat() {
 
           {/* 消息区域 */}
           <MessageArea
+            taskStatusAnchor={taskStatusAnchor}
             conversationId={currentConversationId}
             onDelete={handleMessageDelete}
           />

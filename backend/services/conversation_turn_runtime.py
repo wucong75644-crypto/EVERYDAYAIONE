@@ -65,6 +65,11 @@ class ConversationTurnRuntime:
         self.mcp_invocations = {}  # Result snapshots only; the ledger remains authoritative.
         self.task_execution_state = None  # New logical tasks only; old checkpoints remain unchanged.
         self.task_bootstrap = None  # Trusted input only; never populated from request params.
+        self.task_direct_plan = None  # Optional notes, never an execution grant.
+        self.task_direct_plan_owner = None
+        self.task_direct_plan_id = None
+        self.task_plan_candidates = {}
+        self.task_direct_seen = ()  # Steer events actually consumed by a completed main-model round.
         self.task_artifact_reader = None
         self.committed_task_execution_revision = 0
         self.checkpoint_base = {}
@@ -211,6 +216,17 @@ class ConversationTurnRuntime:
             if self.task_read_arguments is not None:
                 import copy
                 payload['_task_read_arguments'] = copy.deepcopy(self.task_read_arguments)
+            if self.task_direct_plan is not None:
+                from services.task_execution.model_directed import enabled
+                if not enabled(self):raise RuntimeError('TASK_DIRECT_PLAN_POLICY_MISMATCH')
+                payload['_task_direct_plan'] = self.task_direct_plan.model_dump(mode='json')
+                payload['_task_direct_plan_owner'] = self.task_direct_plan_owner or self.task_id
+                if self.task_direct_plan_id is not None:
+                    payload['_task_direct_plan_id'] = self.task_direct_plan_id
+                else:
+                    payload.pop('_task_direct_plan_id', None)
+            from services.task_execution.model_directed import enabled as direct_enabled
+            if direct_enabled(self):payload['_task_direct_seen']=list(self.task_direct_seen)
             if self.task_revision_review is not None:
                 payload['_task_revision_review'] = self.task_revision_review.model_dump(mode='json')
             if self.task_user_changes is not None:
@@ -277,7 +293,7 @@ class ConversationTurnRuntime:
                 if not isinstance(message, str) or not message.strip():
                     raise RuntimeError("ACTOR_STEER_PAYLOAD_INVALID")
                 managed = (self.task_execution_state is not None and self.task_execution_state.image_binding_version >= 3
-                    or self.task_bootstrap is not None and self.task_bootstrap.require_coverage_review)
+                    or self.task_bootstrap is not None and (self.task_bootstrap.require_coverage_review or self.task_bootstrap.model_directed))
                 if managed:
                     if self.task_user_change_capture is None or not command.event_id:
                         raise RuntimeError('TASK_USER_CHANGE_CAPTURE_REQUIRED')

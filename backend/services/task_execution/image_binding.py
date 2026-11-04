@@ -22,7 +22,7 @@ def image_slot_key(requirement_id, index):
 
 
 def image_slots(state):
-    targets = {target for step in state.steps if step.capability == 'platform.generate_image'
+    targets = {target for step in state.steps if step.capability == 'platform.generate_image' and step.id not in state.retired_call_steps
                for target in (*step.requirement_ids, *step.contributes_to)}
     operations = {op.effect_key: op for op in state.operations
         if op.capability == 'platform.generate_image' and op.step_id in {s.id for s in state.steps}}
@@ -124,6 +124,12 @@ def bind_image_call(state, call, registry):
         raise TaskError('TASK_IMAGE_NATIVE_TOOL_MISMATCH')
     if state.status != 'active':
         raise TaskError('TASK_NOT_ACTIVE')
+    if state.model_directed:
+        from .model_directed import call_binding
+        step,target=call_binding(state,call)
+        key=image_slot_key(target.id,1)
+        return ImageCallBinding(step.id,target.id,1,'direct-recipe-'+digest(step.id)[:32],
+            key,effect_version(state,key),digest(thaw(call.arguments)))
     validate_image_steps(state, state.steps)
     # Include artifacts only through completed steps that actually delivered
     # the method requirement. A validation tag on uncommitted text is not enough.

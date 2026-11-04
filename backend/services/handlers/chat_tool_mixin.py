@@ -10,6 +10,7 @@ import json
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
+from services.conversation_state import ConversationPauseRequested
 
 from schemas.websocket import (
     build_tool_result,
@@ -277,6 +278,11 @@ class ChatToolMixin(ChatToolResultMixin):
                 tc["name"], args, call_id=tc["id"],
                 lifecycle=lifecycle,
             )
+            actor_runtime=getattr(self,'_actor_runtime',None)
+            from services.task_execution.model_directed import enabled as direct_enabled
+            if direct_enabled(actor_runtime):
+                if not hasattr(actor_runtime,'task_direct_results'):actor_runtime.task_direct_results={}
+                actor_runtime.task_direct_results[tc['id']]=envelope
             from services.tools.mcp_allowlist import TOOL_NAME as MCP_TOOL_NAME
             if tc["name"] == MCP_TOOL_NAME and envelope.decision.replay_requirement == "record_required":
                 actor_runtime = getattr(self, "_actor_runtime", None)
@@ -285,6 +291,8 @@ class ChatToolMixin(ChatToolResultMixin):
                     remember_invocation(actor_runtime, envelope)
             result = envelope
         except asyncio.CancelledError:
+            raise
+        except ConversationPauseRequested:
             raise
         except Exception as error:
             result_ctx = replace(result_ctx, elapsed_ms=int((time.monotonic() - started_at) * 1000))

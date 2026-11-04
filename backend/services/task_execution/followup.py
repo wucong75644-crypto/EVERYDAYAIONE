@@ -29,7 +29,7 @@ def review_messages(source):
 def payload(source,current,*,task_id,turn_id,model_round,usage,observation):
     previous=source['checkpoint'];old=TaskState.model_validate(source['state'])
     updated=TaskState.model_validate({**old.model_dump(),'revision':old.revision+1,'status':'active',
-        'model_rounds_used':old.model_rounds_used+1})
+        'model_rounds_used':old.model_rounds_used+(max(1,int(current.get('next_model_round',1))) if old.model_directed else 1)})
     result=copy.deepcopy(previous)
     for key in ('checkpoint_kind','result_content','usage','credits_cost','tool_digest','_task_bootstrap','_task_read_arguments','_task_usage','_continuation_input'):
         result.pop(key,None)
@@ -38,7 +38,7 @@ def payload(source,current,*,task_id,turn_id,model_round,usage,observation):
             {'owner_task_id':source['source_owner_task_id'],'checkpoint':copy.deepcopy(result['_task_followup_input_checkpoint'])}]
     result['_task_followup_input_checkpoint']=copy.deepcopy(current)
     result['messages']=[*copy.deepcopy(previous['messages']),*copy.deepcopy(current['messages']),
-        {'role':'system','content':'[New authenticated user Turn]\n原目标/成果及未决操作继续保留；本条新用户文字须经原要求修订核验，禁止沿旧派发或重发未决操作。'}]
+        {'role':'system','content':'[New authenticated user Turn]\n'+('原目标/成果及未决操作继续保留；根据最新真实用户文字调整工作，旧调用不可沿用新授权，禁止重发未决操作。' if old.model_directed else '原目标/成果及未决操作继续保留；本条新用户文字须经原要求修订核验，禁止沿旧派发或重发未决操作。')}]
     result['content_blocks']=[]
     result['_task_execution']=updated.model_dump(mode='json')
     result['_task_execution_expected_revision']=old.revision
@@ -85,6 +85,9 @@ async def apply(runtime,prepared,blocks,text,has_tool_calls,*,model_round,turn,b
     current=build_checkpoint(prepared.messages,blocks,turn,next_model_round=model_round)
     # Save the real new window before acquiring the original logical owner.
     from services.conversation_commands import SafePoint
+    # The transfer compares the full new checkpoint with the stored JSON.
+    # Include the boundary here so the runtime and the store see the same data.
+    current['safe_point'] = SafePoint.AFTER_TOOL.value
     await runtime.safe_point(SafePoint.AFTER_TOOL,replay_payload=current)
     merged=payload(source,runtime.checkpoint_base,task_id=runtime.task_id,turn_id=runtime.turn_id,
         model_round=model_round,usage=runtime.task_usage or {},observation=observation)

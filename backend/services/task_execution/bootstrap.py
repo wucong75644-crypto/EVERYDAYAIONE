@@ -87,14 +87,20 @@ class TaskBootstrap:
     required_deliveries: tuple[Requirement, ...] = ()
     capability_gates: tuple[CapabilityGate, ...] = ()
     require_coverage_review: bool = False
+    model_directed: bool = False
+
+    def __post_init__(self):
+        if self.model_directed and self.require_coverage_review:
+            raise TaskError('TASK_BOOTSTRAP_POLICY_CONFLICT')
 
     def checkpoint(self):
         value=TypeAdapter(TaskBootstrap).dump_python(self, mode='json')
         if not self.require_coverage_review:value.pop('require_coverage_review',None)
+        if not self.model_directed:value.pop('model_directed',None)
         return {'version': 1, 'input': value}
 
     @classmethod
-    def from_input(cls, *, anchor, scope, content, task_id, conversation_id, org_id, require_coverage_review=False):
+    def from_input(cls, *, anchor, scope, content, task_id, conversation_id, org_id, require_coverage_review=False, model_directed=False):
         from services.handlers.context_snapshot import ContextAnchor
         from schemas.message import TextPart
         if (not isinstance(anchor, ContextAnchor)
@@ -110,11 +116,14 @@ class TaskBootstrap:
             actor_user_id=UUID(str(scope.actor_user_id)), input_message_id=UUID(anchor.input_message_id),
             original_goal=text, org_id=UUID(str(org_id)) if org_id is not None else None,
             require_coverage_review=require_coverage_review,
+            model_directed=model_directed,
             execution_identity=ExecutionIdentity(workspace_owner_id=scope.workspace_owner_id,
                 context_scope=scope.context_scope, personal_context_allowed=scope.personal_context_allowed,
                 channel_scope_id=scope.channel_scope_id))
 
     def initialize(self, arguments, *, model_rounds_used):
+        if self.model_directed:
+            raise TaskError('TASK_DIRECT_CALL_RECORD_REQUIRED')
         proposal = StartTaskInput.model_validate(arguments)
         if len({p.id for p in proposal.requirements}) != len(proposal.requirements):
             raise TaskError('TASK_DUPLICATE_REQUIREMENT')

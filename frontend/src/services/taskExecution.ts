@@ -8,6 +8,16 @@ export const taskProgressSchema = z.object({
   completed_steps: count, total_steps: count,
   completed_requirements: count, total_requirements: count,
   pending_results: count, unconfirmed_results: count,
+  presentation: z.literal('model_directed').optional(),
+  plan_only: z.boolean().optional(),
+  image_jobs: z.object({ completed: count, total: count }).optional(),
+  working_plan: z.object({
+    explanation: z.string().max(2000),
+    steps: z.array(z.object({
+      step: z.string().min(1).max(300),
+      status: z.enum(['pending', 'in_progress', 'completed']),
+    })).max(32),
+  }).optional(),
   steps: z.array(z.object({
     id: z.string(), title: z.string().max(300),
     status: z.enum(['needs_verification', 'waiting_result', 'completed', 'paused', 'cancelled', 'needs_attention', 'ready', 'waiting_dependency']),

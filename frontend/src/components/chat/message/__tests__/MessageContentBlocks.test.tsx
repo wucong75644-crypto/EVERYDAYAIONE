@@ -231,13 +231,13 @@ vi.mock('../TaskProgressCard', () => ({ default: ({ rootTaskId, messageId }: { r
   <div data-testid="task-progress-source">{rootTaskId}:{messageId}</div> }));
 
 describe('task progress discovery', () => {
-  it('routes persisted assistant markers to the authenticated progress component', () => {
+  it('keeps persisted assistant markers out of the conversation body', () => {
     const root = '11111111-1111-4111-8111-111111111111';
     const message = normalizeMessage({ id: 'assistant-progress', conversation_id: 'c1', role: 'assistant', status: 'completed',
       content: JSON.stringify([{ type: 'task_progress', root_task_id: root, status: 'completed' }]) });
     render(<MessageContentBlocks message={message} imageAssets={[]} fileBlocks={[]} isStreaming={false}
       isRegenerating={false} textContent="" onImageClick={vi.fn()} />);
-    expect(screen.getByTestId('task-progress-source')).toHaveTextContent(`${root}:assistant-progress`);
+    expect(screen.queryByTestId('task-progress-source')).not.toBeInTheDocument();
   });
   it('does not display a progress marker uploaded as user content', () => {
     const message = normalizeMessage({ id: 'user-marker', conversation_id: 'c1', role: 'user', status: 'completed',

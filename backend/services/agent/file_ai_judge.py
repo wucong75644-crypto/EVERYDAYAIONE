@@ -4,7 +4,7 @@
   adjudicate(evidence) → AIDecision  # 成功
                        → raise FileAnalyzeError  # 三次全挂
 
-失败链：qwen-turbo (default) → qwen-turbo (simplified) → qwen-plus (default)
+失败链：qwen3.8-max（default → simplified → default），最多三次尝试
 
 结构化错误：见 §5.1 FileAnalyzeError + §5.4 ERROR_CATEGORIES
 
@@ -36,14 +36,11 @@ from services.agent.file_evidence import EvidencePool
 # ── 失败链配置 ──
 
 _ATTEMPTS: list[dict] = [
-    # 90/120/180 s ladder，对齐 LangChain ChatModel 默认（120s 量级）。
-    # 实测：1171 行 × 27 列 prompt 5344 token，qwen-turbo 端到端最坏 170s
-    # （prefill 53-107s + 输出 40-67s）。千问拥塞或中文 tokenize 偏重时
-    # 30/45/60 全部踩满 timeout（生产 2026-06-04 19:01 真实现象）。
-    # 失败链路总耗时 90+120+180=390s（6.5 分钟），换"今天踩雷场景全过"。
-    {"model": "qwen-turbo", "timeout": 90, "prompt_variant": "default"},
-    {"model": "qwen-turbo", "timeout": 120, "prompt_variant": "simplified"},
-    {"model": "qwen-plus",  "timeout": 180, "prompt_variant": "default"},
+    # 模型统一为 qwen3.8-max；保留既有三次尝试、提示词变体及超时上限。
+    # 新模型的真实耗时与费用尚未验收，不沿用旧模型的性能推断。
+    {"model": "qwen3.8-max", "timeout": 90, "prompt_variant": "default"},
+    {"model": "qwen3.8-max", "timeout": 120, "prompt_variant": "simplified"},
+    {"model": "qwen3.8-max", "timeout": 180, "prompt_variant": "default"},
 ]
 
 
@@ -318,6 +315,7 @@ async def _call_llm(prompt: str, model: str, timeout: float) -> dict:
         ],
         temperature=0.1,
         response_format={"type": "json_object"},
+        extra_body={"enable_thinking": False},
         timeout=timeout,
     )
     text = resp.choices[0].message.content.strip()

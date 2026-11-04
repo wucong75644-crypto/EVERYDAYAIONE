@@ -93,9 +93,25 @@ class ChatGenerationExecutor:
             from services.task_execution.database_scope import task_database
             from types import SimpleNamespace
             followup_db=task_database(self._db,SimpleNamespace(actor_user_id=execution_scope.actor_user_id,org_id=task.get('org_id')))
-            response=await followup_db.rpc('read_agent_task_followup',{'p_task_id':claim.task_id,'p_execution_token':claim.execution_token}).execute()
-            if not response or response.data.get('outcome') not in {'found','not_found'}:raise RuntimeError('TASK_FOLLOWUP_READ_UNCONFIRMED')
-            runtime.task_followup_candidate=response.data.get('source')
+            args = {'p_task_id': claim.task_id, 'p_execution_token': claim.execution_token}
+            followup_read = followup_db.rpc('read_agent_task_followup', args).execute()
+            saved_policy = (replay_context or {}).get('_task_bootstrap')
+            model_directed = (saved_policy['input'].get('model_directed', False) if saved_policy else
+                              getattr(get_settings(), 'agent_task_model_directed_enabled', False))
+            if model_directed and not (replay_context or {}).get('_task_direct_plan'):
+                response, plans = await asyncio.gather(
+                    followup_read, followup_db.rpc('read_agent_working_plan_candidates', args).execute(),
+                )
+                if not plans or plans.data.get('outcome') not in {'found', 'not_found'}:
+                    raise RuntimeError('TASK_WORKING_PLAN_CANDIDATES_UNCONFIRMED')
+                runtime.task_plan_candidates = {
+                    candidate['plan_id']: candidate for candidate in plans.data.get('candidates', [])
+                }
+            else:
+                response = await followup_read
+            if not response or response.data.get('outcome') not in {'found', 'not_found'}:
+                raise RuntimeError('TASK_FOLLOWUP_READ_UNCONFIRMED')
+            runtime.task_followup_candidate = response.data.get('source')
             async def adopt_followup(source,observation,payload):
                 parameters={'p_task_id':claim.task_id,'p_execution_token':claim.execution_token,
                     'p_root_task_id':source['state']['root_task_id'],'p_expected_revision':source['state']['revision'],
@@ -122,6 +138,8 @@ class ChatGenerationExecutor:
             actor_user_id=execution_scope.actor_user_id, org_id=task.get('org_id'),
             execution_scope=execution_scope,
         ) if replay_context and '_task_execution' in replay_context else None
+        runtime.task_native_event_pending=((task.get('delivery_context') or {}).get('input_kind')=='agent_task_continuation'
+            and (task.get('delivery_context') or {}).get('source_kind') in {'scheduled','video'})
         if runtime.task_execution_state is not None:
             runtime.committed_task_execution_revision = runtime.task_execution_state.revision
         if (replay_context or {}).get('_task_requirement_review') is not None:
@@ -274,13 +292,17 @@ class ChatGenerationExecutor:
                               and admits_new_task(execution_scope))
                              or saved_bootstrap is not None)):
                     from services.task_execution.bootstrap import TaskBootstrap
+                    direct_policy=(saved_bootstrap.get('input',{}).get('model_directed',False)
+                        if saved_bootstrap else getattr(get_settings(),'agent_task_model_directed_enabled',False))
                     runtime.task_bootstrap = TaskBootstrap.from_input(anchor=anchor, scope=execution_scope,
                         content=content, task_id=claim.task_id, conversation_id=claim.conversation_id,
                         org_id=task.get('org_id'),require_coverage_review=(
                             saved_bootstrap.get('input',{}).get('require_coverage_review',False)
-                            if saved_bootstrap else True))
+                            if saved_bootstrap else not direct_policy),model_directed=direct_policy)
                     if saved_bootstrap is not None and runtime.task_bootstrap.checkpoint() != saved_bootstrap:
                         raise RuntimeError('TASK_BOOTSTRAP_REPLAY_MISMATCH')
+                from services.task_execution.direct_loop import restore_plan
+                restore_plan(runtime,replay_context)
                 if runtime.task_bootstrap is not None or runtime.task_execution_state is not None:
                     from services.task_execution.artifact_reader import TaskArtifactReader
                     runtime.task_artifact_reader = TaskArtifactReader(self._db,

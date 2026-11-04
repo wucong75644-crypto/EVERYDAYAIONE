@@ -234,9 +234,38 @@ class RequirementsRevision(Fact):
     intent_action: str
 
 
+class CallBinding(Fact):
+    call_id: str = Field(min_length=1, max_length=200)
+    tool_name: Key
+    arguments_sha256: Digest
+    step_id: Key
+    input_sha256: Digest = '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945'
+
+
+class ResolvedCallBinding(Fact):
+    call_id: str = Field(min_length=1,max_length=200)
+    arguments_sha256: Digest
+
+
+class WorkItem(Fact):
+    step: str = Field(min_length=1, max_length=300, description='工作项名称，字段名为step。')
+    status: Literal['pending', 'in_progress', 'completed']
+
+
+class WorkingPlan(Fact):
+    """Model-owned notes, never dispatch, permission or completion evidence."""
+    explanation: str = Field(default='', max_length=2000)
+    steps: tuple[WorkItem, ...] = Field(max_length=32)
+
+
 class TaskState(Fact):
     version: Literal[1] = 1
     image_binding_version: Literal[1,2,3] = 1
+    model_directed: Annotated[bool, Field(strict=True)] = False
+    call_bindings: tuple[CallBinding, ...] = Field(default=(), max_length=256)
+    resolved_call_bindings: tuple[ResolvedCallBinding, ...] = Field(default=(),max_length=256)
+    working_plan: WorkingPlan | None = None
+    retired_call_steps: tuple[Key, ...] = Field(default=(),max_length=32)
     root_task_id: UUID
     conversation_id: UUID
     actor_user_id: UUID
@@ -266,12 +295,29 @@ class TaskState(Fact):
     @model_serializer(mode='wrap')
     def preserve_legacy_image_protocol(self,handler):
         value=handler(self)
+        if not self.model_directed:
+            value.pop('model_directed', None)
+            value.pop('call_bindings', None)
+            value.pop('resolved_call_bindings',None)
+            value.pop('working_plan', None)
+            value.pop('retired_call_steps', None)
+        elif self.working_plan is None:
+            value.pop('working_plan', None)
+        if not self.retired_call_steps:value.pop('retired_call_steps',None)
+        if not self.resolved_call_bindings:value.pop('resolved_call_bindings',None)
         if self.image_binding_version==1:value.pop('image_binding_version',None)
         if not self.requirements_history:value.pop('requirements_history',None)
         return value
 
     @model_validator(mode='after')
     def unique_and_scoped(self):
+        if len({v.call_id for v in self.call_bindings}) != len(self.call_bindings):
+            raise TaskError('TASK_DIRECT_CALL_DUPLICATE')
+        if (self.call_bindings or self.resolved_call_bindings or self.working_plan is not None or self.retired_call_steps) and not self.model_directed:
+            raise TaskError('TASK_DIRECT_CALL_POLICY_MISMATCH')
+        if (len({b.call_id for b in self.resolved_call_bindings})!=len(self.resolved_call_bindings)
+                or not {b.call_id for b in self.resolved_call_bindings}<={b.call_id for b in self.call_bindings}):
+            raise TaskError('TASK_DIRECT_RESOLVED_BINDING_INVALID')
         for values in (self.requirements, self.steps, self.artifacts, self.operations):
             if len({v.id for v in values}) != len(values):
                 raise TaskError('TASK_DUPLICATE_FACT')
@@ -293,6 +339,23 @@ class TaskState(Fact):
         if self.requirements_history and [v.number for v in self.requirements_history] != list(range(1,self.requirements_revision+1)):
             raise TaskError('TASK_REQUIREMENT_REVISION_HISTORY_INVALID')
         steps = {s.id: s for s in [*self.steps,*historical_steps]}
+        if any(v.step_id not in steps for v in self.call_bindings):
+            raise TaskError('TASK_DIRECT_CALL_STEP_UNKNOWN')
+        if self.model_directed:
+            if (len(set(self.retired_call_steps))!=len(self.retired_call_steps)
+                    or not set(self.retired_call_steps)<={s.id for s in self.steps}
+                    or any(o.step_id in self.retired_call_steps and o.status!='failed_before_dispatch' for o in self.operations)):
+                raise TaskError('TASK_DIRECT_RETIREMENT_INVALID')
+            by_step = {}
+            for binding in self.call_bindings:
+                by_step.setdefault(binding.step_id, set()).add((binding.tool_name, binding.arguments_sha256))
+            if not self.call_bindings or any(len(values) != 1 for values in by_step.values()):
+                raise TaskError('TASK_DIRECT_CALL_BINDING_MISMATCH')
+            for step in self.steps:
+                if (step.id not in by_step or not step.id.startswith('host.call.')
+                        or step.requirement_ids != (step.id.replace('host.call.', 'host.result.', 1),)
+                        or step.depends_on or step.contributes_to or not step.capability):
+                    raise TaskError('TASK_DIRECT_CALL_BINDING_MISMATCH')
         requirements = {r.id for r in self.requirements}
         if any(not (set(s.requirement_ids) | set(s.contributes_to)) <= requirements for s in self.steps):
             raise TaskError('TASK_REQUIREMENT_UNKNOWN')
@@ -322,9 +385,11 @@ class TaskState(Fact):
         if sum(len((a.inline_text or '').encode()) for a in self.artifacts) > 256_000:
             raise TaskError('TASK_INLINE_ARTIFACT_BUDGET')
         if self.status == 'completed':
-            if not self.steps or len([r for r in self.results if r.step_id in {s.id for s in self.steps}]) != len(self.steps):
+            effective_steps=[s for s in self.steps if s.id not in self.retired_call_steps]
+            if not self.steps or len([r for r in self.results if r.step_id in {s.id for s in effective_steps}]) != len(effective_steps):
                 raise TaskError('TASK_DELIVERY_INCOMPLETE')
             for requirement in self.requirements:
+                if self.model_directed and any(requirement.id in s.requirement_ids for s in self.steps if s.id in self.retired_call_steps):continue
                 ids = {key for s in self.steps if requirement.id in (*s.requirement_ids, *s.contributes_to)
                        for r in self.results if r.step_id == s.id for key in r.artifact_ids}
                 if len(verified_resources(requirement, (artifacts[k] for k in ids))) < requirement.minimum:

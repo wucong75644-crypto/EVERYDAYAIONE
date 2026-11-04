@@ -285,11 +285,11 @@ class TestAdjudicateFailureChain:
         ):
             decision = await adjudicate(pool)
         assert decision.attempt_count == 1
-        assert decision.model_used == "qwen-turbo"
+        assert decision.model_used == "qwen3.8-max"
 
     @pytest.mark.asyncio
     async def test_third_attempt_succeeds(self):
-        """第 1、2 次失败，第 3 次（qwen-plus）成功。"""
+        """第 1、2 次失败，第 3 次仍使用 qwen3.8-max 成功。"""
         pool = _mini_pool()
         responses = [
             json.JSONDecodeError("bad", "doc", 0),
@@ -308,8 +308,8 @@ class TestAdjudicateFailureChain:
         with patch("services.agent.file_ai_judge._call_llm", new=mock_call):
             decision = await adjudicate(pool)
         assert decision.attempt_count == 3
-        assert decision.model_used == "qwen-plus"
-        assert calls == ["qwen-turbo", "qwen-turbo", "qwen-plus"]
+        assert decision.model_used == "qwen3.8-max"
+        assert calls == ["qwen3.8-max", "qwen3.8-max", "qwen3.8-max"]
 
     @pytest.mark.asyncio
     async def test_three_attempts_all_fail_raises_file_too_complex(self):
@@ -403,3 +403,27 @@ class TestAttemptsTimeoutConfig:
         timeouts = [a["timeout"] for a in _ATTEMPTS]
         assert all(timeouts[i] < timeouts[i+1] for i in range(len(timeouts)-1)), \
             f"timeout 必须递增，实际 {timeouts}"
+
+
+@pytest.mark.asyncio
+async def test_qwen38_json_request_keeps_single_sdk_attempt_and_disables_thinking(monkeypatch):
+    """Exercise the actual SDK call boundary without a provider request."""
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    import openai
+    from services.agent.file_ai_judge import _call_llm
+
+    create = AsyncMock(return_value=SimpleNamespace(choices=[SimpleNamespace(
+        message=SimpleNamespace(content=json.dumps(_VALID_LLM_OUTPUT))) ]))
+    factory = Mock(return_value=SimpleNamespace(chat=SimpleNamespace(
+        completions=SimpleNamespace(create=create))))
+    monkeypatch.setattr(openai, "AsyncOpenAI", factory)
+    result = await _call_llm("本地结构化解析测试", "qwen3.8-max", 90)
+    assert result == _VALID_LLM_OUTPUT
+    assert factory.call_args.kwargs["max_retries"] == 0
+    create.assert_awaited_once()
+    request = create.call_args.kwargs
+    assert request["model"] == "qwen3.8-max"
+    assert request["response_format"] == {"type": "json_object"}
+    assert request["extra_body"] == {"enable_thinking": False}
+    assert request["timeout"] == 90

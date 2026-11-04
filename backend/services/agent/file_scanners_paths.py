@@ -383,6 +383,7 @@ class PathBScanner(BaseScanner):
             extract_formulas, self.excel_path, target,
         )
 
+        wb = None
         try:
             # ⑤ calamine 流式读
             wb = python_calamine.CalamineWorkbook.from_path(self.excel_path)
@@ -447,9 +448,12 @@ class PathBScanner(BaseScanner):
                 )
                 formulas, total_formulas = [], 0
         finally:
-            # wait=False：主扫描已完成，公式线程要么已结束要么 timeout
-            # 让 GC 兜底回收，不阻塞主路径
-            formula_executor.shutdown(wait=False)
+            try:
+                if wb is not None:
+                    wb.close()
+            finally:
+                # Snapshot deletion must wait until the formula worker closes ZIP IO.
+                formula_executor.shutdown(wait=True)
 
         # 空表 / 表头越界兜底
         if acc is None:

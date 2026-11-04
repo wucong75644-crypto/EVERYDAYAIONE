@@ -35,9 +35,21 @@ def deletion_db(restore_db):
         c.execute((ROOT/'migrations/rollback/356_agent_task_file_deletions_rollback.sql').read_text())
 
 
-async def setup(dsn,tmp_path,monkeypatch,*,mode='ok',count=1,personal=False):
-    f,runtime,executor,_,_,target,_,bucket,cp,body,calls=await restore_setup(dsn,tmp_path,monkeypatch,personal=personal)
-    state=revise_plan(runtime.task_execution_state,WorkPlan(expected_revision=runtime.task_execution_state.revision,
+async def setup(dsn,tmp_path,monkeypatch,*,mode='ok',count=1,personal=False,model_directed=False):
+    def direct_state(old,rid):
+        from services.task_execution.bootstrap import TaskBootstrap
+        from services.task_execution.model_directed import record_calls
+        from services.tools import ToolCall
+        from services.tools.catalog import build_capability_catalog
+        base=Path(FileExecutor(str(tmp_path),str(old.actor_user_id),str(old.org_id) if old.org_id else None).workspace_root)/'下载/原文件.txt'
+        paths=[base]+([base.with_name('第二个文件.txt')] if count==2 else [])
+        b=TaskBootstrap(task_id=old.root_task_id,conversation_id=old.conversation_id,actor_user_id=old.actor_user_id,
+            org_id=old.org_id,input_message_id=old.source_message_ids[0],execution_identity=old.execution_identity,
+            original_goal=old.original_goal,model_directed=True)
+        return record_calls(None,b,[ToolCall('delete-original','file_delete',{'files':[str(p) for p in paths]})],build_capability_catalog())
+    f,runtime,executor,_,_,target,_,bucket,cp,body,calls=await restore_setup(dsn,tmp_path,monkeypatch,personal=personal,
+        state_factory=direct_state if model_directed else None)
+    state=runtime.task_execution_state if model_directed else revise_plan(runtime.task_execution_state,WorkPlan(expected_revision=runtime.task_execution_state.revision,
         steps=(PlanStep(id='delete',title='删除原文件并提供恢复记录',capability='workspace.file.delete',requirement_ids=('report',)),)))
     with scoped(f) as c:
         saved=c.execute('SELECT state FROM conversation_turn_checkpoints WHERE task_id=%s',(f['task'],)).fetchone()[0]

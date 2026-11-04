@@ -474,7 +474,7 @@ prepare_skill_personal_mount() {
 configure_agent_task_execution() {
     [[ "$ENABLE_AGENT_TASK_EXECUTION" == true ]] || return 0
     log_info "开启新编排入口；新增 ERP 写适配继续关闭"
-    printf '%s\n' '{"AGENT_TASK_EXECUTION_ENABLED":"true","AGENT_TASK_ERP_WRITE_ENABLED":"false"}' \
+    printf '%s\n' '{"AGENT_TASK_EXECUTION_ENABLED":"true","AGENT_TASK_MODEL_DIRECTED_ENABLED":"true","AGENT_TASK_ERP_WRITE_ENABLED":"false"}' \
         | remote_exec /var/www/everydayai/backend/venv/bin/python \
             /var/www/everydayai/deploy/env-patch.py --lock-token "$EVERYDAYAI_RELEASE_LOCK_TOKEN"
 }
