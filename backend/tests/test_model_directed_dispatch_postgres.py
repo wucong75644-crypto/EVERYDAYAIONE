@@ -332,3 +332,111 @@ async def test_sync_handler_database_gate_scopes_each_transaction_without_leakin
             assert c.execute('SELECT count(*) FROM tool_invocations WHERE task_id=%s', (f['task'],)).fetchone()[0] == 0
     finally:
         db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('legacy_evidence', [False, True])
+async def test_code_failure_followup_reuses_original_root_and_only_dispatches_repair(
+    dispatch_db, monkeypatch, legacy_evidence,
+):
+    from unittest.mock import AsyncMock
+    from services.task_execution.contracts import Artifact, TaskState
+    from services.task_execution.followup import FollowupRestart
+    from services.task_execution.reducer import complete_step, register_artifacts
+    from tests.test_model_directed_loop import case, execute
+    from tests.test_task_execution_followup_reuse_postgres import new_turn, adopt
+    from tests.test_task_execution_model_bridge import call
+
+    old = seed(dispatch_db)
+    b = replace(bootstrap(), task_id=UUID(old['task']), actor_user_id=UUID(old['user']),
+        conversation_id=UUID(old['conv']), input_message_id=UUID(old['message']))
+    b = replace(b, execution_identity=b.execution_identity.model_copy(update={'workspace_owner_id': old['user']}))
+    previous_calls = [
+        ToolCall('extrema', 'code_execute', {'code': 'print(max([162, 3550, 622]), min([162, 3550, 622]))'}),
+        ToolCall('failed', 'code_execute', {'code': 'raise RuntimeError("RESUME_TEST")'}),
+    ]
+    state = record_calls(None, b, previous_calls, build_capability_catalog())
+    previous_output = 'MAX = 3550\nMIN = 162'
+    first = state.call_bindings[0]
+    receipt = Artifact(id='extrema-receipt', kind='receipt', reference='tool-result:extrema',
+        sha256=digest(previous_output), source_task_id=b.task_id, delivery_task_id=b.task_id, source_call_id=first.call_id, step_id=first.step_id)
+    state = complete_step(register_artifacts(state, [receipt]), first.step_id, [receipt.id], owner_task_id=b.task_id)
+    state = state.model_copy(update={'status': 'partial'})
+    previous_messages = []
+    for original, output in zip(previous_calls, [previous_output, 'RuntimeError: RESUME_TEST']):
+        previous_messages.extend([
+            {'role': 'assistant', 'content': None, 'tool_calls': [{
+                'id': original.call_id, 'type': 'function', 'function': {
+                    'name': original.name, 'arguments': json.dumps(dict(original.arguments)),
+                },
+            }]},
+            {'role': 'tool', 'tool_call_id': original.call_id, 'content': output},
+        ])
+    with connect(old) as connection:
+        assert save(connection, old, {'messages': previous_messages,
+            '_task_execution': state.model_dump(mode='json')})['outcome'] == 'saved'
+
+    user_text = ('继续刚才失败的接续测试。直接使用上轮第一步工具已经返回的 MAX 和 MIN，'
+                 '仅补做第二步：实际调用一次代码工具计算 MAX 减 MIN，并报告结果。'
+                 '保留上轮成功输出和失败记录，不读文件、不重算第一步、不再触发测试错误。')
+    _, fresh, source, _, _ = new_turn(dispatch_db, old=old, text=user_text)
+
+    async def checkpoint(point, payload):
+        with connect(fresh) as connection:
+            return connection.execute("SELECT save_generation_checkpoint(%s,%s,%s,%s)",
+                (fresh['task'], fresh['token'], point.value, Jsonb(payload))).fetchone()[0]
+
+    runtime, prepared, handler, request = case(checkpoint)
+    runtime.task_id, runtime.turn_id, runtime.conversation_id = fresh['task'], fresh['turn'], fresh['conv']
+    request = replace(request, task_id=fresh['task'], conversation_id=fresh['conv'], user_id=fresh['user'])
+    prepared.execution_context = replace(prepared.execution_context, task_id=fresh['task'],
+        conversation_id=fresh['conv'], actor_user_id=fresh['user'], workspace_owner_id=fresh['user'])
+    runtime.task_bootstrap = replace(b, task_id=UUID(fresh['task']), input_message_id=UUID(fresh['message']))
+    runtime.task_followup_candidate = source
+    prepared.messages = [{'role': 'user', 'content': user_text}]
+
+    async def transfer(selected, observation, merged):
+        assert observation == {'relation': 'continue', 'evidence': [user_text]}
+        with connect(fresh) as connection:
+            return adopt(connection, fresh, selected, observation, merged)
+
+    runtime.task_followup_adopt = transfer
+    args = {'relation': 'continue'}
+    if legacy_evidence:
+        # Production sent summaries rather than verbatim excerpts.
+        args['evidence'] = [
+            '上轮第一步已成功返回 MAX=3550、MIN=162（订单数样本 162、3550、622）',
+            '上轮第二步原样执行 raise RuntimeError("RESUME_TEST") 真实失败，未重试',
+            '用户要求仅补做第二步：调用代码工具计算 MAX 减 MIN 并报告结果，不重算第一步、不再触发测试错误',
+        ]
+    with pytest.raises(FollowupRestart) as restart:
+        await execute(runtime, prepared, handler, request, [call('resume_task_execution', args, 'resume')])
+    assert restart.value.delivery_context['logical_task_id'] == old['task']
+    handler._execute_tool_calls.assert_not_awaited()
+
+    with connect(fresh) as connection:
+        owner, restored = connection.execute('SELECT owner_task_id,state FROM agent_task_states WHERE root_task_id=%s',
+            (old['task'],)).fetchone()
+        merged = connection.execute('SELECT state FROM conversation_turn_checkpoints WHERE task_id=%s',
+            (fresh['task'],)).fetchone()[0]
+    assert str(owner) == fresh['task']
+    assert merged['messages'][:len(previous_messages)] == previous_messages
+    runtime.task_execution_state = TaskState.model_validate(restored)
+    assert runtime.task_execution_state.results == state.results
+    assert runtime.task_execution_state.artifacts == (receipt,)
+    prepared.messages = merged['messages']
+    # This dispatch assertion uses a local tool double. The original owner and
+    # checkpoint above were transferred by the actual PostgreSQL RPC.
+    runtime._replay_checkpoint_callback = AsyncMock(return_value={'outcome': 'saved'})
+    runtime.committed_task_execution_revision = runtime.task_execution_state.revision
+    monkeypatch.setattr('services.handlers.chat.execution_engine.compact_tool_context', AsyncMock())
+    handler._execute_tool_calls.side_effect = lambda calls, *a, **kw: [
+        (entry, '3388', False, '3388') for entry in calls
+    ]
+    await execute(runtime, prepared, handler, request, [
+        call('code_execute', {'code': 'print(3550 - 162)'}, 'repair'),
+    ])
+    handler._execute_tool_calls.assert_awaited_once()
+    assert [entry['id'] for entry in handler._execute_tool_calls.call_args.args[0]] == ['repair']
+    assert str(runtime.task_execution_state.root_task_id) == old['task']
+    assert runtime.task_execution_state.results[0] == state.results[0]

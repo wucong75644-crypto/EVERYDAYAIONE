@@ -22,9 +22,9 @@ from .reducer import digest, register_artifacts, complete_step
 PLAN_KEY='_task_direct_plan'
 RESUME_SCHEMA={'type':'function','function':{'name':'resume_task_execution',
     'description':'仅当前用户明确继续或修改给定历史任务时，接回该任务的原上下文、成果和未决操作；新问题直接处理，无需使用。此动作不授予权限或重复执行权。',
-    'parameters':{'type':'object','properties':{'relation':{'type':'string','enum':['continue','amend']},
-        'evidence':{'type':'array','items':{'type':'string'},'minItems':1,'maxItems':4}},
-        'required':['relation','evidence'],'additionalProperties':False}}}
+    'parameters':{'type':'object','properties':{'relation':{'type':'string','enum':['continue','amend'],
+        'description':'继续原目标用continue，修改原交付或约束用amend。宿主绑定当前已认证用户消息。'}},
+        'required':['relation'],'additionalProperties':False}}}
 
 
 def followup_source(runtime):
@@ -383,10 +383,18 @@ async def resume_from_model(runtime,prepared,blocks,calls,assistant,*,turn,model
     observation=None;error_code=None
     try:
         if source is None or runtime.task_execution_state is not None:raise TaskError('TASK_FOLLOWUP_SOURCE_CHANGED')
-        observation=FollowupObservation.model_validate(json.loads(chosen[0]['arguments'])) if len(chosen)==1 else None
-        if observation is None or observation.relation not in {'continue','amend'} or any(
-            not q.strip() or q not in source['message'] for q in observation.evidence):
+        if len(chosen) != 1:
+            raise TaskError('TASK_FOLLOWUP_INPUT_INVALID')
+        selection = json.loads(chosen[0]['arguments'])
+        if not isinstance(selection, dict) or selection.get('relation') not in ('continue', 'amend'):
+            raise TaskError('TASK_FOLLOWUP_INPUT_INVALID')
+        user_message = source.get('message')
+        if not isinstance(user_message, str) or not user_message.strip():
             raise TaskError('TASK_FOLLOWUP_SOURCE_EVIDENCE_REQUIRED')
+        # The model selects a relation to the one scoped source. The host binds
+        # that decision to the current authenticated input read by the RPC.
+        # Replayed legacy evidence is replaced, never treated as authority.
+        observation = FollowupObservation.model_validate({**selection, 'evidence': [user_message]})
     except (ValueError,TypeError) as error:
         observation=None
         error_code=str(error) if isinstance(error,TaskError) else 'TASK_FOLLOWUP_INPUT_INVALID'
