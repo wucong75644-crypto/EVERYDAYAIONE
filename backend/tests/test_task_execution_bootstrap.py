@@ -131,10 +131,18 @@ async def test_actual_executor_admission_and_frozen_bootstrap_recovery(monkeypat
     db = _DB({'id': message_id, 'conversation_id': conversation, 'turn_id': 'turn', 'role': 'user',
         'content': [{'type': 'text', 'text': source.original_goal}]}, conversation={
         'id': conversation, 'org_id': None, 'user_id': actor, 'source': 'web', 'scope_type': 'user'})
+    plan_id = str(uuid4())
+    plan = {'plan_id': plan_id, 'version': f'{plan_id}:1',
+        'working_plan': {'steps': [{'step': '编写文字方案', 'status': 'pending'}]}}
     def followup_rpc(name, parameters):
-        assert name == 'read_agent_task_followup'
         assert parameters == {'p_task_id': task_id, 'p_execution_token': 'token'}
-        return SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(data={'outcome': 'not_found'})))
+        if name == 'read_agent_working_plan_candidates':
+            assert mode == 'new_model_directed'
+            data = {'outcome': 'found', 'candidates': [plan]}
+        else:
+            assert name == 'read_agent_task_followup'
+            data = {'outcome': 'not_found'}
+        return SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(data=data)))
     db.rpc = followup_rpc
     store = _ReplayCheckpointStore()
     store.write = AsyncMock(return_value={'outcome': 'saved'})
@@ -150,7 +158,9 @@ async def test_actual_executor_admission_and_frozen_bootstrap_recovery(monkeypat
     captured = []
 
     async def execute_chat(**kwargs):
-        captured.append(kwargs['runtime'].task_bootstrap)
+        runtime = kwargs['runtime']
+        assert runtime.task_plan_candidates == ({plan_id: plan} if mode == 'new_model_directed' else {})
+        captured.append(runtime.task_bootstrap)
         return ChatExecutionResult(parts=[TextPart(text='结果')], content_blocks=[],
             usage={'prompt_tokens': 0, 'completion_tokens': 0}, credits_cost=0, tool_digest=None)
 
