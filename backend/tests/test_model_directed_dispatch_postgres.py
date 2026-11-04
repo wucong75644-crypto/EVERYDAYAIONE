@@ -382,9 +382,25 @@ async def test_code_failure_followup_reuses_original_root_and_only_dispatches_re
     _, fresh, source, _, _ = new_turn(dispatch_db, old=old, text=user_text)
 
     async def checkpoint(point, payload):
-        with connect(fresh) as connection:
-            return connection.execute("SELECT save_generation_checkpoint(%s,%s,%s,%s)",
-                (fresh['task'], fresh['token'], point.value, Jsonb(payload))).fetchone()[0]
+        from services.replay_checkpoint_store import DatabaseReplayCheckpointStore, ReplayCheckpointBoundary
+
+        class Database:
+            def rpc(self, name, params):
+                class Query:
+                    async def execute(self):
+                        from types import SimpleNamespace
+                        assert name == 'save_generation_checkpoint'
+                        with connect(fresh) as connection:
+                            saved = connection.execute("SELECT save_generation_checkpoint(%s,%s,%s,%s)",
+                                (params['p_task_id'], params['p_execution_token'],
+                                 params['p_safe_point'], params['p_state'])).fetchone()[0]
+                        return SimpleNamespace(data=saved)
+                return Query()
+
+        return await DatabaseReplayCheckpointStore(Database()).write(
+            task_id=fresh['task'], execution_token=fresh['token'],
+            boundary=ReplayCheckpointBoundary(point.value), payload=payload,
+        )
 
     runtime, prepared, handler, request = case(checkpoint)
     runtime.task_id, runtime.turn_id, runtime.conversation_id = fresh['task'], fresh['turn'], fresh['conv']

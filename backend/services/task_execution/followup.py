@@ -85,6 +85,9 @@ async def apply(runtime,prepared,blocks,text,has_tool_calls,*,model_round,turn,b
     current=build_checkpoint(prepared.messages,blocks,turn,next_model_round=model_round)
     # Save the real new window before acquiring the original logical owner.
     from services.conversation_commands import SafePoint
+    # The transfer compares the full new checkpoint with the stored JSON.
+    # Include the boundary here so the runtime and the store see the same data.
+    current['safe_point'] = SafePoint.AFTER_TOOL.value
     await runtime.safe_point(SafePoint.AFTER_TOOL,replay_payload=current)
     merged=payload(source,runtime.checkpoint_base,task_id=runtime.task_id,turn_id=runtime.turn_id,
         model_round=model_round,usage=runtime.task_usage or {},observation=observation)
