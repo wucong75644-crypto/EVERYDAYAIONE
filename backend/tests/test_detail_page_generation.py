@@ -209,7 +209,12 @@ def test_read_projects_only_display_fields_and_preserves_history_and_recovery():
         query.select.return_value = query
         query.eq.return_value = query
         query.order.return_value = query
-        query.execute.return_value.data = deepcopy(plans if name == 'ecom_image_plans' else tasks)
+        def execute():
+            rows = plans if name == 'ecom_image_plans' else tasks
+            if any(call.args[-1] == 'current' for call in query.eq.call_args_list):
+                rows = [row for row in rows if row.get('origin', row)['generation_run_id'] == 'current']
+            return SimpleNamespace(data=deepcopy(rows))
+        query.execute.side_effect = execute
         queries[name] = query
         return query
     generation.db.table.side_effect = table
@@ -229,3 +234,8 @@ def test_read_projects_only_display_fields_and_preserves_history_and_recovery():
     task_fields = queries['tasks'].select.call_args.args[0].split(',')
     assert not {'*', 'input_snapshot', 'stage_outputs', 'stage_attempts'} & set(plan_fields)
     assert not {'request_params', 'result'} & set(task_fields)
+
+    current_only = generation.read('project', known_run_id='current')
+    assert [run['run_id'] for run in current_only['runs']] == ['current']
+    assert current_only['groups'] == project['groups']
+    assert generation.read('project', known_run_id='old')['runs'] == project['runs']

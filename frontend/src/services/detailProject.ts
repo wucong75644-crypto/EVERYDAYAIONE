@@ -19,8 +19,8 @@ export const saveDetailSettings = async (projectId: string, version: number, for
 export const removeDetailImage = async (projectId: string, imageId: string, version: number) =>
   (await request<Envelope>({ method: 'DELETE', url: `/detail-projects/${projectId}/images/${imageId}`, data: { version } })).data.project;
 
-export const getDetailProject = async (projectId: string) =>
-  (await request<Envelope>({url: `/detail-projects/${projectId}`})).data.project;
+export const getDetailProject = async (projectId: string, signal?: AbortSignal, knownRunId?: string) =>
+  (await request<Envelope>({url: `/detail-projects/${projectId}`,signal,params:knownRunId?{known_run_id:knownRunId}:undefined})).data.project;
 export const startDetailProject = async (projectId: string, version: number, requestId: string) =>
   (await request<Envelope>({method: 'POST',url: `/detail-projects/${projectId}/analyze`,data: {version,request_id: requestId}})).data.project;
 export const archiveDetailProject = async (projectId: string) =>

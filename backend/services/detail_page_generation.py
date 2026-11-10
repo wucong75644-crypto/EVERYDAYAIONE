@@ -161,20 +161,27 @@ class DetailPageGeneration:
         self.user_id, self.org_id = user_id, org_id
         self.projects = DetailProjectService(db, user_id, org_id)
 
-    def read(self, project_id):
+    def read(self, project_id, *, known_run_id=None):
         project = self.projects.get_by_id(project_id)
+        current_run = project.get('run_state', {}).get('run_id')
+        current_only = known_run_id is not None and known_run_id == current_run
         # Project only display/recovery fields; snapshots include large media references.
         plans = self.db.table('ecom_image_plans').select(
             "id,generation_run_id,status,current_stage,image_count,items,created_at,lease_expires_at,"
             "model_settings,recovery_state,delivery_recovery,jsonb_array_length(stage_attempts) AS attempt_count,"
             "input_snapshot->>'task_type' AS task_type,input_snapshot->'messages' AS messages,"
-            "stage_outputs->(current_stage::text)->'questions' AS questions").eq('project_id', project_id).order('created_at').order('id').execute().data or []
-        current_run = project.get('run_state', {}).get('run_id')
+            "stage_outputs->(current_stage::text)->'questions' AS questions").eq('project_id', project_id)
+        if current_only:
+            plans = plans.eq('generation_run_id', current_run)
+        plans = plans.order('created_at').order('id').execute().data or []
         tasks = self.db.table('tasks').select(
             "id,status,result_data,error_message,credits_used,created_at,result->>'fail_code' AS fail_code,"
             "request_params->'_media_request_v1'->'origin' AS origin,"
             "request_params->'_media_lifecycle_v1'->>'phase' AS submission_state").eq('user_id', self.user_id).eq(
-            "request_params->'_media_request_v1'->'origin'->>'project_id'", project_id).order('created_at').order('id').execute().data or []
+            "request_params->'_media_request_v1'->'origin'->>'project_id'", project_id)
+        if current_only:
+            tasks = tasks.eq("request_params->'_media_request_v1'->'origin'->>'generation_run_id'", current_run)
+        tasks = tasks.order('created_at').order('id').execute().data or []
         # Preserve the shared recovery helpers' input contract, as task summaries do.
         for row in plans:
             row['stage_attempts'] = [None] * row.pop('attempt_count')

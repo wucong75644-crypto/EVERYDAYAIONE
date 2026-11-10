@@ -2,12 +2,16 @@ import { create } from 'zustand';
 import { archiveDetailProject, attachDetailImage, createDetailProject, listDetailProjects, refreshDetailTaskStatuses, removeDetailImage, saveDetailSettings,
   getDetailProject, startDetailProject, getDetailCapabilities } from '../services/detailProject';
 import { uploadImageFile } from '../services/upload';
-import { toApiRequestError } from '../services/api';
+import { ApiRequestError, toApiRequestError } from '../services/api';
 import type { DetailGenerationForm, DetailLocalImage, DetailProjectDraft, DetailGroup, DetailGenerationRun, PromptModelOption, DetailTaskSummary } from '../types/detailPage';
 import { DEFAULT_PROMPT_MODEL } from '../types/detailPage';
 
 export const DEFAULT_FORM: DetailGenerationForm = {contentType:'default',platform:'taobao',requirement:'',language:'zh-CN',aspectRatio:'1:1',quality:'1k',count:14,promptModel:DEFAULT_PROMPT_MODEL};
+type TaskResults = {groups:DetailGroup[]; runs:DetailGenerationRun[]; currentRunId:string|null};
+type TaskSelection = {id:string; phase:'saving'|'loading'|'failed'; results?:TaskResults; error?:string};
+
 interface DetailPageState {
+  taskSelection: TaskSelection|null;
   images: DetailLocalImage[]; form: DetailGenerationForm; groups: DetailGroup[];
   runs: DetailGenerationRun[]; currentRunId: string|null;
   status: string; models: PromptModelOption[]; ratios: string[]; enabled: boolean;
@@ -26,7 +30,7 @@ interface DetailPageState {
   updateForm: (patch:Partial<DetailGenerationForm>) => void;
   startAnalysis: () => Promise<void>; restart: () => Promise<void>; reset: () => void;
 }
-const initialState = {tasks:[] as DetailTaskSummary[],taskCursor:null as string|null,isLoadingTasks:false,
+const initialState = {taskSelection:null as TaskSelection|null,tasks:[] as DetailTaskSummary[],taskCursor:null as string|null,isLoadingTasks:false,
   taskError:null as string|null,scopeKey:null as string|null,isMutating:false,pendingDeleteIds:[] as string[],syncUncertain:false,isConfirmingSync:false,images: [] as DetailLocalImage[], form: {...DEFAULT_FORM},groups: [] as DetailGroup[],
   runs:[] as DetailGenerationRun[],currentRunId:null as string|null,
   status:'draft',models: [] as PromptModelOption[],ratios:['1:1','3:4','4:5','16:9'],enabled:false,
@@ -60,6 +64,15 @@ function enqueueProjectWrite<T>(epoch:number, id:string|null, operation:()=>Prom
   return result;
 }
 let lifecycleVersion=0;
+let selectionRequest: AbortController|null=null;
+let detailPollRequest: AbortController|null=null;
+const recentResults=new Map<string,TaskResults>();
+
+function rememberResults(id:string,results:TaskResults) {
+  recentResults.delete(id);
+  recentResults.set(id,results);
+  if(recentResults.size>8)recentResults.delete(recentResults.keys().next().value!);
+}
 let detailRefreshVersion=0, listRefreshVersion=0;
 const pendingDetailRefreshes=new Map<number,number>(), pendingListRefreshes=new Map<number,number>();
 let createRequestId: string|null=null;
@@ -73,8 +86,10 @@ function valid(epoch:number,id?:string|null){return epoch===lifecycleVersion&&(!
 function adopt(project:DetailProjectDraft){
   useDetailPageStore.getState().images.forEach(releasePreview);formRevision=0;savedRevision=0;
   pendingDeletes.clear();imageOrder.clear();nextImageOrder=0;
-  trackOrder(applyDraft(project).images!);
-  useDetailPageStore.setState({...applyDraft(project),...deleteState(),isTransitioning:false,isHydrating:false});remember(project.id);schedulePoll();scheduleListPoll();
+  const draft=applyDraft(project);
+  trackOrder(draft.images);
+  rememberResults(project.id,{groups:draft.groups,runs:draft.runs,currentRunId:draft.currentRunId});
+  useDetailPageStore.setState({...draft,...deleteState(),taskSelection:null,isTransitioning:false,isHydrating:false});remember(project.id);schedulePoll();scheduleListPoll();
 }
 function scheduleListPoll(){
   if(listTimer)clearTimeout(listTimer);
@@ -216,16 +231,52 @@ export const useDetailPageStore=create<DetailPageState>((set,get)=>({
     }catch(error){if(valid(epoch))set({isHydrating:false,formError:toApiRequestError(error).message});}
   },
   selectTask:async(id)=>{
-    if(id===get().projectId||get().isTransitioning||get().isUploading||get().isMutating||get().isHydrating)return;
-    let epoch=lifecycleVersion;set({isTransitioning:true,formError:null});clearSettingsTimer();
+    const state=get();
+    if(state.isHydrating||state.isUploading||state.isMutating||
+      state.taskSelection?.phase==='saving'||(state.isTransitioning&&!state.taskSelection))return;
+    if(id===state.projectId&&!state.taskSelection)return;
+    selectionRequest?.abort();
+    detailPollRequest?.abort();
+    const controller=new AbortController();
+    selectionRequest=controller;
+    let epoch=lifecycleVersion;
+    const current=()=>valid(epoch)&&selectionRequest===controller;
+    const needsSave=savedRevision!==formRevision;
+    const results=recentResults.get(id);
+    clearSettingsTimer();
+    set({taskSelection:{id,phase:needsSave?'saving':'loading',results},isTransitioning:true,formError:null});
     try{
-      await persistSettings();if(!valid(epoch))return;
-      epoch=++lifecycleVersion;set({isLoadingTasks:false});if(pollTimer)clearTimeout(pollTimer);
-      const project=await getDetailProject(id);
-      if(!valid(epoch))return;
-      if(!project||project.status==='archived')throw new Error('任务不存在或已归档');
+      if(needsSave)await persistSettings();
+      if(!current())return;
+      if(id===get().projectId){
+        set({taskSelection:null,isTransitioning:false});
+        schedulePoll();scheduleListPoll();
+        return;
+      }
+      epoch=++lifecycleVersion;
+      if(pollTimer)clearTimeout(pollTimer);
+      set({taskSelection:{id,phase:'loading',results},isLoadingTasks:false});
+      scheduleListPoll();
+      const project=await getDetailProject(id,controller.signal);
+      if(!current())return;
+      if(!project||project.id!==id||project.status==='archived'){
+        recentResults.delete(id);
+        throw new ApiRequestError('DETAIL_PROJECT_NOT_FOUND','任务不存在或已归档',404);
+      }
       adopt(project);
-    }catch(error){if(valid(epoch)){set({isTransitioning:false,formError:toApiRequestError(error).message});schedulePoll();scheduleListPoll();}}
+    }catch(error){
+      if(!current())return;
+      const failure=toApiRequestError(error);
+      if(get().taskSelection?.phase==='saving'){
+        set({taskSelection:null,isTransitioning:false,formError:failure.message});
+        schedulePoll();scheduleListPoll();
+      }else{
+        if(failure.status===403||failure.status===404)recentResults.delete(id);
+        set({taskSelection:{id,phase:'failed',results:recentResults.get(id),error:failure.message}});
+      }
+    }finally{
+      if(selectionRequest===controller)selectionRequest=null;
+    }
   },
   createTask:async()=>{
     if(get().isTransitioning||get().isUploading||get().isMutating||get().isHydrating)return;
@@ -251,7 +302,7 @@ export const useDetailPageStore=create<DetailPageState>((set,get)=>({
       epoch=++lifecycleVersion;
       const wasSelected=id===get().projectId;
       set(state=>({tasks:state.tasks.filter(task=>task.id!==id),isLoadingTasks:false}));
-      runRequests.delete(id);
+      runRequests.delete(id);recentResults.delete(id);
       if(wasSelected){
         get().images.forEach(releasePreview);formRevision=0;savedRevision=0;
         set({...applyDraft(null),tasks:get().tasks,taskCursor:get().taskCursor,scopeKey:get().scopeKey,models:get().models,
@@ -277,7 +328,7 @@ export const useDetailPageStore=create<DetailPageState>((set,get)=>({
     finally{if(valid(epoch))set({isLoadingTasks:false});}
   },
   refreshTasks:async(background=false)=>{
-    if(background&&(get().isTransitioning||get().isHydrating)){scheduleListPoll();return;}
+    if(background&&((get().isTransitioning&&!get().taskSelection)||get().isHydrating)){scheduleListPoll();return;}
     if(background&&[...pendingListRefreshes.values()].includes(lifecycleVersion))return;
     const epoch=lifecycleVersion, request=++listRefreshVersion;
     pendingListRefreshes.set(request,epoch);
@@ -297,18 +348,35 @@ export const useDetailPageStore=create<DetailPageState>((set,get)=>({
     finally{pendingListRefreshes.delete(request);if(current())scheduleListPoll();}
   },
   refresh:async(background=false)=>{
+    if(get().taskSelection)return;
     if(background&&(get().isTransitioning||get().isHydrating)){schedulePoll();return;}
     if(background&&[...pendingDetailRefreshes.values()].includes(lifecycleVersion))return;
     const {projectId}=get();const epoch=lifecycleVersion, request=++detailRefreshVersion;if(!projectId)return;
     pendingDetailRefreshes.set(request,epoch);
-    const current=()=>valid(epoch,projectId)&&request===detailRefreshVersion;
-    try{const project=await getDetailProject(projectId);
+    detailPollRequest?.abort();
+    const controller=background?new AbortController():null;
+    detailPollRequest=controller;
+    const current=()=>valid(epoch,projectId)&&request===detailRefreshVersion&&!controller?.signal.aborted;
+    try{
+      const knownRunId=background?get().currentRunId??undefined:undefined;
+      const project=await (controller?getDetailProject(projectId,controller.signal,knownRunId):getDetailProject(projectId));
       if(!current())return;
-      if(project&&!get().isTransitioning&&!get().isMutating)set({status:project.status??'draft',groups:project.groups??[],
-        runs:project.runs??[],currentRunId:project.run_state?.run_id??null,
-        ...(savedRevision===formRevision?{projectVersion:Math.max(get().projectVersion??0,project.version)}:{}),formError:null});
-    }catch(error){if(!current())return;set({formError:toApiRequestError(error).message});}
-    finally{pendingDetailRefreshes.delete(request);if(current())schedulePoll();}
+      if(project&&!get().isTransitioning&&!get().isMutating){
+        const currentRunId=project.run_state?.run_id??null;
+        const incoming=project.runs??[];
+        const runs=knownRunId&&knownRunId===currentRunId
+          ? [...get().runs.filter(run=>run.run_id!==currentRunId&&!incoming.some(item=>item.run_id===run.run_id)),...incoming]
+          : incoming;
+        const results={groups:project.groups??[],runs,currentRunId};
+        rememberResults(projectId,results);
+        set({...results,status:project.status??'draft',
+          ...(savedRevision===formRevision?{projectVersion:Math.max(get().projectVersion??0,project.version)}:{}),formError:null});
+      }
+    }catch(error){if(current())set({formError:toApiRequestError(error).message});}
+    finally{
+      if(detailPollRequest===controller)detailPollRequest=null;
+      pendingDetailRefreshes.delete(request);if(current())schedulePoll();
+    }
   },
   attachWorkspaceImages: async (category, paths) => {
     if(get().isUploading||get().isTransitioning||get().syncUncertain||!EDITABLE_STATUSES.includes(get().status)||!get().projectId)return;
@@ -500,7 +568,7 @@ export const useDetailPageStore=create<DetailPageState>((set,get)=>({
   },
   restart:async()=>get().createTask(),
   reset:()=>{
-    lifecycleVersion++;pendingDetailRefreshes.clear();pendingListRefreshes.clear();clearSettingsTimer();if(pollTimer)clearTimeout(pollTimer);pollTimer=null;
+    lifecycleVersion++;selectionRequest?.abort();selectionRequest=null;detailPollRequest?.abort();detailPollRequest=null;recentResults.clear();pendingDetailRefreshes.clear();pendingListRefreshes.clear();clearSettingsTimer();if(pollTimer)clearTimeout(pollTimer);pollTimer=null;
     if(listTimer)clearTimeout(listTimer);listTimer=null;listFetchedAt=0;saving=Promise.resolve();projectWrites=Promise.resolve();formRevision=0;savedRevision=0;
     pendingDeletes.forEach(entry=>releasePreview(entry.image));pendingDeletes.clear();imageOrder.clear();nextImageOrder=0;
     get().images.forEach(releasePreview);createRequestId=null;runRequests.clear();set({...initialState,form:{...DEFAULT_FORM}});
