@@ -45,11 +45,11 @@ def model_input(snapshot, messages, refs):
             for n, ref in enumerate(refs, 1)]}
 
 
-def user_content(body, refs, image_urls):
+def user_content(body, refs, image_urls, *, stable_keys=False):
     import json
     if len(refs) != len(image_urls):
         raise ValueError("PLANNER_REFERENCE_URL_COUNT_INVALID")
-    content = [{"type": "input_text", "text": json.dumps(body, ensure_ascii=False)}]
+    content = [{"type": "input_text", "text": json.dumps(body, ensure_ascii=False, sort_keys=stable_keys)}]
     for number, (ref, url) in enumerate(zip(refs, image_urls), 1):
         content.extend([{"type": "input_text", "text": f"参考图片{number} | 资料编号=image_{number} | 角色={ref['role']}"},
             {"type": "input_image", "image_url": url}])

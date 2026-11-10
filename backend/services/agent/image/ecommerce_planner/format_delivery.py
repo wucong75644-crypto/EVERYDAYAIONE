@@ -21,12 +21,16 @@ class FormatError(ValueError):
         super().__init__(code + (': ' + json.dumps(self.paths, ensure_ascii=False) if self.paths else ''))
 
 
-def strict_object(text):
+def strict_object(text, *, singleton_audit=None):
     body = text.strip()
     fenced = re.fullmatch(r'```(?:json)?\s*\n?(.*?)\n?```', body, re.S)
     if fenced:
         body = fenced[1].strip()
     value = json.loads(body, object_pairs_hook=_unique_object, parse_constant=_invalid_constant)
+    if (singleton_audit is not None and isinstance(value, list)
+            and len(value) == 1 and isinstance(value[0], dict)):
+        singleton_audit.append({'operation': 'singleton_object_array'})
+        value = value[0]
     if not isinstance(value, dict):
         raise FormatError('PLANNER_JSON_OBJECT_REQUIRED')
     return value
@@ -144,11 +148,12 @@ def _prompt_object(text, count, audit):
     return strict_object(text)
 
 
-def decode_formatted(text, schema, *, expected_prompt_count=None):
+def decode_formatted(text, schema, *, expected_prompt_count=None, allow_singleton=False):
     audit = []
     raw = (_prompt_object(text, expected_prompt_count, audit)
         if isinstance(text, str) and schema == PROMPTS_SCHEMA and expected_prompt_count is not None
-        else strict_object(text) if isinstance(text, str) else deepcopy(text))
+        else strict_object(text, singleton_audit=audit if allow_singleton else None)
+        if isinstance(text, str) else deepcopy(text))
     if not isinstance(raw, dict):
         raise FormatError('PLANNER_JSON_OBJECT_REQUIRED')
     value = normalize_object(raw, schema, audit=audit)

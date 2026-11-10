@@ -106,9 +106,9 @@ async def test_entry_freezes_group_ratios_through_image_acceptance(monkeypatch, 
     assert [row['input_snapshot']['task_type'] for row in rows]==kinds
     from services.agent.image.ecommerce_planner.prompt_resources import plan_resources, resources
     for row in rows:
-        assert row['prompt_versions'].get('prompt_profile') == ('jd.v1' if platform == 'jd' else None)
+        assert row['prompt_versions'].get('prompt_profile') == ('jd.v2' if platform == 'jd' else None)
         bodies, schema = plan_resources(row)
-        baseline, baseline_schema = resources(row['input_snapshot']['task_type'], 'ecom-prompts.v4')
+        baseline, baseline_schema = resources(row['input_snapshot']['task_type'], 'ecom-prompts.v5')
         assert schema == baseline_schema
         assert (bodies != baseline) == (platform == 'jd')
     assert [row['image_count'] for row in rows]==[7]*len(kinds)
@@ -127,7 +127,8 @@ async def test_entry_freezes_group_ratios_through_image_acceptance(monkeypatch, 
         assert row['model_settings']['profile']['ecom_image_planning_input_credits_per_million']==1
         _,evidence,_=design_fixture(7,row['invocation_key'],2)
         assembled=assemble_prompts({'prompts':[f'第{i}张：image_1商品放中央，image_2结构细节放右侧。' for i in range(1,8)]},
-            row['input_snapshot'],evidence['product_selling_points'],evidence['visual_direction'])
+            row['input_snapshot'],evidence['product_selling_points'],{'visual_spec':evidence['visual_direction'],
+                'shared_rules':'保持统一视觉语言及商品事实边界','outline':['任务']*7})
         await generation.accept({**row,'items':assembled['images'],'plan_revision':1})
         accepted=generation.db.rpc.call_args.args[1]['p_snapshots']
         assert len(accepted)==7
