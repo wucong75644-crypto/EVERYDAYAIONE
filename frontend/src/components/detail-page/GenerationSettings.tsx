@@ -2,6 +2,8 @@ import { useCallback, useRef, useState } from 'react';
 import { FolderOpen, Paperclip, Sparkles, X } from 'lucide-react';
 import type { DetailGenerationForm, DetailLocalImage, PromptModelOption } from '../../types/detailPage';
 import { DEFAULT_PROMPT_MODEL } from '../../types/detailPage';
+import PreviewHost from '../../preview/PreviewHost';
+import { usePreview } from '../../preview/usePreview';
 import { useDragDropUpload } from '../../hooks/useDragDropUpload';
 import { cn } from '../../utils/cn';
 import { Button } from '../ui/Button';
@@ -29,6 +31,19 @@ export function GenerationSettings({form,hasProductImage,disabled=false,settings
   }, [uploadDisabled, images.length, onAdd]);
   const { isDragging } = useDragDropUpload({ dropZoneRef, textareaRef, onFiles: handleFiles });
   const [pickerOpen, setPickerOpen] = useState(false);
+  const preview = usePreview();
+
+  function openImage(imageId: string) {
+    const available = images.filter(image => image.status !== 'missing' && (image.originalUrl || image.previewUrl));
+    const index = available.findIndex(image => image.id === imageId);
+    if (index === -1) return;
+    preview.open(available.map(image => ({
+      url: image.originalUrl || image.previewUrl,
+      thumbnailUrl: image.previewUrl || undefined,
+      filename: image.name || '产品图',
+      mimeType: image.file?.type || 'image/*',
+    })), index);
+  }
   const requirementLabel = form.contentType === 'default' ? '产品信息与创作要求' : form.contentType === 'main_image' ? '主图要求' : '详情图要求';
   return <section className="flex h-full min-h-0 flex-col gap-2">
     <div className="grid shrink-0 grid-cols-3 gap-1 rounded-[var(--s-radius-control)] bg-[var(--s-surface-secondary)] p-1" aria-label="生成类型">
@@ -54,9 +69,15 @@ export function GenerationSettings({form,hasProductImage,disabled=false,settings
         {isDragging && !uploadDisabled && images.length < 9 && <div role="status" className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-[var(--s-surface-card)]/90 text-sm text-[var(--s-accent)]">松开即可上传产品图片</div>}
         {images.length > 0 && <div aria-label="已上传图片" className="grid shrink-0 grid-cols-5 gap-1.5 px-3 pt-3">
           {images.map((image) => <div key={image.id} className="relative aspect-square min-w-0 overflow-hidden rounded-lg border border-[var(--s-border-default)]">
-            {image.previewUrl ? <img src={image.previewUrl} alt={image.name || '产品图'} className="h-full w-full object-contain" onError={(event) => { if (image.originalUrl && event.currentTarget.src !== image.originalUrl) event.currentTarget.src = image.originalUrl; }} /> : <div className="flex h-full items-center justify-center text-xs">原图缺失</div>}
+            {image.previewUrl || image.originalUrl ? (
+              <button type="button" aria-label={`查看大图 ${image.name || '产品图'}`} disabled={image.status === 'missing'}
+                onClick={() => openImage(image.id)} className="block h-full w-full cursor-zoom-in focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--s-accent)] disabled:cursor-default">
+                <img src={image.previewUrl || image.originalUrl} alt={image.name || '产品图'} className="h-full w-full object-contain"
+                  onError={(event) => { if (image.originalUrl && event.currentTarget.src !== image.originalUrl) event.currentTarget.src = image.originalUrl; }} />
+              </button>
+            ) : <div className="flex h-full items-center justify-center text-xs">原图缺失</div>}
             {!disabled && <button type="button" disabled={['local','uploading','attaching'].includes(image.status)} aria-label={`删除 ${image.name || '图片'}`} onClick={() => onRemove?.(image.id)} className="absolute right-0 top-0 rounded-full bg-black/60 p-0.5 text-white"><X className="h-3.5 w-3.5" /></button>}
-            {image.status !== 'ready' && <span className="absolute inset-x-0 bottom-0 bg-black/60 text-center text-[10px] text-white">{image.status === 'failed' ? '上传失败' : image.status === 'missing' ? '原图缺失' : '上传中'}</span>}
+            {image.status !== 'ready' && <span className="pointer-events-none absolute inset-x-0 bottom-0 bg-black/60 text-center text-[10px] text-white">{image.status === 'failed' ? '上传失败' : image.status === 'missing' ? '原图缺失' : '上传中'}</span>}
           </div>)}
         </div>}
         <label htmlFor="detail-requirement" className="sr-only">{requirementLabel}</label>
@@ -70,6 +91,7 @@ export function GenerationSettings({form,hasProductImage,disabled=false,settings
         </div>
       </div>
     <Button fullWidth size="lg" className="shrink-0" disabled={analyzeDisabled||!hasProductImage} onClick={onAnalyze}>{analyzeLabel}</Button>
+    <PreviewHost state={preview.state} onClose={preview.close} onIndexChange={preview.setIndex}/>
     <WorkspaceImagePicker open={pickerOpen} remaining={9-images.length} onClose={()=>setPickerOpen(false)} onSelect={paths=>onWorkspaceAdd?.(paths)}/>
   </section>;
 }

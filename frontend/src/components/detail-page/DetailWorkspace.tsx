@@ -18,7 +18,7 @@ import { DetailPlanProgress } from './DetailPlanProgress';
 import progressStyles from './DetailPlanProgress.module.css';
 
 const previewWidth=getImagePlaceholderSize('1:1').width;
-function Group({group,onRefresh,projectId,readOnly=false,onPreview}:{group:DetailGroup;onRefresh:()=>void;projectId:string|null;readOnly?:boolean;onPreview:(taskId:string)=>void}){
+function Group({group,onRefresh,projectId,readOnly=false,showTaskControls,onPreview}:{group:DetailGroup;onRefresh:()=>void;projectId:string|null;readOnly?:boolean;showTaskControls:boolean;onPreview:(taskId:string)=>void}){
   const accepted=group.tasks.length>0;
   const [promptOpen,setPromptOpen]=useState<boolean|null>(null);
   const [retrying,setRetrying]=useState<string|null>(null);
@@ -60,27 +60,27 @@ function Group({group,onRefresh,projectId,readOnly=false,onPreview}:{group:Detai
         </article>)}
       </div>}
     </div>}
-    {accepted&&<div className="grid items-start gap-5" style={{gridTemplateColumns:`repeat(auto-fill, minmax(0, min(100%, ${previewWidth}px)))`}}>
+    {!!group.items.length&&<div className="grid items-start gap-5" style={{gridTemplateColumns:`repeat(auto-fill, minmax(0, min(100%, ${previewWidth}px)))`}}>
       {[...group.items].sort((a,b)=>a.position-b.position).map(item=>{
-        const task=taskFor(group,item.item_id);if(!task)return null;
+        const task=taskFor(group,item.item_id);
         const [w,h]=item.aspect_ratio.split(':').map(Number);const size={width:previewWidth,height:previewWidth*h/w};
-        const result=task.result_data;const url=result?.url??result?.original_url;
+        const result=task?.result_data;const url=result?.url??result?.original_url;
         const retryPending=group.auto_recovery?.items[item.item_id]?.status==='waiting';
         const blocked=group.auto_recovery?.items[item.item_id]?.status==='blocked';
-        const isFailed=['failed','cancelled'].includes(task.status)&&!retryPending;
-        return <article key={item.item_id} className={`min-w-0 overflow-hidden ${task.submission_state==='uncertain'?progressStyles.staticPreview:''}`}>
+        const isFailed=task&&['failed','cancelled'].includes(task.status)&&!retryPending;
+        return <article key={item.item_id} className={`min-w-0 overflow-hidden ${task?.submission_state==='uncertain'?progressStyles.staticPreview:''}`}>
           <h3 className="mb-1 truncate text-sm">{item.position}. {item.name}</h3>
-          <ChatImageControls taskId={task.id}/>
+          {showTaskControls&&task&&<ChatImageControls taskId={task.id}/>}
           {isFailed?<div className="mt-3"><FailedMediaPlaceholder type="image" aspectRatio={w/h} errorMessage={group.auto_recovery?.items[item.item_id]?.message||task.error_message||'生成失败'} onRetry={blocked||readOnly?undefined:()=>void retry(task)} retryLabel={retrying===task.id?'正在受理…':'重新生成'}/></div>:
-          <AiGeneratedImage fitContainer renderId={task.id} imageAsset={url?{originalUrl:url,thumbnailUrl:result?.thumbnail_url}:null}
-            placeholderSize={size} isGenerating={task.status!=='completed'} onImageClick={()=>{if(url)onPreview(task.id);}}/>}
-          <p className="mt-2 text-xs text-[var(--s-text-tertiary)]">{retryPending?'自动恢复中，正在补齐此图片':isFailed?'生成失败':task.status==='completed'?'已完成':task.submission_state==='queued'?'排队中':task.submission_state==='uncertain'?'正在核实供应商受理结果':'生成中'}</p>
+          <AiGeneratedImage fitContainer lazyLoad renderId={task?.id??item.item_id} imageAsset={url?{originalUrl:url,thumbnailUrl:result?.thumbnail_url}:null}
+            placeholderSize={size} isGenerating={task?.status!=='completed'} onImageClick={()=>{if(url&&task)onPreview(task.id);}}/>}
+          <p className="mt-2 text-xs text-[var(--s-text-tertiary)]">{retryPending?'自动恢复中，正在补齐此图片':isFailed?'生成失败':task?.status==='completed'?'已完成':(!task||task.submission_state==='queued')?'排队中':task?.submission_state==='uncertain'?'正在核实供应商受理结果':'生成中'}</p>
         </article>;
       })}
     </div>}
   </section>;
 }
-export function DetailWorkspace({groups,runs=[],currentRunId,onRefresh,projectId}:{groups:DetailGroup[];runs?:DetailGenerationRun[];currentRunId?:string|null;onRefresh:()=>void;projectId:string|null}){
+export function DetailWorkspace({groups,runs=[],currentRunId,onRefresh,projectId,readOnly=false}:{groups:DetailGroup[];runs?:DetailGenerationRun[];currentRunId?:string|null;onRefresh:()=>void;projectId:string|null;readOnly?:boolean}){
   const [downloading,setDownloading]=useState(false);
   const [stopping,setStopping]=useState(false);
   const downloadInFlight=useRef(false);
@@ -117,7 +117,7 @@ export function DetailWorkspace({groups,runs=[],currentRunId,onRefresh,projectId
       <p className="mt-3 text-sm text-[var(--s-text-tertiary)]">上传产品图并填写要求后，点击“开始生成”开始</p></div></div>;
   return <div className="space-y-5">
     <div className="flex justify-end gap-3">
-    {projectId&&groups.some(group=>group.auto_recovery?.enabled&&(group.status!=='ready'||
+    {!readOnly&&projectId&&groups.some(group=>group.auto_recovery?.enabled&&(group.status!=='ready'||
       group.items.some(item=>taskFor(group,item.item_id)?.status!=='completed')))&&
       <Button variant="secondary" size="sm" loading={stopping} disabled={stopping}
         title="不再自动补图；已提交给供应商的任务继续回收结果" onClick={()=>{
@@ -136,7 +136,7 @@ export function DetailWorkspace({groups,runs=[],currentRunId,onRefresh,projectId
       </div>}
     {[...run.groups].sort((a,b)=>Number(a.kind==='detail_page')-Number(b.kind==='detail_page')).map((group,index)=><Fragment key={group.plan_id}>
     {index>0&&<div role="separator" aria-label="主图与详情图分区" className="border-t border-[var(--s-border-default)]"/>}
-    <Group group={group} projectId={projectId} onRefresh={onRefresh} readOnly={run.run_id!==latestId} onPreview={openPreview}/>
+    <Group group={group} projectId={projectId} onRefresh={onRefresh} readOnly={readOnly||run.run_id!==latestId} showTaskControls={!readOnly} onPreview={openPreview}/>
   </Fragment>)}</div>)}
     <PreviewHost state={preview.state} onClose={preview.close} onIndexChange={preview.setIndex}/>
   </div>;

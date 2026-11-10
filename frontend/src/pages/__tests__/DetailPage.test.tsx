@@ -50,6 +50,45 @@ describe('DetailPage 页面骨架', () => {
     expect(screen.queryByText('确认图片规划')).not.toBeInTheDocument();
   });
 
+  it('详情仍在等待时立即切换摘要，晚到的请求不能覆盖最后点击的任务',async()=>{
+    const initial={id:'empty',version:1,content_type:'default' as const,platform:'taobao' as const,
+      requirement:'',language:'zh-CN' as const,aspect_ratio:'1:1',quality:'1k' as const,image_count:14,status:'draft',images:[]};
+    const task=(id:string,title:string,count:number)=>({
+      id,title,created_at:'2026-10-10',content_type:'main_images' as const,status:'generating',
+      display_status:'generating' as const,expected_count:6,completed_count:count,
+      thumbnail_url:null,stage:3,recovery_waiting:false,
+    });
+    const a={...initial,id:'A',requirement:'A 的创作要求'};
+    const b={...initial,id:'B',requirement:'B 的创作要求'};
+    const c={...initial,id:'C',requirement:'C 的创作要求'};
+    vi.mocked(listDetailProjects).mockResolvedValue({items:[task('A','任务甲',1),task('B','任务乙',2),task('C','任务丙',3)],next_cursor:null});
+    let finishB!:(project:typeof b)=>void;
+    let finishC!:(project:typeof c)=>void;
+    vi.mocked(getDetailProject).mockImplementation(id=>{
+      if(id==='B')return new Promise(resolve=>{finishB=resolve;});
+      if(id==='C')return new Promise(resolve=>{finishC=resolve;});
+      return Promise.resolve(a);
+    });
+    renderPage();
+    await screen.findByDisplayValue('A 的创作要求');
+    const second=screen.getByRole('button',{name:/任务乙/});
+    const third=screen.getByRole('button',{name:/任务丙/});
+    fireEvent.click(second);
+    expect(second).toHaveAttribute('aria-current','true');
+    expect(screen.getByText(/正在加载「任务乙」.*已完成 2\/6/)).toBeInTheDocument();
+    expect(screen.queryByDisplayValue('A 的创作要求')).not.toBeInTheDocument();
+    const oldSignal=vi.mocked(getDetailProject).mock.calls.find(([id])=>id==='B')?.[1];
+    expect(third).toBeEnabled();
+    fireEvent.click(third);
+    expect(oldSignal?.aborted).toBe(true);
+    expect(third).toHaveAttribute('aria-current','true');
+    expect(screen.getByText(/正在加载「任务丙」.*已完成 3\/6/)).toBeInTheDocument();
+    await act(async()=>{finishC(c);});
+    await act(async()=>{finishB(b);});
+    expect(screen.getByDisplayValue('C 的创作要求')).toBeInTheDocument();
+    expect(third).toHaveAttribute('aria-current','true');
+  });
+
   it('卸载只取消页面订阅并清理页面状态', () => {
     const {unmount}=renderPage();unmount();
     expect(useDetailPageStore.getState().groups).toEqual([]);

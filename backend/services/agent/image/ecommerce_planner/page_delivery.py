@@ -11,10 +11,16 @@ from .format_delivery import (FORMAT_VERSION, PROMPTS_VERSION, PROMPTS_SCHEMA, F
 from .inputs import model_input, user_content
 from .recovery import error_facts
 from .delivery import decode_delivery
+from .position_delivery import POSITION_VERSION, OUTLINE_SCHEMA, split_numbered_outline, outline_label_matches
 
 
 class PageDelivery:
     def _page_schema(self, stage, evidence):
+        if stage == 2 and self.delivery_version == POSITION_VERSION:
+            schema = deepcopy(OUTLINE_SCHEMA)
+            count = evidence['input_snapshot']['image_count']
+            schema['properties']['outline'].update(minItems=count, maxItems=count)
+            return schema
         if stage == 1:
             # Fixed metadata is server supplied; the business schema stays v3.
             schema = deepcopy(evidence['product_schema'])
@@ -25,6 +31,17 @@ class PageDelivery:
         return PROMPTS_SCHEMA if self.delivery_version == PROMPTS_VERSION else DesignsOutput.model_json_schema()
 
     def _page_candidate(self, raw, stage, evidence):
+        if stage == 2 and self.delivery_version == POSITION_VERSION:
+            candidate, audit = decode_formatted(raw, self._page_schema(stage, evidence), allow_singleton=True)
+            if 'questions' in candidate:
+                return validate_questions(candidate), audit
+            outline = candidate.get('outline')
+            ordered = split_numbered_outline(outline, evidence['input_snapshot']['image_count'])
+            if ordered != outline:
+                candidate['outline'] = ordered
+                audit['normalization'].append({'operation': 'split_numbered_outline'})
+                audit['canonical_sha256'] = text_hash(json.dumps(candidate, ensure_ascii=False))
+            return candidate, audit
         if stage == 2:
             if isinstance(raw, dict) or isinstance(raw, str) and raw.lstrip().startswith(('{', '```json')):
                 return validate_questions(strict_object(raw) if isinstance(raw, str) else raw), {}
@@ -43,12 +60,13 @@ class PageDelivery:
         else:
             value, audit = decode_formatted(raw, schema, expected_prompt_count=(
                 evidence['input_snapshot']['image_count']
-                if stage == 3 and self.delivery_version == PROMPTS_VERSION else None))
+                if stage == 3 and self.delivery_version == PROMPTS_VERSION else None),
+                allow_singleton=stage == 1 and self.delivery_version == POSITION_VERSION)
         if stage == 3 and 'questions' in value and 'prompts' not in value and self.delivery_version == PROMPTS_VERSION:
             return validate_questions(value), audit
         if stage == 1:
             fixed = 'product-selling-points.v3'
-            minimal = self.delivery_version == PROMPTS_VERSION
+            minimal = self.delivery_version in {PROMPTS_VERSION, POSITION_VERSION}
             if not minimal and value.get('schema_version') not in {None, fixed}:
                 raise FormatError('PLANNER_STAGE_VERSION_CONFLICT')
             if value.get('schema_version') != fixed:
@@ -87,7 +105,7 @@ class PageDelivery:
         if stage == 3 and self.delivery_version == PROMPTS_VERSION and isinstance(candidate, dict) and 'questions' in candidate and 'prompts' in candidate:
             # An explicitly incomplete response cannot become ready by deleting its questions.
             return []
-        if stage == 2:
+        if stage == 2 and self.delivery_version != POSITION_VERSION:
             import re
             from .assembly import fixed_canvas_conflict
             sections = partial_visual_sections(candidate) if isinstance(candidate, str) else [None] * 8
@@ -112,6 +130,7 @@ class PageDelivery:
             raise FormatError('ECOM_PLAN_DRAFT_CONFLICT')
 
     async def _page_stage(self, row, lease, stage, original, integration, evidence, messages, refs, image_urls, validator):
+        visual_markdown = stage == 2 and self.delivery_version != POSITION_VERSION
         state = deepcopy((evidence.get('stage_drafts') or {}).get(str(stage)))
         persisted = deepcopy(state)
         async def persist():
@@ -125,6 +144,8 @@ class PageDelivery:
                 body['product_schema'] = evidence['product_schema']
             else:
                 body['product_selling_points'] = evidence['product_selling_points']
+                if stage == 2 and self.delivery_version == POSITION_VERSION:
+                    body['output_json_schema'] = self._page_schema(stage, evidence)
             if stage == 3:
                 body['visual_direction'] = evidence['visual_direction']
                 body['output_json_schema'] = self._page_schema(stage, evidence)
@@ -168,7 +189,7 @@ class PageDelivery:
                     await persist()
             # A malformed wrapper gets one formatting call for this saved draft,
             # shared across process restarts and delivery windows. No images/Skill.
-            known_sections = stage == 2 and isinstance(raw, str) and any(partial_visual_sections(raw))
+            known_sections = visual_markdown and isinstance(raw, str) and any(partial_visual_sections(raw))
             # A syntactically valid object can still package later prompt strings
             # as object keys/values. One token-preserving format pass can recover
             # their original order without guessing how to extract the prose.
@@ -201,17 +222,17 @@ class PageDelivery:
             if formatting:
                 prompt = ('你是交付格式整理器。只整理原稿语法或Markdown标题包装，保留所有正文、数值、事实和顺序。'
                     '不重新策划、不添加内容、不重写任何有效文字。JSON只输出一个完整对象，保持原有字符串的顺序及内容；'
-                    '视觉定位只整理为指定八节Markdown。')
+                    + ('视觉定位只整理为指定八节Markdown。' if visual_markdown else '只整理为随调用Schema指定的JSON对象。'))
                 body = {'original_draft': raw, 'error': state['validation_error'],
-                    'required_sections': list(VISUAL_SECTIONS) if stage == 2 else None,
-                    'output_json_schema': self._page_schema(stage, evidence) if stage != 2 else None,
+                    'required_sections': list(VISUAL_SECTIONS) if visual_markdown else None,
+                    'output_json_schema': self._page_schema(stage, evidence) if not visual_markdown else None,
                     'image_count': evidence['input_snapshot']['image_count']}
                 formatted, usage = await recovery_call(prompt, [
                     {'role': 'developer', 'content': prompt}, {'role': 'user', 'content': json.dumps(body, ensure_ascii=False)}])
                 state['format_output'] = formatted
                 state['format_input_sha256'] = text_hash(raw)
                 try:
-                    if stage == 2:
+                    if visual_markdown:
                         # Adding headings is allowed; every original nonheading line stays verbatim.
                         import re
                         lines = lambda text: [line for line in text.splitlines() if line.strip() and not re.match(r'^\s*#', line)]
@@ -249,7 +270,15 @@ class PageDelivery:
             'visual_direction': evidence.get('visual_direction')}
         if stage == 3 and self.delivery_version == PROMPTS_VERSION and self._prompt_targets(paths):
             output = '只返回{"prompts":["目标位置的完整正文"]}，顺序与targets_in_order相同，只补写这些位置。'
-        elif stage == 2:
+        elif stage == 2 and self.delivery_version == POSITION_VERSION and self._outline_targets(paths):
+            if paths == [['outline']]:
+                output = '只返回{"outline":["第1项完整正文","第2项完整正文"]}，必须给出整套大纲，数组长度严格为settings.image_count。'
+            else:
+                output = ('只返回{"outline":["目标位置完整正文"]}，按targets_in_order顺序一一对应。'
+                    '目标路径中的数字是从0开始的索引，正文显示位置为索引加1。只补指定位置。')
+        elif stage == 2 and self.delivery_version == POSITION_VERSION and self._visual_spec_targets(paths):
+            output = '只返回{"sections":["目标节的完整正文"]}，顺序与targets_in_order相同，不改其他节、shared_rules或outline。'
+        elif stage == 2 and self.delivery_version != POSITION_VERSION:
             output = '只返回{"sections":["目标节的正文"]}，顺序与targets_in_order相同，不含标题。'
         else:
             output = ('只返回{"values":[替换值]}，顺序与targets_in_order相同，程序负责合并，'
@@ -258,8 +287,49 @@ class PageDelivery:
         return original + '\n\n' + integration + '\n\n【本次只修补】\n' + output + '保留其他全部有效内容。', body
 
     def _page_merge_repair(self, stage, candidate, raw, paths, output, evidence):
-        repair = strict_object(output)
-        if stage == 2 or stage == 3 and self.delivery_version == PROMPTS_VERSION and self._prompt_targets(paths):
+        outline_repair = stage == 2 and self.delivery_version == POSITION_VERSION and self._outline_targets(paths)
+        repair = strict_object(output, singleton_audit=[] if outline_repair else None)
+        if outline_repair:
+            count = evidence['input_snapshot']['image_count']
+            targets = list(range(count)) if paths == [['outline']] else [path[1] for path in paths]
+            if set(repair) == {'outline'}:
+                values = repair['outline']
+            elif set(repair) == {'values'}:
+                values = repair['values']
+                if paths == [['outline']] and isinstance(values, list) and len(values) == 1 and isinstance(values[0], list):
+                    values = values[0]
+            else:
+                raise FormatError('PLANNER_REPAIR_FIELDS_INVALID')
+            if paths == [['outline']]:
+                values = split_numbered_outline(values, count)
+            if not isinstance(values, list) or len(values) != len(targets):
+                raise FormatError('PLANNER_REPAIR_TARGET_COUNT')
+            if any(not isinstance(body, str) or not body.strip() or not outline_label_matches(body, index + 1)
+                    for index, body in zip(targets, values)):
+                raise FormatError('PLANNER_REPAIR_TARGET_UNLOCATABLE')
+            result = deepcopy(candidate)
+            if paths == [['outline']]:
+                result['outline'] = values
+            else:
+                outline = result['outline']
+                outline.extend([None] * (count - len(outline)))
+                for index, body in zip(targets, values):
+                    outline[index] = body
+            return result
+        if stage == 2 and self.delivery_version == POSITION_VERSION and self._visual_spec_targets(paths):
+            if set(repair) != {'sections'} or not isinstance(repair['sections'], list) or len(repair['sections']) != len(paths):
+                raise FormatError('PLANNER_REPAIR_TARGET_COUNT')
+            if any(not isinstance(value, str) or not value.strip() for value in repair['sections']):
+                raise FormatError('PLANNER_REPAIR_TEXT_REQUIRED')
+            result = deepcopy(candidate)
+            sections = partial_visual_sections(result['visual_spec'])
+            for path, value in zip(paths, repair['sections']):
+                sections[path[2]] = value
+            if any(value is None for value in sections):
+                raise FormatError('PLANNER_REPAIR_TARGET_COUNT')
+            result['visual_spec'] = render_visual(sections, _visual_parts(result['visual_spec'])[0])
+            return result
+        if stage == 2 and self.delivery_version != POSITION_VERSION or stage == 3 and self.delivery_version == PROMPTS_VERSION and self._prompt_targets(paths):
             key = 'sections' if stage == 2 else 'prompts'
             if set(repair) != {key} or not isinstance(repair[key], list) or len(repair[key]) != len(paths):
                 raise FormatError('PLANNER_REPAIR_TARGET_COUNT')
@@ -284,6 +354,16 @@ class PageDelivery:
         if set(repair) != {'values'}:
             raise FormatError('PLANNER_REPAIR_FIELDS_INVALID')
         return merge_values(candidate, paths, repair['values'], self._page_schema(stage, evidence))
+
+    @staticmethod
+    def _outline_targets(paths):
+        return paths == [['outline']] or bool(paths) and all(
+            len(path) == 2 and path[0] == 'outline' and type(path[1]) is int for path in paths)
+
+    @staticmethod
+    def _visual_spec_targets(paths):
+        return bool(paths) and all(len(path) == 3 and path[:2] == ['visual_spec', 'sections']
+            and type(path[2]) is int and 0 <= path[2] < 8 for path in paths)
 
     @staticmethod
     def _prompt_targets(paths):

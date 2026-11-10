@@ -26,10 +26,12 @@ export function AiGeneratedImage({
   isGenerating,
   renderId,
   fitContainer = false,
+  lazyLoad = false,
 }: Omit<ImageBlockProps, 'messageId'> & {
   messageId?: string;
   renderId?: string;
   fitContainer?: boolean;
+  lazyLoad?: boolean;
   imageAsset: ImageAsset | null;
   placeholderSize: { width: number; height: number };
   onImageClick: () => void;
@@ -117,6 +119,10 @@ export function AiGeneratedImage({
           <img
             src={thumbnail.src}
             alt="生成的图片"
+            loading={lazyLoad ? 'lazy' : undefined}
+            decoding={lazyLoad ? 'async' : undefined}
+            width={lazyLoad ? placeholderSize.width : undefined}
+            height={lazyLoad ? Math.round(placeholderSize.height) : undefined}
             className={`rounded-xl shadow-sm w-full h-auto block transition-opacity duration-200 ${imageLoaded ? 'opacity-100' : 'opacity-0'}`}
             onLoad={() => {
               setImageLoaded(true);

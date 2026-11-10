@@ -28,6 +28,7 @@ from .designs import DesignsOutput, DesignRepair, DesignValidationError, apply_r
 from .inputs import FixedSettings, model_input, source_bindings, user_content
 from .page_delivery import PageDelivery
 from .format_delivery import PROMPTS_VERSION, FORMAT_VERSION, normalize_visual, validate_questions
+from .position_delivery import POSITION_VERSION, PositionDelivery, validate_outline
 
 
 def _content(row):
@@ -62,7 +63,7 @@ class PlannerStreamBudget:
         return min(remaining, self._parent.remaining) if self._parent is not None else remaining
 
 
-class EcommerceImagePlanner(PageDelivery):
+class EcommerceImagePlanner(PositionDelivery, PageDelivery):
     def __init__(self, owner, *, execution_profile=None):
         self.owner = owner
         self.settings = execution_profile or __import__("core.config", fromlist=["get_settings"]).get_settings()
@@ -388,7 +389,8 @@ class EcommerceImagePlanner(PageDelivery):
         input_snapshot = row["input_snapshot"]
         task_type = input_snapshot.get("task_type", "main_images")
         self.delivery_version = (row.get('prompt_versions') or {}).get('stage_three_delivery_version', DELIVERY_VERSION)
-        minimal = self.delivery_version == PROMPTS_VERSION
+        minimal = self.delivery_version in {PROMPTS_VERSION, POSITION_VERSION}
+        positional = self.delivery_version == POSITION_VERSION
         product_schema = self._page_schema(1, {'product_schema': schema}) if minimal else schema
         active_stage = int(row.get("current_stage", 1))
         lease = str(uuid4())
@@ -404,7 +406,7 @@ class EcommerceImagePlanner(PageDelivery):
         current_stage = int(claimed.get("current_stage", 1))
         drafts = row.get('stage_drafts') or {}
         evidence = {"input_snapshot": input_snapshot, "product_schema": schema,
-            "stage_drafts": drafts}
+            "stage_drafts": drafts, "require_visible_copy": positional}
         try:
             if self.page_execution:
                 # Read recovery flags after the claim; the worker's earlier row
@@ -429,11 +431,12 @@ class EcommerceImagePlanner(PageDelivery):
             second = stage_outputs.get("2")
             if second is None:
                 second, usage = await self._stage(row, lease, 2, prompt_bodies[1], wrapper(2, task_type, self.delivery_version), evidence, messages, refs, image_urls,
-                    validator=lambda value: self._validate_visual(value, visual_sections, input_snapshot))
-                await self._save(row, lease, 2, second, 'needs_input' if isinstance(second, dict) else 'planning', None, usage)
+                    validator=lambda value: (validate_outline(value, input_snapshot) if positional
+                        else self._validate_visual(value, visual_sections, input_snapshot)))
+                await self._save(row, lease, 2, second, 'needs_input' if isinstance(second, dict) and 'questions' in second else 'planning', None, usage)
             else:
-                self._validate_visual(second, visual_sections, input_snapshot)
-            if isinstance(second, dict):
+                (validate_outline(second, input_snapshot) if positional else self._validate_visual(second, visual_sections, input_snapshot))
+            if isinstance(second, dict) and 'questions' in second:
                 return await self._result(row['id'], row['plan_revision'], 'needs_input')
             evidence["visual_direction"] = second
             active_stage = 3
@@ -502,6 +505,8 @@ class EcommerceImagePlanner(PageDelivery):
         raise ValueError("PLANNER_JSON_VALIDATION_FAILED")
 
     async def _stage_images(self, row, lease, original, integration, evidence, messages, refs, image_urls, validator=None):
+        if self.delivery_version == POSITION_VERSION:
+            return await self._position_stage(row, lease, original, integration, evidence, messages, refs, image_urls, validator)
         if self.page_execution:
             return await self._page_stage(row, lease, 3, original, integration, evidence, messages, refs, image_urls, validator)
         saved = (evidence.get("stage_drafts") or {}).get("3") or {}
@@ -552,7 +557,7 @@ class EcommerceImagePlanner(PageDelivery):
                         "delivery_version": DELIVERY_VERSION})
         raise ValueError("PLANNER_IMAGE_JSON_INVALID")
 
-    async def _call(self, row, lease, stage, prompt, messages):
+    async def _call(self, row, lease, stage, prompt, messages, *, position=None):
         provider = self._model_config().provider.value
         while True:
             remaining = self.owner.execution_budget.remaining if self.owner.execution_budget else 600
@@ -560,7 +565,8 @@ class EcommerceImagePlanner(PageDelivery):
             if timeout <= 1:
                 raise PlannerRecoveryError("ECOM_PLAN_PARENT_BUDGET_EXHAUSTED")
             attempt_id = str(uuid4())
-            reservation = await self._reserve(row, lease, stage, attempt_id, remaining)
+            reservation = await self._reserve(row, lease, stage, attempt_id, remaining,
+                **({"position": position} if position is not None else {}))
             if reservation.get("outcome") != "execute":
                 raise PlannerRecoveryError("ECOM_PLAN_EXECUTION_UNCERTAIN")
             deadline = datetime.fromisoformat(reservation["deadline"].replace("Z", "+00:00"))
@@ -591,7 +597,7 @@ class EcommerceImagePlanner(PageDelivery):
                     cancel_token=self.owner.cancellation_event, budget=stream_budget))
                 completion_options = {"require_completed": True} if provider == "openrouter" else {}
                 if (provider == "dashscope" and getattr(self.settings, "ecom_analysis_json_output", False)
-                        and stage in {1, 3}):
+                        and (stage in {1, 3} if self.delivery_version != POSITION_VERSION else stage in {1, 2})):
                     completion_options["response_format"] = {"type": "json_object"}
                 reasoning = self.settings.ecom_image_planning_reasoning
                 if (self.page_execution and self.settings.ecom_image_planning_model == "kimi-k3"
@@ -618,6 +624,9 @@ class EcommerceImagePlanner(PageDelivery):
                     tokens["input_tokens"] = max(tokens["input_tokens"], int(usage.get("prompt_tokens", 0)))
                     tokens["output_tokens"] = max(tokens["output_tokens"], int(usage.get("completion_tokens", 0)))
                     tokens["provider_credits"] = usage.get("api_credits", tokens["provider_credits"])
+                    for key in ("cached_tokens", "cache_creation_input_tokens"):
+                        if key in usage:
+                            tokens[key] = int(usage[key])
                 if provider == "openrouter":
                     # The existing adapter converts actual usage.cost to platform credits.
                     if tokens["provider_credits"] is None:
@@ -667,10 +676,11 @@ class EcommerceImagePlanner(PageDelivery):
                 if session is not None and not session_closed:
                     await session.close()
 
-    async def _reserve(self, row, lease, stage, attempt_id, remaining):
+    async def _reserve(self, row, lease, stage, attempt_id, remaining, *, position=None):
         return await asyncio.to_thread(lambda: self.scope.rpc("reserve_ecom_plan_attempt", {
             "p_plan_id": row["id"], "p_lease_token": lease, "p_attempt_id": attempt_id, "p_stage": stage,
             "p_wall_seconds": max(1, min(getattr(self.settings, "wall_seconds", 600), math.floor(remaining))),
+            **({"p_position": position} if position is not None else {}),
         }).execute().data)
 
     async def _finish(self, row, lease, stage, attempt_id, usage, outcome, output=None, status="planning", final=None):

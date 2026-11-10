@@ -104,13 +104,20 @@ async def test_entry_freezes_group_ratios_through_image_acceptance(monkeypatch, 
     kinds=['main_images','detail_page'] if content_type=='default' else [
         'main_images' if content_type=='main_image' else 'detail_page']
     assert [row['input_snapshot']['task_type'] for row in rows]==kinds
-    from services.agent.image.ecommerce_planner.prompt_resources import plan_resources, resources
+    from services.agent.image.ecommerce_planner.prompt_resources import MAIN_LAYOUT_GUIDANCE, plan_resources, resources
     for row in rows:
-        assert row['prompt_versions'].get('prompt_profile') == ('jd.v1' if platform == 'jd' else None)
+        assert row['prompt_versions'].get('prompt_profile') == ('jd.v2' if platform == 'jd' else None)
         bodies, schema = plan_resources(row)
-        baseline, baseline_schema = resources(row['input_snapshot']['task_type'], 'ecom-prompts.v4')
+        kind = row['input_snapshot']['task_type']
+        baseline, baseline_schema = resources(kind, 'ecom-prompts.v5', row['prompt_versions'].get('prompt_profile'))
         assert schema == baseline_schema
-        assert (bodies != baseline) == (platform == 'jd')
+        if kind == 'main_images':
+            assert bodies == [baseline[0], baseline[1] + MAIN_LAYOUT_GUIDANCE, baseline[2] + MAIN_LAYOUT_GUIDANCE]
+            old_row = {**row, 'prompt_versions': {key: value for key, value in row['prompt_versions'].items()
+                if key != 'main_layout_version'}}
+            assert plan_resources(old_row) == (baseline, baseline_schema)
+        else:
+            assert bodies == baseline
     assert [row['image_count'] for row in rows]==[7]*len(kinds)
     assert [row['target_size']['aspect_ratio'] for row in rows]==expected
     from services.agent.image.ecommerce_planner.assembly import assemble_prompts
@@ -127,7 +134,8 @@ async def test_entry_freezes_group_ratios_through_image_acceptance(monkeypatch, 
         assert row['model_settings']['profile']['ecom_image_planning_input_credits_per_million']==1
         _,evidence,_=design_fixture(7,row['invocation_key'],2)
         assembled=assemble_prompts({'prompts':[f'第{i}张：image_1商品放中央，image_2结构细节放右侧。' for i in range(1,8)]},
-            row['input_snapshot'],evidence['product_selling_points'],evidence['visual_direction'])
+            row['input_snapshot'],evidence['product_selling_points'],{'visual_spec':evidence['visual_direction'],
+                'shared_rules':'保持统一视觉语言及商品事实边界','outline':['任务']*7})
         await generation.accept({**row,'items':assembled['images'],'plan_revision':1})
         accepted=generation.db.rpc.call_args.args[1]['p_snapshots']
         assert len(accepted)==7
@@ -201,7 +209,12 @@ def test_read_projects_only_display_fields_and_preserves_history_and_recovery():
         query.select.return_value = query
         query.eq.return_value = query
         query.order.return_value = query
-        query.execute.return_value.data = deepcopy(plans if name == 'ecom_image_plans' else tasks)
+        def execute():
+            rows = plans if name == 'ecom_image_plans' else tasks
+            if any(call.args[-1] == 'current' for call in query.eq.call_args_list):
+                rows = [row for row in rows if row.get('origin', row)['generation_run_id'] == 'current']
+            return SimpleNamespace(data=deepcopy(rows))
+        query.execute.side_effect = execute
         queries[name] = query
         return query
     generation.db.table.side_effect = table
@@ -221,3 +234,8 @@ def test_read_projects_only_display_fields_and_preserves_history_and_recovery():
     task_fields = queries['tasks'].select.call_args.args[0].split(',')
     assert not {'*', 'input_snapshot', 'stage_outputs', 'stage_attempts'} & set(plan_fields)
     assert not {'request_params', 'result'} & set(task_fields)
+
+    current_only = generation.read('project', known_run_id='current')
+    assert [run['run_id'] for run in current_only['runs']] == ['current']
+    assert current_only['groups'] == project['groups']
+    assert generation.read('project', known_run_id='old')['runs'] == project['runs']

@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 
 from .contracts import VISUAL_SECTIONS
+from .position_delivery import POSITION_VERSION, POSITION_PROFILE
 
 ROOT = Path(__file__).resolve().parents[4] / "config" / "ecommerce_planner_prompts" / "v3"
 FILES = ("01-product-selling-points.md", "02-visual-direction.md", "03-main-image-planner.md", "03-detail-page-planner.md")
@@ -17,6 +18,16 @@ INTEGRATION_RULES_SHA256 = '0cf8e306880605e8d8be6614836ef08b5fad4e05573dee58c036
 
 
 JD_PROFILE = 'jd.v1'
+MAIN_LAYOUT_VERSION = 'whole-product-first.v1'
+MAIN_LAYOUT_GUIDANCE = (
+    '\n\n【主图中的整体与细节】\n'
+    '同一张图同时展示整件商品和局部细节时，先为整件商品安排最大、最醒目的连续区域，'
+    '让买家在缩略图里先认出商品轮廓，再看局部。局部放大窗口只用于说明细节，'
+    '每个窗口都应明显小于整件商品视图；多个窗口合起来也不能在面积或视觉重量上盖过整件商品。'
+    '放不下就减少窗口，或改用贴近部位的标注，保留商品主体所需空间。'
+    '在大纲和逐图提示词中写明整件商品与辅助窗口的相对大小、落点和对应部位。'
+    '只有用户明确要求以独立特写为主时，才按局部主视图规划。'
+)
 
 
 def profile_for_platform(platform):
@@ -25,9 +36,9 @@ def profile_for_platform(platform):
 
 
 def _profile_manifest(version, prompt_profile):
-    if version != 'ecom-prompts.v4' or prompt_profile != JD_PROFILE:
+    if (version, prompt_profile) not in {('ecom-prompts.v4', JD_PROFILE), (POSITION_VERSION, POSITION_PROFILE)}:
         raise ValueError('PLANNER_RESOURCE_VERSION_MISMATCH')
-    root = ROOT.parent / 'jd-v1'
+    root = ROOT.parent / ('jd-v2' if version == POSITION_VERSION else 'jd-v1')
     manifest = json.loads((root / 'manifest.json').read_text())
     if manifest.get('version') != version or manifest.get('prompt_profile') != prompt_profile:
         raise ValueError('PLANNER_RESOURCE_VERSION_MISMATCH')
@@ -35,6 +46,19 @@ def _profile_manifest(version, prompt_profile):
 
 
 def resource_versions(version=None, prompt_profile=None):
+    if version == POSITION_VERSION:
+        root = ROOT.parent / ('jd-v2' if prompt_profile == POSITION_PROFILE else 'v5')
+        if prompt_profile not in {None, POSITION_PROFILE}:
+            raise ValueError('PLANNER_RESOURCE_VERSION_MISMATCH')
+        manifest = json.loads((root / 'manifest.json').read_text())
+        if manifest['version'] != version or manifest.get('prompt_profile') != prompt_profile:
+            raise ValueError('PLANNER_RESOURCE_VERSION_MISMATCH')
+        files = manifest['files']
+        return {'resources_sha256': [files[name] for name in FILES],
+            'schema_sha256': files['01-output.schema.json'],
+            'integration_sha256': files['00-integration-rules.md'],
+            'stage_three_delivery_version': version, 'normalization_version': 'ecom-format.v1',
+            'assembly_version': 'fixed-frame.v5', **({'prompt_profile': prompt_profile} if prompt_profile else {})}
     if prompt_profile is not None:
         _root, manifest = _profile_manifest(version, prompt_profile)
         files = manifest['files']
@@ -65,6 +89,7 @@ def resources(task_type="main_images", version=None, prompt_profile=None):
         raise ValueError("ECOM_IMAGE_PLAN_ARGUMENTS_INVALID")
     versions = resource_versions(version, prompt_profile)
     root = (_profile_manifest(version, prompt_profile)[0] if prompt_profile is not None
+        else ROOT.parent / 'v5' if version == POSITION_VERSION
         else ROOT.parent / 'v4' if version == 'ecom-prompts.v4' else ROOT)
     bodies = []
     for name, digest in zip(FILES, versions['resources_sha256']):
@@ -94,17 +119,54 @@ def plan_resources(row):
     saved = row.get('prompt_versions') or {}
     version = saved.get('stage_three_delivery_version')
     prompt_profile = saved.get('prompt_profile')
-    if prompt_profile is not None and profile_for_platform(row['input_snapshot'].get('platform')) != prompt_profile:
+    expected_profile = (POSITION_PROFILE if version == POSITION_VERSION and row['input_snapshot'].get('platform') == 'jd'
+        else profile_for_platform(row['input_snapshot'].get('platform')))
+    if prompt_profile is not None and expected_profile != prompt_profile:
         raise ValueError('PLANNER_RESOURCE_VERSION_MISMATCH')
     bodies, schema = resources(row['input_snapshot']['task_type'], version, prompt_profile)
     expected = resource_versions(version, prompt_profile)
-    if any((version == 'ecom-prompts.v4' or key in saved) and saved.get(key) != value
+    if any((version in {'ecom-prompts.v4', POSITION_VERSION} or key in saved) and saved.get(key) != value
             for key, value in expected.items()):
         raise ValueError('PLANNER_RESOURCE_VERSION_MISMATCH')
+    if 'main_layout_version' in saved:
+        if (saved['main_layout_version'] != MAIN_LAYOUT_VERSION
+                or version != POSITION_VERSION
+                or row['input_snapshot']['task_type'] != 'main_images'):
+            raise ValueError('PLANNER_RESOURCE_VERSION_MISMATCH')
+        bodies[1] += MAIN_LAYOUT_GUIDANCE
+        bodies[2] += MAIN_LAYOUT_GUIDANCE
     return bodies, schema
 
 
 def wrapper(stage, task_type="main_images", version=None):
+    if version == POSITION_VERSION:
+        common = ('settings为软件冻结配置，输出张数与上传图数分开；raw_user_texts按内部资料身份逐字承接，'
+            '历史留档、人工确认、推断、建议和未知不能统一当成核实事实。image_N绑定与角色由软件维护，'
+            '模型仅决定设计用途；不得改写身份、数量、固定参数。')
+        if stage == 1:
+            return common + _minimal_wrapper(1, task_type) + (
+                '商品事实要写可逐字采用的中性可见外观或用户明确确认的内容。'
+                '可观察到的静态状态不证明打开、拆换、扣合等动作或使用效果。'
+                '没有动作、功能、规格或性能证据时，只写外观和可见状态；原专业收益推导仍记录为推断。'
+                '卖点标题、机制和表达边界必须一致。用户创作偏好与照片上的宣传标注都不是商品性能证据。')
+        if stage == 2:
+            return common + ('只返回visual_spec、shared_rules、outline三个字段的JSON；visual_spec完整八节专业结论，'
+                'shared_rules是每张适用的共同执行规则，outline为N项任务/素材用途/设计方向，详情包括新增信息、邻屏承接和边缘。'
+                '大纲数组每一项仅写一个位置，按第1张或第1屏起顺序交付。'
+                '事实性新增文案只从商品可用事实的原句选取短语；用户明确要求的原文保持原样。'
+                '推断收益只能用于选场景和构图，不能写入标题、标注或作为画面动作。'
+                '规划与最终排版分工清楚，逐图保留联合设计和建议调整空间。仅关键歧义可返回questions。')
+        return common + ('共用输入含完整商品分析、视觉规范和整组大纲。最后一个输入块含本张任务或异常复核指令。'
+            '普通写稿按原教学独立完成当前一张。若输入有visible_copy_evidence，返回一个JSON对象'
+            '{"prompt":"完整专业正文","copy":[{"text":"准确上画文案","fact_id":"f1"}]}。'
+            '正文所有新增可见文案以[[copy:1]]、[[copy:2]]等替代，分别只出现一次，其他正文完整保留。'
+            '无新增文字时copy为空数组。原印刷在正文按来源身份描述，不列为新增文案。'
+            '事实文案必须逐字选取visible_copy_evidence对应事实中的短语，并填写其ID；'
+            '单纯情绪、造型与场景感受可使用null，但不得借情绪暗示使用动作、功能、规格或效果。'
+            '对用户指定的新增文案，若为商品事实，使用来源明确的事实原文；若仅创作表达可用null。'
+            '写完自查每条文案及画面动作，静态外观不能证明未观察到的动作或功能。'
+            '具体跨稿疑点可随对象附加review_signal。'
+            '只有mode=targeted_set_review时按指令复核提供的终稿并返回受影响位置。')
     if version == 'ecom-prompts.v4':
         return _minimal_wrapper(stage, task_type)
     common = ("平台固定框架v3：settings为已核验固定配置，raw_user_texts逐字保留用户要求。"

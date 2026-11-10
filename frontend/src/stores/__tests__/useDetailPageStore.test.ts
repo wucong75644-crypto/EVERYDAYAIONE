@@ -233,6 +233,43 @@ describe('多任务保存和异步隔离',()=>{
   expect(useDetailPageStore.getState().images.map(item=>item.id)).toEqual(['image']);
   expect(useDetailPageStore.getState().form.requirement).toBe('尚未保存的尺寸和背景');
  });
+ it('切回先显示已确认的结果，读取失败仍保留结果，权限失效则清除',async()=>{
+  const run={run_id:'run-b',created_at:'2026-10-10',requirement:'B 的要求',groups:[]};
+  const b={...draft,id:'B',runs:[run],run_state:{run_id:run.run_id}};
+  await useDetailPageStore.getState().hydrateDraft();
+  vi.mocked(api.getDetailProject).mockResolvedValueOnce(b);
+  await useDetailPageStore.getState().selectTask('B');
+  await useDetailPageStore.getState().selectTask('project');
+
+  vi.mocked(api.getDetailProject).mockRejectedValueOnce(new Error('连接失败'));
+  const returning=useDetailPageStore.getState().selectTask('B');
+  expect(useDetailPageStore.getState().taskSelection).toMatchObject({id:'B',phase:'loading',results:{runs:[run]}});
+  await returning;
+  expect(useDetailPageStore.getState()).toMatchObject({projectId:'project',taskSelection:{id:'B',phase:'failed',results:{runs:[run]}}});
+
+  vi.mocked(api.getDetailProject).mockRejectedValueOnce(new ApiRequestError('FORBIDDEN','权限已失效',403));
+  await useDetailPageStore.getState().selectTask('B');
+  expect(useDetailPageStore.getState().taskSelection?.results).toBeUndefined();
+ });
+
+ it('后台刷新只替换当前一轮，检测到其他页面发起新轮次时采用完整历史',async()=>{
+  const old={run_id:'old',created_at:'2026-10-09',requirement:'旧要求',groups:[]};
+  const current={...old,run_id:'current',created_at:'2026-10-10'};
+  const updated={...current,requirement:'当前要求'};
+  const next={...current,run_id:'next'};
+  vi.mocked(api.getDetailProject).mockResolvedValueOnce({...draft,status:'generating',runs:[old,current],run_state:{run_id:current.run_id}});
+  await useDetailPageStore.getState().hydrateDraft();
+
+  vi.mocked(api.getDetailProject).mockResolvedValueOnce({...draft,status:'generating',runs:[updated],run_state:{run_id:current.run_id}});
+  await useDetailPageStore.getState().refresh(true);
+  expect(api.getDetailProject).toHaveBeenLastCalledWith('project',expect.any(AbortSignal),current.run_id);
+  expect(useDetailPageStore.getState().runs).toEqual([old,updated]);
+
+  vi.mocked(api.getDetailProject).mockResolvedValueOnce({...draft,status:'generating',runs:[old,updated,next],run_state:{run_id:next.run_id}});
+  await useDetailPageStore.getState().refresh(true);
+  expect(useDetailPageStore.getState()).toMatchObject({currentRunId:next.run_id,runs:[old,updated,next]});
+ });
+
  it('新建保留旧任务且不归档，重复点击只提交一次创建',async()=>{
   await useDetailPageStore.getState().hydrateDraft();
   useDetailPageStore.getState().updateForm({requirement:'保留的产品细节'});

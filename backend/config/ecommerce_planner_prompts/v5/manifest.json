@@ -1,0 +1,11 @@
+{
+  "version": "ecom-prompts.v5",
+  "files": {
+    "03-detail-page-planner.md": "e3cc4d075abe6cae9fcc8f2138a40cad34300f140da4752113b092bec74bad36",
+    "00-integration-rules.md": "1cac3a282d04e8bfc65e3fd79e3648463e5f61715f4e63b29dd5c17818b4ec95",
+    "01-product-selling-points.md": "56afb8f5223ed24e12ab656c52446e6904767d541b90b5d3e9d9d9eac3b6bf98",
+    "03-main-image-planner.md": "c6e129be8d1af1714cd50d456fb5f381aa06bcd51864915d8e4c83b561ee5734",
+    "01-output.schema.json": "7adf1c121f3d4bb3dbe764246a0fbd6fbe92ac076d1324d840ee32941d19b48f",
+    "02-visual-direction.md": "788aec63853220f56795b3fb402e95efd3a3e89b6f53333d4dab797e904f6bf7"
+  }
+}

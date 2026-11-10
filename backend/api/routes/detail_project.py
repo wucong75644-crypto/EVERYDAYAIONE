@@ -66,9 +66,11 @@ def detail_project_status(ids: str = Query(max_length=3800), service: DetailProj
 
 
 @router.get("/{project_id}", response_model=DetailProjectEnvelope)
-def get_detail_project(project_id: UUID,service: DetailProjectService = Depends(get_detail_project_service)):
+def get_detail_project(project_id: UUID, known_run_id: UUID | None = None,
+                       service: DetailProjectService = Depends(get_detail_project_service)):
     from services.detail_page_generation import DetailPageGeneration
-    return DetailProjectEnvelope(data={"project": DetailPageGeneration(service.db,service.user_id,service.org_id).read(str(project_id))})
+    return DetailProjectEnvelope(data={"project": DetailPageGeneration(service.db,service.user_id,service.org_id).read(
+        str(project_id), known_run_id=str(known_run_id) if known_run_id else None)})
 
 
 @router.post("/{project_id}/analyze", response_model=DetailProjectEnvelope)

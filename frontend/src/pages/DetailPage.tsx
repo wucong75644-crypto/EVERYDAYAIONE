@@ -23,6 +23,9 @@ export default function DetailPage(){
   const [taskDrawer,setTaskDrawer]=useState(false);
   const {images,form,projectId,isHydrating,formError,groups,status,models,ratios,isTransitioning,
     addImages,attachWorkspaceImages,removeImage,updateForm,startAnalysis,restart,refresh,hydrateDraft,reset}=state;
+  const selection=state.taskSelection;
+  const viewingTarget=selection&&selection.phase!=='saving';
+  const target=viewingTarget?state.tasks.find(task=>task.id===selection.id):undefined;
   const ready=images.some(image=>image.category==='product'&&image.status==='ready');
   const pending=images.some(image=>image.status!=='ready');
   const requirementDisabled=isHydrating||isTransitioning||!['draft','completed','failed'].includes(status);
@@ -48,9 +51,9 @@ export default function DetailPage(){
   useEffect(()=>{closeAssist();},[projectId,scopeKey,closeAssist]);
   useEffect(()=>{
     const current=useDetailPageStore.getState();
-    if(preferredId&&preferredId!==current.projectId&&!current.isHydrating&&!current.isTransitioning&&!current.isUploading&&!current.isMutating){
+    if(preferredId&&preferredId!==current.projectId&&!current.taskSelection&&!current.isHydrating&&!current.isTransitioning&&!current.isUploading&&!current.isMutating){
       void current.selectTask(preferredId).then(()=>{const latest=useDetailPageStore.getState();
-        if(latest.scopeKey===scopeKey&&latest.projectId)setSearchParams({projectId:latest.projectId},{replace:true});});
+        if(latest.scopeKey===scopeKey&&latest.projectId&&!latest.taskSelection)setSearchParams({projectId:latest.projectId},{replace:true});});
     }
   },[preferredId,scopeKey,setSearchParams]);
   useEffect(()=>{
@@ -58,15 +61,21 @@ export default function DetailPage(){
     window.addEventListener('focus',refreshVisible);document.addEventListener('visibilitychange',refreshVisible);
     return ()=>{window.removeEventListener('focus',refreshVisible);document.removeEventListener('visibilitychange',refreshVisible);};
   },[]);
-  const switchDisabled=isHydrating||isTransitioning||state.isUploading||state.isMutating;
+  const switchDisabled=isHydrating||state.isUploading||state.isMutating||
+    selection?.phase==='saving'||(isTransitioning&&!selection);
   const changeTask=async(id?:string)=>{
-    if(switchDisabled)return;
+    if(switchDisabled||(!id&&isTransitioning))return;
     requirementAssist.close();
-    if(id)await state.selectTask(id);else await restart();
-    const selected=useDetailPageStore.getState().projectId;
-    if(selected&&useDetailPageStore.getState().scopeKey===scopeKey){setSearchParams({projectId:selected},{replace:true});setTaskDrawer(false);}
+    if(id){
+      setTaskDrawer(false);
+      await state.selectTask(id);
+    }else await restart();
+    const latest=useDetailPageStore.getState();
+    if(latest.projectId&&!latest.taskSelection&&latest.scopeKey===scopeKey&&(!id||latest.projectId===id)){
+      setSearchParams({projectId:latest.projectId},{replace:true});setTaskDrawer(false);
+    }
   };
-  const sidebar=<DetailTaskSidebar key={scopeKey} tasks={state.tasks} selectedId={projectId} disabled={switchDisabled}
+  const sidebar=<DetailTaskSidebar key={scopeKey} tasks={state.tasks} selectedId={viewingTarget?selection.id:projectId} disabled={switchDisabled} actionsDisabled={isTransitioning}
     loading={state.isLoadingTasks} hasMore={!!state.taskCursor} error={state.taskError}
     onCreate={()=>void changeTask()} onSelect={id=>void changeTask(id)} onMore={()=>void state.loadMoreTasks()} onRefresh={()=>void state.refreshTasks()}
     onDelete={async id=>{await state.deleteTask(id);const current=useDetailPageStore.getState();
@@ -77,14 +86,26 @@ export default function DetailPage(){
       <div className="mb-2 flex justify-end xl:hidden"><Button variant="ghost" size="sm" icon={<List className="h-4 w-4"/>} onClick={()=>setTaskDrawer(true)}>任务列表</Button></div>
       <section className="grid h-full min-h-0 grid-cols-1 gap-4 md:grid-cols-[360px_minmax(0,1fr)] xl:grid-cols-[360px_minmax(0,1fr)_256px] max-xl:h-[calc(100%-40px)] max-md:overflow-y-auto">
         <Card variant="elevated" padding="sm" aria-label="创作设置" className="relative h-full min-h-0 overflow-hidden max-md:min-h-[600px]">
-          <GenerationSettings form={form} images={images} models={models} ratios={ratios} hasProductImage={images.some(image=>image.category==='product'&&!['failed','missing'].includes(image.status))} disabled={disabled} settingsDisabled={requirementDisabled} uploadDisabled={disabled||state.isUploading} requirementDisabled={requirementDisabled}
+          {viewingTarget?<p role="status" className="p-4 text-sm text-[var(--s-text-secondary)]">
+            {selection.phase==='failed'?'任务设置暂未载入':'正在载入任务设置…'}
+          </p>:<GenerationSettings form={form} images={images} models={models} ratios={ratios} hasProductImage={images.some(image=>image.category==='product'&&!['failed','missing'].includes(image.status))} disabled={disabled} settingsDisabled={requirementDisabled} uploadDisabled={disabled||state.isUploading} requirementDisabled={requirementDisabled}
             analyzeDisabled={analyzeDisabled} analyzeLabel={isTransitioning&&(state.isUploading||state.isMutating)?'正在保存…':status==='draft'?'开始生成':'再次生成'}
             requirementAssistDisabled={requirementAssistDisabled} onChange={updateForm} onRequirementAssist={openRequirementAssist} onAnalyze={()=>void startAnalysis()} onAdd={files=>void addImages('product',files)}
-            onWorkspaceAdd={paths=>void attachWorkspaceImages('product',paths)} onRemove={id=>void removeImage(id)}/>
+            onWorkspaceAdd={paths=>void attachWorkspaceImages('product',paths)} onRemove={id=>void removeImage(id)}/>}
           {formError&&<p role="alert" className="absolute inset-x-4 bottom-16 rounded-lg bg-[var(--s-surface-raised)] p-2 text-xs text-[var(--s-error)] shadow-sm">{formError}{state.syncUncertain&&<button type="button" disabled={state.isConfirmingSync} className="ml-2 underline" onClick={()=>void state.confirmImageSync()}>{state.isConfirmingSync?'正在确认…':'重新确认'}</button>}{!projectId&&<button type="button" className="ml-2 underline" onClick={()=>void hydrateDraft(scopeKey,preferredId)}>重新加载</button>}</p>}
         </Card>
         <Card variant="elevated" padding="lg" aria-label="规划与生成结果" className="h-full min-h-0 min-w-0 overflow-y-auto overscroll-contain" tabIndex={0}>
-          <DetailWorkspace key={projectId} groups={groups} runs={state.runs} currentRunId={state.currentRunId} projectId={projectId} onRefresh={()=>void refresh()}/>
+          {selection?.phase==='saving'&&<p role="status" className="mb-3 text-sm">正在保存当前任务…</p>}
+          {viewingTarget&&<div className="mb-3 text-sm" role={selection.phase==='failed'?'alert':'status'}>
+            {selection.phase==='failed'?<>
+              {selection.results?'进度更新失败':'任务加载失败'}：{selection.error}
+              <button type="button" className="ml-2 underline" onClick={()=>void changeTask(selection.id)}>重试</button>
+            </>:<>正在加载{target?`「${target.title}」`:'任务'}…{target&&target.expected_count>0&&` 已完成 ${target.completed_count}/${target.expected_count}`}</>}
+          </div>}
+          {viewingTarget?(selection.results&&
+            <DetailWorkspace key={selection.id} {...selection.results} projectId={selection.id} readOnly onRefresh={()=>void refresh()}/>
+          ):<DetailWorkspace key={projectId} groups={groups} runs={state.runs} currentRunId={state.currentRunId}
+            projectId={projectId} readOnly={!!selection} onRefresh={()=>void refresh()}/>}
         </Card>
         <Card variant="elevated" padding="sm" className="hidden h-full min-h-0 overflow-hidden xl:block">{sidebar}</Card>
       </section>

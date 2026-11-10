@@ -223,8 +223,12 @@ async def test_sidebar_counts_match_latest_retried_images_and_detail_groups(mult
         assert result['display_status']=='completed'
         assert 'groups' not in result and 'request_params' not in result
         from services.detail_page_generation import DetailPageGeneration
-        detail=DetailPageGeneration(raw,str(user),None).read(str(project))
+        generation=DetailPageGeneration(raw,str(user),None)
+        detail=generation.read(str(project))
         assert [group['kind'] for group in detail['groups']]==['main_images','detail_page']
+        latest=generation.read(str(project),known_run_id=detail['run_state']['run_id'])
+        assert latest['groups']==detail['groups']
+        assert sum(len({task['item_id'] for task in group['tasks']}) for group in latest['groups'])==14
     finally:raw.pool.close()
 
 

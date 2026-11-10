@@ -122,6 +122,7 @@ describe('右侧提示词和图片工作区',()=>{
     expect(within(main).getAllByRole('heading',{level:3}).map(node=>node.textContent)).toEqual(['1. 主图1','2. 主图2']);
     expect(within(main).getByRole('button',{name:'任务详情 task-1'})).toBeInTheDocument();
     expect(within(detailRegion).queryByText('任务详情 task-1')).not.toBeInTheDocument();
+    expect(within(detailRegion).getAllByText('排队中')).toHaveLength(2);
   });
   it('重试响应不确定时继续使用相同幂等键，其他图片保留',async()=>{
     vi.mocked(chatImageService.replay).mockRejectedValue(new Error('连接中断'));
