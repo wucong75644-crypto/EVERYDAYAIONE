@@ -15,7 +15,7 @@ from core.exceptions import AppException
 from services.agent.image.ecommerce_planner.contracts import source_id
 from services.agent.image.ecommerce_planner.inputs import FixedSettings, source_bindings
 from services.agent.image.ecommerce_planner.page_profile import profile
-from services.agent.image.ecommerce_planner.prompt_resources import resource_versions, plan_resources
+from services.agent.image.ecommerce_planner.prompt_resources import MAIN_LAYOUT_VERSION, resource_versions, plan_resources
 from services.agent.image.ecommerce_planner.position_delivery import POSITION_VERSION, POSITION_PROFILE
 from services.agent.image.ecommerce_planner.service import EcommerceImagePlanner, PlannerStreamBudget, _digest
 from services.detail_project_service import DetailProjectService
@@ -259,10 +259,13 @@ class DetailPageGeneration:
                 'image_count':count,'task_type':kind,'platform':fixed.platform,'language':fixed.language,
                 'target_size':{'aspect_ratio':fixed.aspect_ratio,'resolution':fixed.resolution}}
             snapshot['source_bindings']=source_bindings(snapshot)
+            versions = resource_versions(POSITION_VERSION, POSITION_PROFILE if fixed.platform == 'jd' else None)
+            if kind == 'main_images':
+                versions['main_layout_version'] = MAIN_LAYOUT_VERSION
             rows.append({'id':str(uuid4()),'project_id':project_id,'generation_run_id':request_id,
                 'user_id':self.user_id,'org_id':self.org_id,'invocation_key':kind,'input_digest':_digest(snapshot),
                 'image_count':count,'input_snapshot':snapshot,'target_size':snapshot['target_size'],
-                'prompt_versions':resource_versions(POSITION_VERSION, POSITION_PROFILE if fixed.platform == 'jd' else None),
+                'prompt_versions':versions,
                 'model_settings':{'model':project['prompt_model'],'profile':vars(selected),'image_budget':image_budget,
                     'delivery_policy':POLICY}})
         try:

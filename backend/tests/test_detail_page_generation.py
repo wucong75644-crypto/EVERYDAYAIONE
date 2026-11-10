@@ -104,13 +104,20 @@ async def test_entry_freezes_group_ratios_through_image_acceptance(monkeypatch, 
     kinds=['main_images','detail_page'] if content_type=='default' else [
         'main_images' if content_type=='main_image' else 'detail_page']
     assert [row['input_snapshot']['task_type'] for row in rows]==kinds
-    from services.agent.image.ecommerce_planner.prompt_resources import plan_resources, resources
+    from services.agent.image.ecommerce_planner.prompt_resources import MAIN_LAYOUT_GUIDANCE, plan_resources, resources
     for row in rows:
         assert row['prompt_versions'].get('prompt_profile') == ('jd.v2' if platform == 'jd' else None)
         bodies, schema = plan_resources(row)
-        baseline, baseline_schema = resources(row['input_snapshot']['task_type'], 'ecom-prompts.v5')
+        kind = row['input_snapshot']['task_type']
+        baseline, baseline_schema = resources(kind, 'ecom-prompts.v5', row['prompt_versions'].get('prompt_profile'))
         assert schema == baseline_schema
-        assert (bodies != baseline) == (platform == 'jd')
+        if kind == 'main_images':
+            assert bodies == [baseline[0], baseline[1] + MAIN_LAYOUT_GUIDANCE, baseline[2] + MAIN_LAYOUT_GUIDANCE]
+            old_row = {**row, 'prompt_versions': {key: value for key, value in row['prompt_versions'].items()
+                if key != 'main_layout_version'}}
+            assert plan_resources(old_row) == (baseline, baseline_schema)
+        else:
+            assert bodies == baseline
     assert [row['image_count'] for row in rows]==[7]*len(kinds)
     assert [row['target_size']['aspect_ratio'] for row in rows]==expected
     from services.agent.image.ecommerce_planner.assembly import assemble_prompts

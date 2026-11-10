@@ -18,6 +18,16 @@ INTEGRATION_RULES_SHA256 = '0cf8e306880605e8d8be6614836ef08b5fad4e05573dee58c036
 
 
 JD_PROFILE = 'jd.v1'
+MAIN_LAYOUT_VERSION = 'whole-product-first.v1'
+MAIN_LAYOUT_GUIDANCE = (
+    '\n\n【主图中的整体与细节】\n'
+    '同一张图同时展示整件商品和局部细节时，先为整件商品安排最大、最醒目的连续区域，'
+    '让买家在缩略图里先认出商品轮廓，再看局部。局部放大窗口只用于说明细节，'
+    '每个窗口都应明显小于整件商品视图；多个窗口合起来也不能在面积或视觉重量上盖过整件商品。'
+    '放不下就减少窗口，或改用贴近部位的标注，保留商品主体所需空间。'
+    '在大纲和逐图提示词中写明整件商品与辅助窗口的相对大小、落点和对应部位。'
+    '只有用户明确要求以独立特写为主时，才按局部主视图规划。'
+)
 
 
 def profile_for_platform(platform):
@@ -118,6 +128,13 @@ def plan_resources(row):
     if any((version in {'ecom-prompts.v4', POSITION_VERSION} or key in saved) and saved.get(key) != value
             for key, value in expected.items()):
         raise ValueError('PLANNER_RESOURCE_VERSION_MISMATCH')
+    if 'main_layout_version' in saved:
+        if (saved['main_layout_version'] != MAIN_LAYOUT_VERSION
+                or version != POSITION_VERSION
+                or row['input_snapshot']['task_type'] != 'main_images'):
+            raise ValueError('PLANNER_RESOURCE_VERSION_MISMATCH')
+        bodies[1] += MAIN_LAYOUT_GUIDANCE
+        bodies[2] += MAIN_LAYOUT_GUIDANCE
     return bodies, schema
 
 
