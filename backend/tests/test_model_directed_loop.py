@@ -290,3 +290,130 @@ async def test_failed_plan_checkpoint_publishes_no_marker_and_restores_original_
             cancellation_event=r.cancellation_event,sink=sink)
     assert blocks==[] and p.messages==before and r.task_direct_plan is None
     sink.on_block.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('key', ['reference-image-prompts', 'ecommerce-image-prompts'])
+@pytest.mark.parametrize('submission_count', [1, 5])
+async def test_original_method_saves_before_dispatch_and_reuses_actual_five_item_document(
+        key, submission_count, record_property, monkeypatch):
+    import os
+    from services.skills.selection import SkillSelection
+    from services.task_execution.direct_loop import duplicate_image_plan_items, image_plan_item, saved_image_plans
+    from services.task_execution.image_binding import image_prompt
+    from services.task_execution.methods import ImageMethodDocument
+    from services.task_execution.model_directed import SAVE_IMAGE_PLAN
+    from tests.test_task_execution_methods import document
+    from tests.test_task_execution_original_skills import OriginalSource, original_runtime
+
+    if not os.getenv('TASK_ORIGINAL_SKILLS_EXPORT'):
+        pytest.skip('Requires private original published Skill inputs')
+    saves = []
+    async def save(point, payload):
+        saves.append(copy.deepcopy(payload))
+        return {'outcome': 'saved'}
+    runtime, prepared, handler, request = case(save)
+    source = OriginalSource()
+    selection = SkillSelection(skill_id=key, revision=source.values[key].revision)
+    skills = original_runtime(source, turn_id=runtime.turn_id)
+    await skills.initialize(selection=selection)
+    assert (await skills.activate_manual(selection))['ok']
+    runtime.skill_runtime = skills
+
+    from pathlib import Path
+    replay = os.getenv('TASK_ORIGINAL_REFERENCE_PLAN') if key == 'reference-image-prompts' else None
+    plan = ImageMethodDocument.model_validate_json(Path(replay).read_text() if replay else document(5))
+    second = plan.image_plans[1]
+    image = {'prompt': image_prompt(second), 'aspect_ratio': second.aspect_ratio, 'mode': 'text_to_image'}
+    blocks = await execute(runtime, prepared, handler, request, [
+        call(SAVE_IMAGE_PLAN, {'image_count': 5, 'document': plan.model_dump(mode='json')}, 'save-five'),
+        call('generate_image', image, 'too-early'),
+    ])
+    handler._execute_tool_calls.assert_not_awaited()
+    state = runtime.task_execution_state
+    artifact, = saved_image_plans(state)
+    assert len(ImageMethodDocument.model_validate_json(artifact.inline_text).image_plans) == 5
+    assert artifact.id == saves[-1]['_task_execution']['artifacts'][0]['id']
+    assert image_plan_item(state, set(), image) == {'artifact_id': artifact.id, 'image_item_index': 2}
+    with pytest.raises(TaskError, match='TASK_IMAGE_ARGUMENTS_NOT_PLANNED'):
+        image_plan_item(state, set(), {**image, 'prompt': 'rewritten'})
+    assert str(TaskState.model_validate(saves[-1]['_task_execution']).root_task_id) == runtime.task_id
+    assert any(b.get('tool_call_id') == 'too-early' and b['status'] == 'error' for b in blocks)
+    restored = original_runtime(source, task_state=state, turn_id=runtime.turn_id)
+    await restored.initialize(saves[-1]['skill_runtime'])
+    assert 'generate_image' in restored.effective_allowed_tool_names
+    assert key in (restored.resident if key == 'reference-image-prompts' else restored.active)
+    runtime.skill_runtime = restored
+
+    registry = build_capability_catalog()
+    runtime.task_image_resource_resolver = SimpleNamespace(
+        prepare_request=AsyncMock(side_effect=lambda args, *_a, **_kw: (args, [], None)))
+    dispatch = call('generate_image', image, 'second')
+    candidate, errors = stage_native_calls(runtime, prepared, [dispatch], registry)
+    assert not errors
+    runtime.task_execution_state = candidate
+    candidate, errors = await bind_image_recipes(runtime, [dispatch], registry)
+    assert not errors
+    recipe = next(a for a in candidate.artifacts if 'image.direct.recipe' in a.validations)
+    assert json.loads(recipe.inline_text)['method_handoff'] == {'artifact_id': artifact.id, 'image_item_index': 2}
+    runtime.task_execution_state = candidate
+    changed_ref = call('generate_image', {**image, 'resolution': '2K'}, 'same-item')
+    candidate, errors = stage_native_calls(runtime, prepared, [changed_ref], registry)
+    assert not errors
+    runtime.task_execution_state = candidate
+    candidate, errors = await bind_image_recipes(runtime, [changed_ref], registry)
+    assert not errors
+    assert set(duplicate_image_plan_items(candidate, [dispatch, changed_ref])) == {'same-item'}
+
+    from services.skills.contracts import SkillError
+    with monkeypatch.context() as patch:
+        patch.setattr(source, 'load', AsyncMock(side_effect=SkillError('SKILL_ACCESS_DENIED')))
+        runtime.task_execution_state = candidate
+        _, denied = await bind_image_recipes(runtime, [dispatch], registry)
+        assert denied['second'][0] == 'TASK_IMAGE_METHOD_UNAVAILABLE'
+
+    from services.agent.agent_result import AgentResult
+    from services.task_execution.image_binding import bind_image_call
+    from services.task_execution.reducer import reserve_operation, record_operation
+    monkeypatch.setattr('services.handlers.chat.execution_engine.compact_tool_context', AsyncMock())
+    runtime.task_execution_state = state
+    runtime.task_operation_store = SimpleNamespace(registry=registry)
+    submitted = []
+
+    async def accept(calls, *_args, **_kwargs):
+        results = []
+        for raw in calls:
+            submitted.append(raw['id'])
+            parsed = ToolCall(raw['id'], raw['name'], json.loads(raw['arguments']))
+            current = runtime.task_execution_state
+            binding = bind_image_call(current, parsed, registry)
+            saved_recipe = next(a for a in current.artifacts if a.id == binding.planning_artifact_id)
+            assert json.loads(saved_recipe.inline_text)['method_handoff']['artifact_id'] == artifact.id
+            current, operation, _ = reserve_operation(current, expected_revision=current.revision,
+                step_id=binding.step_id, capability='platform.generate_image', effect_key=binding.effect_key,
+                effect_version=1, arguments=json.loads(raw['arguments']), owner_task_id=UUID(runtime.task_id),
+                invocation_id=raw['id'])
+            operation = operation.model_copy(update={'tool_name': 'generate_image', 'owner_turn_id': UUID(runtime.turn_id)})
+            current = TaskState.model_validate({**current.model_dump(),
+                'operations': tuple(operation if old.id == operation.id else old for old in current.operations)})
+            runtime.task_execution_state = record_operation(current, operation.id, owner_task_id=UUID(runtime.task_id),
+                status='accepted', receipt_ref='task:' + str(uuid4()))
+            results.append((raw, AgentResult('受控受理回执', metadata={'accepted': True}), False, '受控受理回执'))
+        return results
+
+    handler._execute_tool_calls.side_effect = accept
+    requested = [dispatch] if submission_count == 1 else [
+        call('generate_image', {**image, 'prompt': image_prompt(brief), 'aspect_ratio': brief.aspect_ratio},
+             f'image-{index}')
+        for index, brief in enumerate(plan.image_plans, 1)]
+    await execute(runtime, prepared, handler, request, requested, blocks=blocks)
+    assert submitted == [raw['id'] for raw in requested]
+    assert len(runtime.task_execution_state.operations) == submission_count
+    assert str(runtime.task_execution_state.root_task_id) == runtime.task_id
+    for name, value in {
+        'skill': key, 'revision': selection.revision, 'planned_items': 5, 'external_dispatches': 0, 'substitute_acceptances': len(submitted),
+        'root_before': runtime.task_id, 'root_after_restore': str(state.root_task_id),
+        'plan_input': 'saved original plan' if replay else 'controlled five-item document',
+        'plan_ref': artifact.reference, 'recipe_ref': recipe.reference,
+    }.items():
+        record_property(name, value)

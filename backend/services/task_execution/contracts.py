@@ -153,17 +153,22 @@ class Artifact(Fact):
     validations: tuple[Key, ...] = Field(default=('artifact.exists',), max_length=32)
     inline_text: str | None = Field(default=None, min_length=1, max_length=50000)
     image_reuse: ReusedImage | None = None
+    image_method: MethodBinding | None = None
 
     @model_serializer(mode='wrap')
     def preserve_old_artifact(self,handler):
         value=handler(self)
         if self.image_reuse is None:value.pop('image_reuse',None)
+        if self.image_method is None:value.pop('image_method',None)
         return value
 
     @model_validator(mode='after')
     def text_integrity(self):
         if self.image_reuse is not None and (self.kind!='image' or not self.reference.startswith('task-image:')):
             raise TaskError('TASK_REUSED_IMAGE_INVALID')
+        if self.image_method is not None and (self.kind != 'text' or self.inline_text is None
+                or not {'image.direct.plan', self.image_method.profile_id} <= set(self.validations)):
+            raise TaskError('TASK_IMAGE_PLAN_EVIDENCE_INVALID')
         if self.inline_text is not None and (self.kind != 'text' or
                 hashlib.sha256(self.inline_text.encode()).hexdigest() != self.sha256):
             raise TaskError('TASK_TEXT_ARTIFACT_INTEGRITY')

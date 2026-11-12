@@ -131,3 +131,41 @@ def test_rollback_also_protects_context_before_first_business_call(direct_db,kin
         with connect(f) as c:assert c.execute('SELECT state FROM conversation_turn_checkpoints WHERE task_id=%s',(f['task'],)).fetchone()[0]['messages']==cp['messages']
     finally:
         with psycopg.connect(direct_db) as c:c.execute('DELETE FROM conversation_turn_checkpoints WHERE task_id=%s',(f['task'],))
+
+
+def test_model_directed_image_plan_append_is_atomic_and_preserves_prior_native_records(direct_db):
+    from types import SimpleNamespace
+    from services.skills.contracts import SkillCatalogMetadata
+    from services.task_execution.direct_loop import save_image_plan
+    from tests.test_task_execution_methods import document
+
+    migration = ROOT / 'migrations/376_agent_task_image_method_handoff.sql'
+    rollback = ROOT / 'migrations/rollback/376_agent_task_image_method_handoff_rollback.sql'
+    with psycopg.connect(direct_db) as c:
+        c.execute(migration.read_text())
+    try:
+        f, b, s, payload = initial(direct_db)
+        candidate = SimpleNamespace(package_id=UUID(f['user']), catalog_metadata=SkillCatalogMetadata(task_stage={
+            'output_profile': 'reference-prompts-v1',
+        }))
+        skills = SimpleNamespace(directory={'planner': candidate}, active={'planner': SimpleNamespace(revision='v1', body_sha256='a' * 64)})
+        runtime = SimpleNamespace(task_id=f['task'], task_bootstrap=b, task_execution_state=s, skill_runtime=skills)
+        from services.task_execution.model_directed import SAVE_IMAGE_PLAN
+        import json
+        call = {'name': SAVE_IMAGE_PLAN, 'id': 'save-five',
+                'arguments': json.dumps({'image_count': 5, 'document': json.loads(document(5))})}
+        proposed, artifact = save_image_plan(runtime, call, Registry())
+        with connect(f) as c:
+            assert save(c, f, {**payload, '_task_execution': proposed.model_dump(mode='json')},
+                        expected=s.revision)['outcome'] == 'saved'
+        stored, checkpoint = read(f)
+        assert stored == checkpoint['_task_execution']
+        assert stored['root_task_id'] == f['task']
+        assert stored['artifacts'][-1]['id'] == artifact.id
+        assert stored['call_bindings'][0] == s.call_bindings[0].model_dump(mode='json')
+    finally:
+        with psycopg.connect(direct_db) as c:
+            c.execute("DELETE FROM conversation_turn_checkpoints WHERE state ? '_task_execution'")
+            c.execute('DELETE FROM agent_task_states')
+            c.execute('SET CONSTRAINTS ALL IMMEDIATE')
+            c.execute(rollback.read_text())

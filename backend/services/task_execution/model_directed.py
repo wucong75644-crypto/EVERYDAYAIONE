@@ -19,6 +19,9 @@ class WorkingPlanUpdate(WorkingPlan):
         description='修改历史计划时，从同一候选逐字复制版本。')
 
 
+SAVE_IMAGE_PLAN = 'save_task_image_plan'
+
+
 PREFIX = '[Model-directed execution]\n'
 
 
@@ -134,7 +137,11 @@ def record_calls(state, bootstrap, calls, registry,*,input_sha256=None):
     input_sha256=input_sha256 or digest([])
     for call in calls:
         spec = registry.get(call.name)
-        if spec is None or not spec.capability:
+        if call.name == SAVE_IMAGE_PLAN:
+            capability = 'task.image_plan.save'
+        elif spec is not None and spec.capability:
+            capability = spec.capability
+        else:
             continue
         checksum = digest(thaw(call.arguments))
         known = next((v for v in bindings if v.call_id == call.call_id), None)
@@ -156,7 +163,7 @@ def record_calls(state, bootstrap, calls, registry,*,input_sha256=None):
         original = matches[0] if matches else None
         if original is not None and original.status in {'completed', 'failed_after_dispatch'}:
             raise TaskError('TASK_DIRECT_RESULT_REUSE_REQUIRED')
-        if any(v.capability == spec.capability and v.status in {'reserved', 'accepted', 'uncertain'}
+        if any(v.capability == capability and v.status in {'reserved', 'accepted', 'uncertain'}
                and v is not original for v in previous_operations):
             raise TaskError('TASK_DIRECT_EFFECT_UNRESOLVED')
         if original is not None:
@@ -164,13 +171,14 @@ def record_calls(state, bootstrap, calls, registry,*,input_sha256=None):
         else:
             suffix = digest([call.call_id, call.name])[:32]
             rid, step_id = 'host.result.' + suffix, 'host.call.' + suffix
-            kind = 'image' if call.name == 'generate_image' else 'receipt'
+            kind = ('image' if call.name == 'generate_image' else
+                    'text' if call.name == SAVE_IMAGE_PLAN else 'receipt')
             requirements.append(Requirement(id=rid,
                 source_message_id=state.source_message_ids[0] if state else bootstrap.input_message_id,
                 description='本次工具调用的真实执行结果：' + call.name,
                 artifact_kind=kind, minimum=1))
             steps.append(PlanStep(id=step_id, title='执行 ' + call.name,
-                capability=spec.capability, requirement_ids=(rid,),
+                capability=capability, requirement_ids=(rid,),
                 image_item_index=1 if kind == 'image' else None))
         bindings.append(CallBinding(call_id=call.call_id, tool_name=call.name,
             arguments_sha256=checksum, step_id=step_id,input_sha256=input_sha256))

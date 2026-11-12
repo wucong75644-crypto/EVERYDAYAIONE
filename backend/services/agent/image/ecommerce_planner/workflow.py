@@ -165,7 +165,7 @@ class EcommerceWorkflow:
         self.route = None
         self.input = []
 
-    async def initialize(self):
+    async def initialize(self, *, recover_previous=True):
         task = await asyncio.to_thread(lambda: self.scope.table("tasks").select(
             "id,request_params,input_message_id,user_id,org_id,conversation_id,status").eq("id", self.request.task_id).single().execute().data)
         if (task["user_id"] != self.request.user_id or task["org_id"] != self.handler.org_id
@@ -202,6 +202,8 @@ class EcommerceWorkflow:
                 window_task_id=self.request.task_id, generation_run_id=str(uuid4()))
             await self.save()
             return
+        if not recover_previous:
+            return
         # Only the immediate previous chat can be a continuation candidate.
         rows = await asyncio.to_thread(lambda: self.scope.table("tasks").select("id,request_params")
             .eq("conversation_id", self.request.conversation_id).eq("type", "chat").neq("id", self.request.task_id)
@@ -214,8 +216,7 @@ class EcommerceWorkflow:
                 if plan:
                     self.previous = {"task_id": str(rows[0]["id"]), "binding": old, "plan": plan}
                     await self.identify()
-        if self.route is None and not selection and (image_context(self.input) or any(
-                image_context(message.get("content")) for message in self.prepared.messages)):
+        if self.route is None and not selection and image_context(self.input):
             await self.identify()
 
     async def identify(self):
@@ -234,7 +235,8 @@ class EcommerceWorkflow:
             window_task_id=self.request.task_id, generation_run_id=old.generation_run_id if old and mode != "regenerate" else str(uuid4()),
             source_task_id=self.previous["task_id"] if old else None, plan_id=old.plan_id if old else None,
             reset_window=bool(old), reuse_through_stage=self.route.get("reuse_through_stage", 0), skill=old.skill if old else {})
-        await self.save()
+        if not getattr(self.runtime, 'skill_coordination', False) or self.requires_server_binding():
+            await self.save()
 
     async def save(self):
         if getattr(self.runtime, 'skill_coordination', False):
@@ -253,28 +255,40 @@ class EcommerceWorkflow:
         from services.skills.coordination import ActionContext
         if not getattr(self.runtime, 'skill_coordination', False):
             return
-        if self.route is None and not self.request.replay_context:
-            await self.identify()
         kind = (self.route or {}).get('kind')
         action = ('execute_ready' if self.value and self.value.plan_id and self.value.mode in {'retry', 'regenerate'}
                   else 'plan' if kind == 'main_images' or (self.value and self.value.kind == 'main_images')
                   else 'execute_prompt' if kind == 'ordinary_image' else 'other')
         # Validate the complete locked set at the actual action. A temporary
         # default action used while loading cannot conceal a real conflict.
-        if not self.request.replay_context and not getattr(self, '_coordinated', False):
-            skills.set_action(ActionContext(action=action, source='workflow',
-                plan_id=self.value.plan_id if self.value else None))
+        entering_server_plan = (kind == 'main_images' and action == 'plan'
+                                and skills.action_context.action == 'other' and self.server_skill_key() is not None)
+        if entering_server_plan or (not self.request.replay_context and not getattr(self, '_coordinated', False)):
+            from services.skills.coordination import CompositionConflict
+            try:
+                skills.set_action(ActionContext(action=action, source='workflow',
+                    plan_id=self.value.plan_id if self.value else None))
+            except CompositionConflict:
+                from services.skills.runtime import SkillBindingError
+                raise SkillBindingError('当前方法都负责逐图策划。请确认本次沿用哪一个方法。') from None
             self._coordinated = True
-        if skills.workflow_method('image.planning') == 'ecommerce.inline':
+        if self.requires_server_binding() and self.value.skill:
+            pinned = self.value.skill.get('skill_key', SKILL)
+            if skills.manual_skill_id and skills.manual_skill_id != pinned:
+                from services.skills.runtime import SkillBindingError
+                raise SkillBindingError('此操作会继续原服务器方案。请确认沿用原方法，或另开新方案。')
+        if (skills.workflow_method('image.planning') == 'ecommerce.inline'
+                or skills.workflow_method('image.prompting') == 'image.prompt'):
             if self.value and self.value.plan_id:
-                raise PermissionError('SKILL_TRANSITION_NOT_ALLOWED')
+                from services.skills.runtime import SkillBindingError
+                raise SkillBindingError('已有服务器方案可续用。请确认沿用原方案，或另开新方案。')
             self.route = {'kind': 'ordinary_image', 'mode': 'new', 'reuse_through_stage': 0}
             if self.value is None or self.value.kind != 'ordinary_image':
                 self.value = WorkflowBinding(kind='ordinary_image', root_task_id=self.request.task_id,
                     window_task_id=self.request.task_id, generation_run_id=(
                         self.value.generation_run_id if self.value else str(uuid4())))
                 await self.save()
-        if self.value is not None:
+        if self.requires_server_binding():
             skills.bind_workflow(self.value.model_dump(mode='json'))
 
     async def commit_binding(self, value):
@@ -290,25 +304,45 @@ class EcommerceWorkflow:
                                   ('image.submission','image.plan_source')):
                 if skills.workflow_method(scope) == method:
                     return skills.composition.owners.get(scope)
+            if self.value and self.value.kind == 'main_images' and skills.action_context.action == 'other':
+                from services.skills.coordination import ActionContext, method_for
+                composition = skills._compose(action=ActionContext(action='plan', source='workflow'))
+                if method_for(composition, 'image.planning') == 'ecommerce.server_plan':
+                    return composition.owners.get('image.planning')
             return None
         return SKILL if skills and SKILL in skills.active else None
+
+    def requires_server_binding(self):
+        return bool(self.value and self.value.kind == 'main_images' and (self.value.skill or self.value.plan_id
+                    or not getattr(getattr(self, 'runtime', None), 'skill_coordination', True)))
+
+    def server_selected(self):
+        return self.requires_server_binding() or self.server_skill_key() is not None
 
     async def allows_planning(self):
         """Loading a method cannot establish the user's business intent."""
         skills = getattr(self.runtime, 'skill_runtime', None)
-        if skills and skills.workflow_method('image.planning') == 'ecommerce.inline':
-            return False
+        if skills:
+            from services.skills.coordination import ActionContext, CompositionConflict
+            from services.skills.workflow_contracts import incompatible_protocol_tools
+            try:
+                prospective = skills._compose(action=ActionContext(action='plan', source='workflow'))
+            except CompositionConflict:
+                return False
+            if 'plan_ecommerce_images' in incompatible_protocol_tools(prospective):
+                return False
         if self.value and self.value.kind == "main_images":
             return True
         await self.identify()
         return bool(self.value and self.value.kind == "main_images")
 
     async def activated(self):
-        current = await asyncio.to_thread(lambda: self.scope.table("tasks").select("request_params")
-            .eq("id", self.request.task_id).single().execute().data)
-        saved = binding((current.get("request_params") or {}).get(KEY))
-        if saved and not getattr(self.runtime, 'skill_coordination', False):
-            self.value = saved
+        if not getattr(self.runtime, 'skill_coordination', False):
+            current = await asyncio.to_thread(lambda: self.scope.table("tasks").select("request_params")
+                .eq("id", self.request.task_id).single().execute().data)
+            saved = binding((current.get("request_params") or {}).get(KEY))
+            if saved:
+                self.value = saved
         skills = self.runtime.skill_runtime
         key = self.server_skill_key()
         if not skills or key is None:
@@ -329,6 +363,10 @@ class EcommerceWorkflow:
             if self.route and self.route["kind"] == "unavailable":
                 return {"role": "system", "content": "[Server main-image workflow]\n电商策划路由暂不可用，这是系统状态，不是用户缺少用途信息。普通生图和执行已有最终提示词可以按当前工具继续。明确要求电商策划时报告服务暂不可用，不伪造方案或要求用户重新选择用途。"}
             return None
+        if not self.server_selected():
+            return {"role": "system", "content": "[Server main-image workflow]\n"
+                "当前请求适用电商图片策划。ecommerce-main-images 是可选候选。"
+                "已有适用方法时复用该方法。只有需要服务器策划时才申请激活。"}
         return {"role": "system", "content": "[Server main-image workflow]\n" + json.dumps({
             "skill_id": self.server_skill_key() or SKILL, "plan_id": self.value.plan_id, "mode": self.value.mode,
             "instruction": "必须先激活该 Skill 并调用 plan_ecommerce_images；缺少素材编号先用 get_conversation_context 读取真实定位。存在 plan_id 时用 continue_plan_id 续接。未获得策划回包不能仅用文字回复，也不能自行编写方案、提示词或生图。"}, ensure_ascii=False)}
@@ -340,7 +378,7 @@ class EcommerceWorkflow:
 
     async def needs_planner(self, blocks):
         await self.activated()
-        if not self.value or self.value.kind != "main_images":
+        if not self.value or self.value.kind != "main_images" or not self.server_selected():
             return False
         # An old plan is not feedback for this turn's new input/retry. Only a
         # completed, server-generated tool receipt in this Actor's checkpoint
@@ -354,12 +392,13 @@ class EcommerceWorkflow:
         if (not getattr(self.runtime, 'skill_coordination', False) and self.value is None
                 and any(c["name"] == "generate_image" for c in calls)):
             await self.identify()
-        if self.value and self.value.kind == "main_images":
+        if (self.value and self.value.kind == "main_images"
+                and (not getattr(self.runtime, 'skill_coordination', False) or self.server_selected())):
             skills = self.runtime.skill_runtime
             if not skills or self.server_skill_key() is None:
                 return "先调用 activate_skill 激活 ecommerce-main-images，再按当前主图工作流续接策划。", False
         elif any(c["name"] == "plan_ecommerce_images" for c in calls):
             if self.route and self.route["kind"] == "unavailable":
-                return "电商策划入口暂不可用，请稍后重试。普通生图和执行已有最终提示词可继续。", True
+                return "电商策划入口暂不可用，请稍后重试。普通生图和执行已有最终提示词可继续。", False
             return "当前请求未进入电商策划流程。按用户最新要求处理；已有最终提示词时直接使用 generate_image，不重新策划。", False
         return None

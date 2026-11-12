@@ -3,7 +3,7 @@ from contextlib import contextmanager
 import getpass
 from pathlib import Path
 from types import SimpleNamespace
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import psycopg
 from psycopg import sql
@@ -78,10 +78,10 @@ def environment(postgres_socket, tmp_path):
         conn.execute(sql.SQL('DROP DATABASE {}').format(sql.Identifier(name)))
 
 
-def proposal(environment, *, actor=None, scope_org='conversation', name='个人步骤'):
+def proposal(environment, *, actor=None, scope_org='conversation', name='个人步骤', **registration):
     actor = actor or environment.actor
     if scope_org == 'conversation': scope_org = environment.org
-    content = ChatSkillCandidate(name=name, description='用户确认的方法说明。', body='按用户确认的步骤执行。').draft_content()
+    content = ChatSkillCandidate(name=name, description='用户确认的方法说明。', body='按用户确认的步骤执行。', **registration).draft_content()
     proposal_id = uuid4()
     with environment.pool.connection(privileged=True) as conn:
         conn.execute('''INSERT INTO skill_chat_proposals
@@ -130,10 +130,11 @@ def test_personal_skill_is_private_and_resolvable_only_by_its_owner(environment)
     standalone.remove_binding(environment.conversation, standalone_binding)
 
 
-def test_chat_personal_confirmation_publishes_only_after_hash_and_owner_checks(environment):
+@pytest.mark.parametrize('allow_model_selection', [False, True])
+def test_chat_personal_confirmation_publishes_only_after_hash_and_owner_checks(environment, allow_model_selection):
     proposal_id, content = proposal(environment)
     result = environment.service(org_id=environment.org).commit_chat_proposal(proposal_id=proposal_id, expected_version=1,
-        content_sha256=content_digest(content), target_scope='personal')
+        content_sha256=content_digest(content), target_scope='personal', allow_model_selection=allow_model_selection)
     assert result['status'] == 'committed' and result['result']['status'] == 'published'
     with environment.pool.connection(privileged=True) as conn:
         package_row = conn.execute('''SELECT skill_key, owner_user_id FROM skill_packages WHERE id = %s''',
@@ -145,8 +146,14 @@ def test_chat_personal_confirmation_publishes_only_after_hash_and_owner_checks(e
     stored = Path(environment.config.skill_storage_root) / revision_path(package, revision)
     assert stored.is_file() and stored.read_text().endswith(content.body)
     replay = environment.service(org_id=environment.org).commit_chat_proposal(proposal_id=proposal_id, expected_version=1,
-        content_sha256=content_digest(content), target_scope='personal')
+        content_sha256=content_digest(content), target_scope='personal', allow_model_selection=allow_model_selection)
     assert replay['replayed'] is True and replay['package_id'] == result['package_id']
+    directory = environment.service().repository.catalog_candidates()
+    assert next(c for c in directory if c.package_id == UUID(result['package_id'])).catalog_metadata.model_selectable is allow_model_selection
+    with pytest.raises(ValueError, match='SKILL_PROPOSAL_SCOPE_CONFLICT'):
+        environment.service(org_id=environment.org).commit_chat_proposal(proposal_id=proposal_id,
+            expected_version=1, content_sha256=content_digest(content), target_scope='personal',
+            allow_model_selection=not allow_model_selection)
 
     stale_id, stale_content = proposal(environment, name='过期正文')
     with pytest.raises(ValueError, match='SKILL_PROPOSAL_STALE'):
@@ -182,7 +189,7 @@ def test_chat_edit_confirmation_publishes_new_revision_of_owned_personal_skill(e
 
     result = environment.service(org_id=environment.org).commit_chat_proposal(
         proposal_id=proposal_id, expected_version=1, content_sha256=content_digest(edited),
-        target_scope='personal',
+        target_scope='personal', allow_model_selection=True,
     )
 
     assert result['status'] == 'committed' and result['operation'] == 'update'
@@ -194,6 +201,7 @@ def test_chat_edit_confirmation_publishes_new_revision_of_owned_personal_skill(e
     assert detail['available_revision'] != old_revision
     updated = service.read_revision(package_id, detail['available_revision'])
     assert updated.body == '保留原流程并补充新规则。'
+    assert updated.catalog_metadata.model_selectable is True
     assert updated.catalog_metadata.triggers == ('新触发词',)
     assert updated.catalog_metadata.recommended_file_types == ('pdf',)
     assert updated.template_variables['locale'].model_dump() == {
@@ -234,18 +242,38 @@ def test_org_admin_binding_access_does_not_expose_another_users_personal_skill(e
         environment.service(user=environment.other).detail(personal)
 
 
-def test_org_confirmation_creates_review_request_and_platform_confirmation_waits_for_super_admin(environment):
+@pytest.mark.parametrize('allow_model_selection', [False, True])
+def test_org_confirmation_creates_review_request_and_platform_confirmation_waits_for_super_admin(
+        environment, allow_model_selection):
     org_proposal, org_content = proposal(environment, scope_org=environment.org, name='组织流程')
     org_result = environment.service(org_id=environment.org, owner_scope='org').commit_chat_proposal(
-        proposal_id=org_proposal, expected_version=1, content_sha256=content_digest(org_content), target_scope='org')
+        proposal_id=org_proposal, expected_version=1, content_sha256=content_digest(org_content), target_scope='org', allow_model_selection=allow_model_selection)
     assert org_result['status'] == 'committed' and org_result['result']['status'] == 'in_review'
+    org_service = environment.service(org_id=environment.org, owner_scope='org')
+    assert not any(str(c.package_id) == org_result['package_id'] for c in org_service.repository.catalog_candidates())
 
     platform_proposal, platform_content = proposal(environment, scope_org=environment.org, name='平台流程')
     request_result = environment.service(org_id=environment.org).commit_chat_proposal(
         proposal_id=platform_proposal, expected_version=1,
-        content_sha256=content_digest(platform_content), target_scope='platform')
+        content_sha256=content_digest(platform_content), target_scope='platform', allow_model_selection=allow_model_selection)
     assert request_result['status'] == 'awaiting_review'
     admin = environment.service(user=environment.super_admin, owner_scope='platform')
     assert len(admin.list_platform_chat_proposals()) == 1
     published = admin.decide_platform_chat_proposal(platform_proposal, approve=True)
     assert published['status'] == 'committed' and published['result']['status'] == 'published'
+    assert bool(published['result'].get('model_selectable')) is allow_model_selection
+
+
+def test_chat_confirm_validates_workflow_capability_before_enabling_auto_selection(environment):
+    service = environment.service(org_id=environment.org)
+    bad_id, bad = proposal(environment, required_capabilities=['platform.not_registered'],
+        workflow_output_profile='reference-prompts-v1')
+    with pytest.raises(ValueError, match='SKILL_UNKNOWN_CAPABILITY'):
+        service.commit_chat_proposal(proposal_id=bad_id, expected_version=1,
+            content_sha256=content_digest(bad), target_scope='personal', allow_model_selection=True)
+    good_id, good = proposal(environment, workflow_output_profile='reference-prompts-v1')
+    result = service.commit_chat_proposal(proposal_id=good_id, expected_version=1,
+        content_sha256=content_digest(good), target_scope='personal', allow_model_selection=True)
+    package = next(c for c in service.repository.catalog_candidates() if str(c.package_id) == result['package_id'])
+    assert package.catalog_metadata.model_selectable is True
+    assert package.catalog_metadata.task_stage.output_profile == 'reference-prompts-v1'

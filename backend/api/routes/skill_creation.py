@@ -6,7 +6,7 @@ from typing import Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictBool
 
 from api.deps import CurrentUser, CurrentUserId, Database, OrgCtx, ScopedDB
 from core.config import get_settings
@@ -58,6 +58,7 @@ class ConfirmChatProposal(BaseModel):
     expected_version: int = Field(ge=1)
     content_sha256: str = Field(pattern=r'^[a-f0-9]{64}$')
     target_scope: Literal['personal', 'org', 'platform']
+    allow_model_selection: StrictBool = False
 
 
 class ChatProposalFeedback(BaseModel):
@@ -131,7 +132,7 @@ def confirm_chat_proposal(proposal_id: UUID, data: ConfirmChatProposal,
     try:
         result = authoring.commit_chat_proposal(proposal_id=proposal_id,
             expected_version=data.expected_version, content_sha256=data.content_sha256,
-            target_scope=data.target_scope)
+            target_scope=data.target_scope, allow_model_selection=data.allow_model_selection)
     except Exception as error:
         code = str(error)
         if code in ('SKILL_PROPOSAL_UNAVAILABLE', 'SKILL_CONVERSATION_UNAVAILABLE'):

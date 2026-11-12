@@ -6,7 +6,7 @@ from typing import Annotated, Literal
 from pydantic import Field, model_validator
 import yaml
 
-from services.skills.contracts import Contract, PublishRevision, SkillCatalogMetadata, SkillKey
+from services.skills.contracts import Contract, PublishRevision, SkillCatalogMetadata, SkillError, SkillKey
 from services.skills.storage import SkillStorage
 from services.skills.assets import AssetDraft, MAX_ASSETS, SkillResources, TemplateVariable, VariableName
 
@@ -60,7 +60,27 @@ class TransitionDraft(ExpectedVersion):
     action: Literal['start_draft', 'submit', 'approve', 'reject', 'publish', 'publish_private', 'deprecate', 'disable', 'enable']
 
 
+def confirm_model_selection(content: DraftContent, allowed: bool) -> DraftContent:
+    metadata = content.catalog_metadata
+    if allowed:
+        from services.skills.workflow_contracts import validate_protocols
+        contract = validate_protocols(metadata.coordination)
+        if contract and contract.kind == 'workflow':
+            if (metadata.task_stage is None or not any(
+                    'plan' in claim.actions and claim.method in {'image.prompt', 'ecommerce.inline'}
+                    for claim in contract.claims)):
+                raise SkillError('SKILL_AUTOMATIC_HANDOFF_UNAVAILABLE')
+        if 'interactive' not in metadata.execution_modes or not content.description.strip():
+            raise SkillError('SKILL_MODEL_SELECTION_UNAVAILABLE')
+    return content.model_copy(update={'catalog_metadata': metadata.model_copy(update={
+        'model_selectable': allowed,
+    })})
+
+
 def reviewed_document(package, revision: str, content: DraftContent):
+    contract = content.catalog_metadata.coordination
+    if contract and package.skill_key in contract.requires:
+        raise SkillError('SKILL_DEPENDENCY_INVALID')
     metadata = {
         'skill_key': package.skill_key, 'revision': revision, 'description': content.description,
         'catalog': content.catalog_metadata.model_dump(mode='json', exclude_unset=True),

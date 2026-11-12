@@ -174,9 +174,12 @@ class SkillAuthoring:
         except UniqueViolation as error:
             raise SkillError('SKILL_KEY_EXISTS') from error
 
-    def commit_chat_proposal(self, *, proposal_id, expected_version, content_sha256, target_scope):
+    def commit_chat_proposal(self, *, proposal_id, expected_version, content_sha256, target_scope,
+                             allow_model_selection=False):
         """Confirm one private chat proposal under the selected, revalidated scope."""
+        from services.skills.authoring_contracts import confirm_model_selection
         actor_id = self.repository.scope.actor_user_id
+        selection_receipt = {'model_selectable': True} if allow_model_selection else {}
         if target_scope not in ('personal', 'org', 'platform'):
             raise SkillError('SKILL_TARGET_SCOPE_INVALID')
         try:
@@ -192,7 +195,8 @@ class SkillAuthoring:
                 if not proposal:
                     raise SkillError('SKILL_PROPOSAL_UNAVAILABLE')
                 if proposal['status'] in ('committed', 'awaiting_review'):
-                    if proposal['target_scope'] != target_scope:
+                    if (proposal['target_scope'] != target_scope
+                            or bool((proposal['result'] or {}).get('model_selectable')) != allow_model_selection):
                         raise SkillError('SKILL_PROPOSAL_SCOPE_CONFLICT')
                     return {'proposal_id': str(proposal_id), 'status': proposal['status'],
                             'target_scope': proposal['target_scope'], 'target_org_id': proposal['target_org_id'],
@@ -233,6 +237,7 @@ class SkillAuthoring:
                 from services.skills.chat_creation import content_digest
                 if content_digest(content) != content_sha256:
                     raise SkillError('SKILL_CANDIDATE_HASH_MISMATCH')
+                content = confirm_model_selection(content, allow_model_selection)
                 if (proposal.get('operation', 'create') == 'update'
                         and (target_scope != 'personal' or proposal.get('target_scope') != 'personal')):
                     raise SkillError('SKILL_PROPOSAL_SCOPE_CONFLICT')
@@ -247,7 +252,7 @@ class SkillAuthoring:
                     if not cursor.fetchone():
                         raise SkillError('SKILL_ORG_MEMBERSHIP_REQUIRED')
                 if target_scope == 'platform':
-                    result = {'message': '已提交平台 Skill 审核申请，平台管理员审核后会发布。'}
+                    result = {'message': '已提交平台 Skill 审核申请，平台管理员审核后会发布。', **selection_receipt}
                     cursor.execute('''UPDATE public.skill_chat_proposals SET status = 'awaiting_review',
                         target_scope = 'platform', scope_confirmed_by = %s::uuid, scope_selected_at = now(),
                         updated_at = now(), result = %s
@@ -281,12 +286,15 @@ class SkillAuthoring:
                         raise SkillError('SKILL_EDIT_DRAFT_CONFLICT')
 
                     base_content = self._revision_content_for_edit(package, saved_revision)
-                    edited_content = DraftContent.model_validate(proposal['content'])
+                    edited_content = content
                     metadata = base_content.catalog_metadata.model_copy(update={
                         'name': edited_content.catalog_metadata.name,
                         'triggers': edited_content.catalog_metadata.triggers,
                         'task_modes': edited_content.catalog_metadata.task_modes,
-                        'model_selectable': False,
+                        'model_selectable': allow_model_selection,
+                        'coordination': edited_content.catalog_metadata.coordination,
+                        'task_stage': edited_content.catalog_metadata.task_stage,
+                        'required_capabilities': edited_content.catalog_metadata.required_capabilities,
                         'execution_modes': edited_content.catalog_metadata.execution_modes,
                         'agent_domains': ('general',),
                         'conversation_scopes': ('user',),
@@ -320,7 +328,7 @@ class SkillAuthoring:
                         (actor_id, publication.content_sha256, package_id))
                     self._review_or_publish(cursor, package, cursor.fetchone(), 'publish')
                     result = {'message': '个人 Skill 已更新，原有版本保留。',
-                              'package_id': str(package_id), 'status': 'published'}
+                              'package_id': str(package_id), 'status': 'published', **selection_receipt}
                     cursor.execute('''UPDATE public.skill_chat_proposals SET status = 'committed',
                         package_id = %s, scope_confirmed_by = %s::uuid, scope_selected_at = now(),
                         decision_by = %s::uuid, decision_at = now(), updated_at = now(), result = %s
@@ -360,7 +368,7 @@ class SkillAuthoring:
                     cursor.execute("UPDATE public.skill_drafts SET status = 'in_review', version = version + 1 WHERE package_id = %s",
                                    (package.id,))
                     result_status = 'in_review'
-                result = {'message': result_message, 'package_id': str(package.id), 'status': result_status}
+                result = {'message': result_message, 'package_id': str(package.id), 'status': result_status, **selection_receipt}
                 cursor.execute('''UPDATE public.skill_chat_proposals SET status = 'committed',
                     target_scope = %s, target_org_id = %s::uuid, package_id = %s,
                     scope_confirmed_by = %s::uuid, scope_selected_at = now(), decision_by = %s::uuid,
@@ -405,6 +413,9 @@ class SkillAuthoring:
             content = DraftContent.model_validate(proposal['content'])
             if content_digest(content) != proposal['content_sha256']:
                 raise SkillError('SKILL_CANDIDATE_HASH_MISMATCH')
+            from services.skills.authoring_contracts import confirm_model_selection
+            allowed = (proposal['result'] or {}).get('model_selectable') is True
+            content = confirm_model_selection(content, allowed)
             package_id = uuid4()
             cursor.execute('''INSERT INTO public.skill_packages
                 (id, skill_key, source, scope_kind, org_id, owner_user_id)
@@ -420,6 +431,8 @@ class SkillAuthoring:
                 WHERE package_id = %s RETURNING *''', (actor_id, publication.content_sha256, package.id))
             self._review_or_publish(cursor, package, cursor.fetchone(), 'publish')
             result = {'message': '平台管理员已审核并发布 Skill。', 'package_id': str(package.id), 'status': 'published'}
+            if allowed:
+                result['model_selectable'] = True
             cursor.execute('''UPDATE public.skill_chat_proposals SET status = 'committed', package_id = %s,
                 decision_by = %s::uuid, decision_at = now(), decision_reason = %s, updated_at = now(), result = %s
                 WHERE id = %s::uuid''',

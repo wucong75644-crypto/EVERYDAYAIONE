@@ -23,6 +23,8 @@ def skill_step(result: dict, skills, *, step_id: str) -> dict:
         reason = '该方法依赖的其他方法当前不可用，已保留原设置，请检查选择。'
     elif code == 'SKILL_REQUIRED_CAPABILITY_UNAVAILABLE':
         reason = '该组合缺少当前步骤必需的能力，已保留原设置，请调整方法或检查权限。'
+    elif code == 'TASK_METHOD_PHASE_COMPLETED':
+        reason = '逐图方案已经保存，请沿用已完成的方案继续。'
     elif code == 'SKILL_WORKFLOW_METHOD_UNAVAILABLE':
         reason = '该方法声明的执行方式尚不受支持，请检查方法配置。'
     elif code == 'SKILL_COMPOSITION_INCONSISTENT':

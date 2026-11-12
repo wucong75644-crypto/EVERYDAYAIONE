@@ -22,7 +22,9 @@ from services.skills.selection import SkillSelection
 from services.skills.coordination import (
     ActionContext, Composition, CompositionConflict, Participant, build_composition, method_for,
 )
-from services.skills.workflow_contracts import contract_for, required_protocol_tools, incompatible_protocol_tools
+from services.skills.workflow_contracts import (
+    contract_for, required_protocol_tools, incompatible_protocol_tools, image_planning_participants,
+)
 
 
 ACTIVATE_SKILL = "activate_skill"
@@ -170,6 +172,10 @@ class SkillRuntime:
 
     def set_action(self, action: ActionContext):
         composition = self._compose(action=action)
+        if self.allows_dynamic_activation and action.action == 'plan':
+            planners = image_planning_participants(composition.participants)
+            if len(planners) > 1:
+                raise CompositionConflict(planners)
         if not required_protocol_tools(composition) <= self.effective_allowed_tool_names:
             raise SkillError('SKILL_REQUIRED_CAPABILITY_UNAVAILABLE')
         self.action_context, self.composition = action, composition
@@ -319,6 +325,10 @@ class SkillRuntime:
             if not result['ok']:
                 return result
         staged.composition = staged._compose()
+        if self.allows_dynamic_activation and self.action_context.action == 'plan':
+            planners = image_planning_participants(staged.composition.participants)
+            if len(planners) > 1:
+                return control_result('SKILL_WORKFLOW_CONFLICT', conflicting_skills=sorted(planners), state_unchanged=True)
         self.adopt(staged)
         return control_result('SKILL_REQUIRED_SET_ACTIVATED', ok=True)
 
@@ -560,8 +570,9 @@ class SkillRuntime:
             raise SkillBindingError("会话 Skill 配置无效，请检查会话设置。")
         return await self.activate(encoded({"skill_id": skill_id}), session=True)
 
-    async def activate(self, raw_arguments: str, *, manual: bool = False, session: bool = False, scheduled: bool = False) -> dict:
-        result = await self._activate(raw_arguments, manual=manual, session=session, scheduled=scheduled)
+    async def activate(self, raw_arguments: str, *, manual: bool = False, session: bool = False,
+                       scheduled: bool = False, action: ActionContext | None = None) -> dict:
+        result = await self._activate(raw_arguments, manual=manual, session=session, scheduled=scheduled, action=action)
         if (self.recommendation_batch is not None and not (manual or session or scheduled)
                 and isinstance(raw_arguments, str) and len(raw_arguments) <= MAX_ARGS_BYTES + 256):
             try:
@@ -575,8 +586,10 @@ class SkillRuntime:
                 await model_feedback(self, candidate, result["ok"])
         return result
 
-    async def _activate(self, raw_arguments: str, *, manual: bool = False, session: bool = False, scheduled: bool = False) -> dict:
+    async def _activate(self, raw_arguments: str, *, manual: bool = False, session: bool = False,
+                        scheduled: bool = False, action: ActionContext | None = None) -> dict:
         self._check_cancelled()
+        action = action or self.action_context
         if not self.allows_dynamic_activation and not (scheduled and self.scheduled_snapshot is not None):
             return control_result("SKILL_SCHEDULED_ACTIVATION_FORBIDDEN")
         try:
@@ -610,7 +623,7 @@ class SkillRuntime:
                     revision=candidate.revision, body_sha256='', sources=('model',),
                     contract=contract_for(candidate, ''))
                 from services.skills.coordination import owners_for
-                owners_for([*self._participants(), probe], self.action_context)
+                owners_for([*self._participants(), probe], action)
             validated = await self.source.load(candidate)
             self._check_cancelled()
             self._validate_identity(candidate, validated)
@@ -636,7 +649,17 @@ class SkillRuntime:
                 effective_allowed_tool_names=ceiling,
                 asset_manifest_sha256=asset_manifest_digest(validated.resources), loaded_asset_ids=ids,
             )
-            composition = self._compose(active=proposed, tools=ceiling)
+            if (self.checkpoint_version == 2 and action.action in {'plan', 'other'}
+                    and not (manual or session or scheduled)):
+                planners = image_planning_participants(self._participants(proposed))
+                if candidate.skill_key in planners:
+                    if len(planners) > 1:
+                        raise CompositionConflict(planners)
+                    if self.task_execution_state is not None and self.task_execution_state.model_directed:
+                        from services.task_execution.direct_loop import saved_image_plans
+                        if saved_image_plans(self.task_execution_state):
+                            raise SkillError('TASK_METHOD_PHASE_COMPLETED')
+            composition = self._compose(active=proposed, tools=ceiling, action=action)
             for key in proposed:
                 skill_tool_ceiling(self.directory[key].catalog_metadata, self.platform_tool_names, ceiling,
                                    available_tool_names=self.available_tool_names)
@@ -644,7 +667,7 @@ class SkillRuntime:
                 raise SkillError('SKILL_REQUIRED_CAPABILITY_UNAVAILABLE')
             self.active = proposed
             self.effective_allowed_tool_names = ceiling
-            self.composition = composition
+            self.action_context, self.composition = action, composition
             return control_result("SKILL_ACTIVATED", ok=True, skill_id=candidate.skill_key,
                                   revision=candidate.revision,
                                   effective_allowed_tool_names=sorted(ceiling))
@@ -748,8 +771,9 @@ class SkillRuntime:
                     from services.task_execution.methods import profile_for
                     binding = completed_bindings.get(saved.skill_key)
                     if binding is None:
-                        from services.task_execution.methods import source_phase_binding
-                        binding = source_phase_binding(self.task_execution_state,candidate,validated)
+                        from services.task_execution.methods import direct_phase_binding, source_phase_binding
+                        binding = (direct_phase_binding(self.task_execution_state, candidate)
+                                   or source_phase_binding(self.task_execution_state, candidate, validated))
                     if (binding is None or str(candidate.package_id) != str(binding.package_id)
                             or (saved.revision, saved.body_sha256) != (binding.revision, binding.body_sha256)
                             or profile_for(candidate, validated) != (binding.profile_id, True, binding.contract_source)):

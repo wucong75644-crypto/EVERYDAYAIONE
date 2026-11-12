@@ -189,3 +189,41 @@ async def test_exit_batch_defers_generation_and_keeps_explicit_host_ceiling():
     results = {m['tool_call_id']: parse_json_tool_content(m['content']) for m in p.messages if m['role'] == 'tool'}
     assert results['business']['code'] == 'SKILL_ACTIVATION_BARRIER'
     assert results['exit']['code'] == 'SKILL_DEACTIVATED'
+
+
+async def test_new_ecommerce_route_stays_optional_until_model_activates_server_method():
+    from services.handlers.chat.execution_engine import _execute_skill_batch
+    from services.handlers.chat.execution_sink import CollectingExecutionSink
+    from tests.test_skill_runtime_actor import actor, prepared
+    runtime, p = actor(), prepared()
+    server = item('ecommerce-main-images', tools=('plan_ecommerce_images',), coordination={
+        'kind': 'workflow', 'claims': [
+            {'scope': 'image.planning', 'method': 'ecommerce.server_plan', 'actions': ['plan']},
+        ],
+    })
+    source = Source([server])
+    skills = state(source, platform_tool_names={'plan_ecommerce_images'}, authorized_tool_names={'plan_ecommerce_images'})
+    await skills.initialize()
+    runtime.skill_runtime = skills
+    runtime.skill_coordination = True
+    value = flow()
+    value.runtime = runtime
+    value.request.replay_context = None
+    value.route = {'kind': 'main_images', 'mode': 'new'}
+    value.value = WorkflowBinding(kind='main_images', root_task_id=str(uuid4()),
+        window_task_id=str(uuid4()), generation_run_id=str(uuid4()))
+    p.ecom_workflow = value
+    assert not value.requires_server_binding()
+    assert '可选候选' in value.context_message()['content']
+    assert not await value.needs_planner([])
+    source.load.assert_not_awaited()
+
+    await _execute_skill_batch(prepared=p, calls=[{'id': 'choose', 'name': 'activate_skill',
+        'arguments': json.dumps({'skill_id': server.skill_key})}], runtime=runtime, blocks=[],
+        sink=CollectingExecutionSink(), start_times={}, turn=0, next_model_round=1,
+        repeated_tool_call_guard=None)
+    assert value.requires_server_binding()
+    assert value.value.skill['revision'] == server.revision
+    assert await value.needs_planner([])
+    assert await value.barrier([{'name': 'plan_ecommerce_images'}]) is None
+    source.load.assert_awaited_once()

@@ -241,14 +241,19 @@ async def execute_chat(
                 isinstance(saved_skill_state, dict) and saved_skill_state.get('version') == 2)
             runtime.committed_composition_revision = ((saved_skill_state or {}).get('composition') or {}).get('revision', 0)
         if (runtime is not None and hasattr(handler, "db")
-                and runtime.task_bootstrap is None and runtime.task_execution_state is None
                 and prepared.execution_context.feature_flags.get("ecom_image_planning_enabled") is True
                 and prepared.execution_context.context_scope == "user"
                 and prepared.execution_context.execution_mode == "interactive"):
-            prepared.ecom_workflow = EcommerceWorkflow(handler, request, runtime, prepared)
-            await prepared.ecom_workflow.initialize()
-            handler._ecom_workflow_pin = (prepared.ecom_workflow.value.skill
-                if prepared.ecom_workflow.value else None)
+            from services.agent.image.ecommerce_planner.workflow import KEY as ECOM_WORKFLOW_KEY, SKILL as SERVER_PLANNER
+            workflow = EcommerceWorkflow(handler, request, runtime, prepared)
+            if ((runtime.task_bootstrap is None and runtime.task_execution_state is None)
+                    or request.params.get(ECOM_WORKFLOW_KEY)
+                    or (request.selected_skill and request.selected_skill.skill_id == SERVER_PLANNER)):
+                prepared.ecom_workflow = workflow
+                await workflow.initialize()
+                handler._ecom_workflow_pin = workflow.value.skill if workflow.requires_server_binding() else None
+            else:
+                prepared.ecom_workflow_candidate = workflow
         if runtime is None and '_skill_intent' in request.params:
             from services.skills.retry import parse_intent
             from services.skills.runtime import SkillBindingError
@@ -403,13 +408,14 @@ async def execute_chat(
                 )
             await output.on_block(block)
         workflow = getattr(prepared, "ecom_workflow", None)
-        if workflow and workflow.value and workflow.value.kind == "main_images":
+        if workflow and workflow.requires_server_binding():
             if skills is None:
                 raise SkillBindingError("原主图工作流的 Skill 当前不可用，已停止执行。")
             if workflow.server_skill_key() is None:
                 await runtime.safe_point(SafePoint.BEFORE_TOOL)
                 await _check_cancelled(event, request, prepared.messages, blocks, totals, "before_workflow_skill")
-                result = await skills.activate(json.dumps({"skill_id": "ecommerce-main-images"}))
+                key = workflow.value.skill.get("skill_key", "ecommerce-main-images")
+                result = await skills.activate(json.dumps({"skill_id": key}))
                 if not result.get("ok"):
                     raise SkillBindingError("主图入口 Skill 无法启用，已停止执行：" + result.get("code", "SKILL_UNAVAILABLE"))
                 block = skill_step(result, skills, step_id="workflow-skill")
@@ -843,8 +849,15 @@ async def _run_loop(
         tools=await constrain_route_tools(prepared,getattr(handler,'_knowledge_run',None),tools)
         from services.task_execution.model_directed import enabled as direct_enabled
         if direct_enabled(runtime) and not fast_knowledge:
-            from services.task_execution.direct_loop import schemas as direct_schemas
+            from services.task_execution.direct_loop import active_image_profiles, saved_image_plans, schemas as direct_schemas
             from services.task_execution.model_bridge import controller_for
+            plans = saved_image_plans(runtime.task_execution_state)
+            if active_image_profiles(runtime) or plans:
+                tools = [tool for tool in tools if tool['function']['name'] != 'image_agent']
+                if not plans:
+                    from services.task_execution.direct_loop import existing_image_source_schema
+                    tools = [existing_image_source_schema(tool) if tool['function']['name'] == 'generate_image'
+                             else tool for tool in tools]
             tools.extend(direct_schemas(runtime,controller_for(runtime)))
         elif runtime and runtime.task_execution_state is not None and not fast_knowledge:
             from services.task_execution.model_bridge import controller_for
@@ -944,10 +957,7 @@ async def _run_loop(
         if direct_enabled(runtime):
             from services.task_execution.direct_loop import plan_guard_calls
             guard_calls=plan_guard_calls(calls)
-        repeated_tool_call_action = (
-            "continue" if any(call["name"] in SKILL_CONTROL_TOOLS for call in calls)
-            else repeated_tool_call_guard.observe(guard_calls)
-        )
+        repeated_tool_call_action = repeated_tool_call_guard.observe(guard_calls)
         if repeated_tool_call_action == "stop":
             await _stop_repeated_tool_calls(
                 calls=calls,
@@ -1313,6 +1323,7 @@ async def _execute_tools(**kwargs):
     import copy
     sequence=runtime.replay_save_sequence
     original_state=runtime.task_execution_state
+    original_skills=runtime.skill_runtime
     original_plan=runtime.task_direct_plan
     original_plan_owner=runtime.task_direct_plan_owner
     original_plan_id=runtime.task_direct_plan_id
@@ -1322,6 +1333,7 @@ async def _execute_tools(**kwargs):
     except BaseException:
         if runtime.replay_save_sequence==sequence:
             runtime.task_execution_state=original_state
+            runtime.skill_runtime=original_skills
             runtime.task_direct_plan=original_plan
             runtime.task_direct_plan_owner=original_plan_owner
             runtime.task_direct_plan_id=original_plan_id
@@ -1356,11 +1368,31 @@ async def _execute_tools_impl(
     from services.task_execution.plan_facts import pending_review
     from services.task_execution.requirement_changes import refresh as refresh_user_changes,blocked as revision_blocked,phase_repair
     if runtime is not None:await refresh_user_changes(runtime)
+    candidate_workflow = getattr(prepared, 'ecom_workflow_candidate', None)
+    if candidate_workflow is not None and prepared.ecom_workflow is None:
+        from services.agent.image.ecommerce_planner.workflow import SKILL as SERVER_PLANNER
+        for call in calls:
+            if call['name'] != ACTIVATE_SKILL:
+                continue
+            try:
+                key = json.loads(call.get('arguments') or '{}').get('skill_id')
+            except (ValueError, TypeError, AttributeError):
+                continue
+            skills = runtime.skill_runtime
+            candidate = skills.directory.get(key) if skills is not None and isinstance(key, str) else None
+            if (key == SERVER_PLANNER and candidate is not None and candidate.catalog_metadata.model_selectable
+                    and not any(b.get('candidate_skill_id') == key for b in blocks)):
+                await candidate_workflow.initialize(recover_previous=False)
+                prepared.ecom_workflow = candidate_workflow
+                break
     from services.task_execution.model_directed import enabled as direct_enabled
     direct_errors={}
     direct_reused=[]
     if direct_enabled(runtime):
-        from services.task_execution.direct_loop import stage_plan_calls,stage_native_calls
+        from services.task_execution.direct_loop import (
+            retire_saved_image_method, stage_plan_calls, stage_native_calls, stage_image_plan_batch,
+        )
+        from services.task_execution.model_directed import SAVE_IMAGE_PLAN
         assistant=_assistant_tool_message(turn_text,calls)
         if getattr(prepared,'last_provider_output',None):assistant['_dashscope_output']=prepared.last_provider_output
         if getattr(prepared,'last_reasoning_content',''):assistant['reasoning_content']=prepared.last_reasoning_content
@@ -1368,6 +1400,19 @@ async def _execute_tools_impl(
             from services.task_execution.direct_loop import resume_from_model
             await resume_from_model(runtime,prepared,blocks,calls,assistant,turn=turn,
                 model_round=next_model_round,build_checkpoint=_build_replay_context)
+            return None
+        if (any(c['name'] == SAVE_IMAGE_PLAN for c in calls)
+                and not any(c['name'] in SKILL_CONTROL_TOOLS for c in calls)):
+            from services.task_execution.model_bridge import commit_projection
+            from services.tools.catalog import build_capability_catalog
+            candidate = stage_image_plan_batch(runtime, prepared, blocks, calls, assistant, build_capability_catalog())
+            original_skills = runtime.skill_runtime
+            runtime.skill_runtime = retire_saved_image_method(runtime, candidate)
+            await commit_projection(runtime=runtime, candidate=candidate, prepared=prepared, blocks=blocks,
+                point=SafePoint.AFTER_TOOL, build_checkpoint=_build_replay_context, turn=turn,
+                next_model_round=next_model_round, repeated_tool_call_guard=repeated_tool_call_guard)
+            if runtime.skill_runtime is not original_skills:
+                _apply_skill_context(prepared, runtime.skill_runtime)
             return None
         calls,staged=stage_plan_calls(runtime,prepared,blocks,calls,assistant)
         assistant_already_present=assistant_already_present or staged
@@ -1487,7 +1532,7 @@ async def _execute_tools_impl(
                 await commit_projection(runtime=runtime,candidate=candidate,prepared=prepared,blocks=blocks,
                     point=SafePoint.BEFORE_TOOL,build_checkpoint=_build_replay_context,turn=turn,
                     next_model_round=next_model_round,repeated_tool_call_guard=repeated_tool_call_guard)
-            from services.task_execution.direct_loop import reuse_images
+            from services.task_execution.direct_loop import duplicate_image_plan_items, reuse_images
             candidate,direct_reused,reused_parts,reuse_errors=await reuse_images(runtime,
                 [c for c in calls if c['id'] not in direct_errors])
             direct_errors.update(reuse_errors)
@@ -1497,6 +1542,9 @@ async def _execute_tools_impl(
                     point=SafePoint.BEFORE_TOOL,build_checkpoint=_build_replay_context,turn=turn,
                     next_model_round=next_model_round,repeated_tool_call_guard=repeated_tool_call_guard)
                 for part in reused_parts:await sink.on_block(part)
+            reused_ids = {result[0]['id'] for result in direct_reused}
+            direct_errors.update(duplicate_image_plan_items(runtime.task_execution_state,
+                [call for call in calls if call['id'] not in direct_errors and call['id'] not in reused_ids]))
         if not direct_enabled(runtime):
             task_blocked_names = blocked_tool_names(runtime.task_execution_state, catalog, runtime.skill_runtime)
             plan_blockers = plan_dispatch_blockers(runtime.task_execution_state, catalog)
@@ -1890,6 +1938,7 @@ async def _execute_skill_batch_impl(
         runtime.skill_runtime = skills
     results = []
     skill_blocks = []
+    rejected_candidates = {b['candidate_skill_id'] for b in blocks if b.get('candidate_skill_id')}
     ordered_calls = skills.ordered_control_calls(calls) if skills is not None else calls
     for call in ordered_calls:
         key = None
@@ -1918,8 +1967,10 @@ async def _execute_skill_batch_impl(
                     result = await skills.deactivate(call.get("arguments", ""))
                     if result["ok"]:
                         prepared.messages[:] = [m for m in prepared.messages if m not in old_messages]
+            elif isinstance(key, str) and key in rejected_candidates:
+                result = control_result('SKILL_CANDIDATE_ALREADY_REJECTED', state_unchanged=True,
+                    message='当前候选已拒绝，请继续使用现有方法或选择不同的候选。')
             elif (key == "ecommerce-main-images" and workflow
-                    and skills.workflow_method('image.planning') != 'ecommerce.inline'
                     and not await workflow.allows_planning()):
                 result = control_result("SKILL_ROUTING_UNAVAILABLE" if workflow.route and workflow.route["kind"] == "unavailable" else "SKILL_NOT_APPLICABLE",
                     message="电商策划路由暂不可用。" if workflow.route and workflow.route["kind"] == "unavailable" else "当前任务不需要电商策划；已有提示词直接生图，必要时使用聊天图片编排方法。")
@@ -1931,16 +1982,26 @@ async def _execute_skill_batch_impl(
                     result = control_result('TASK_METHOD_PHASE_COMPLETED',
                         message='该方法阶段已经交付，请复用已保存的完整成果继续后续步骤。')
                 else:
-                    result = await skills.activate(call.get("arguments", ""))
+                    skills.task_execution_state = runtime.task_execution_state
+                    activation_options = {}
+                    if key == "ecommerce-main-images" and workflow and skills.action_context.action == 'other':
+                        from services.skills.coordination import ActionContext
+                        activation_options['action'] = ActionContext(action='plan', source='workflow')
+                    result = await skills.activate(call.get("arguments", ""), **activation_options)
                     if result.get('ok') and runtime.task_execution_state is not None:
                         from services.task_execution.methods import append_active_methods
                         runtime.task_execution_state = append_active_methods(runtime.task_execution_state, skills,
                             activated_skill_id=result['skill_id'])
                         result = {**result, 'task_revision': runtime.task_execution_state.revision}
-        optional_conflict = (result.get('code') in {'SKILL_WORKFLOW_CONFLICT', 'SKILL_DEPENDENCY_UNAVAILABLE'}
-            and skills is not None and key != skills.manual_skill_id and key not in skills.session_skill_ids)
-        if call["name"] == ACTIVATE_SKILL and not optional_conflict:
-            skill_blocks.append(skill_step(result, skills, step_id=call["id"]))
+        if call["name"] == ACTIVATE_SKILL and result.get('code') != 'SKILL_CANDIDATE_ALREADY_REJECTED':
+            block = skill_step(result, skills, step_id=call["id"])
+            if (not result['ok'] and isinstance(key, str) and skills is not None
+                    and key in skills.directory and key != skills.manual_skill_id and key not in skills.session_skill_ids):
+                # Missing dependencies can be repaired by a later activation.
+                if result['code'] != 'SKILL_DEPENDENCY_UNAVAILABLE':
+                    block['candidate_skill_id'] = key
+                    rejected_candidates.add(key)
+            skill_blocks.append(block)
         text = json.dumps(result, ensure_ascii=False)
         results.append((call, text, not result["ok"], text))
     apply_tool_results(
@@ -1951,7 +2012,7 @@ async def _execute_skill_batch_impl(
     if skills is not None:
         _apply_skill_context(prepared, skills)
         workflow = getattr(prepared, 'ecom_workflow', None)
-        if workflow and hasattr(workflow, 'coordinate'):
+        if workflow and hasattr(workflow, 'coordinate') and any(b.get('status') == 'completed' for b in skill_blocks):
             await workflow.coordinate(skills)
             await workflow.activated()
     if runtime:

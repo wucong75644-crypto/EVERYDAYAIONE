@@ -221,6 +221,15 @@ def completed_phase_bindings(state):
     return tuple(result)
 
 
+def direct_phase_binding(state, candidate):
+    if not state.model_directed:
+        return None
+    completed = {artifact_id for result in state.results for artifact_id in result.artifact_ids}
+    return next((a.image_method for a in reversed(state.artifacts)
+        if a.id in completed and a.image_method is not None and a.image_method.retire_on_complete
+        and a.image_method.skill_key == candidate.skill_key), None)
+
+
 def source_phase_binding(state, candidate, active):
     from .image_sources import SOURCE_REQUIREMENT, has_source_handoff
     if (not has_source_handoff(state) or candidate.skill_key in state.applicable_method_ids
@@ -250,6 +259,10 @@ def retire_completed_methods(skills, state):
         proof=source_phase_binding(state,skills.directory[key],active)
         if key not in known and proof is not None:
             retiring.append(proof)
+    return retire_bound_methods(skills, state, retiring)
+
+
+def retire_bound_methods(skills, state, retiring):
     if not retiring:
         return skills
     if skills.execution_mode != 'interactive' or skills.checkpoint_version != 2:

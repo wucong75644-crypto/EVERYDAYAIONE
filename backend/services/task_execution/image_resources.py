@@ -180,6 +180,13 @@ def verify_native_resources(raw_state,call_id,arguments,normalized,resolved,*,na
             if not binding_required:return
             raise TaskError('TASK_IMAGE_RESOURCE_BINDING_REQUIRED')
         value=json.loads(recipe.inline_text)
+        from .direct_loop import image_plan_item
+        handoff = value.get('method_handoff')
+        if handoff is not None:
+            expected = image_plan_item(state, set(), arguments, artifact_id=handoff['artifact_id'])
+            if handoff != expected:
+                raise TaskError('TASK_IMAGE_ARGUMENTS_NOT_PLANNED')
+        # Recipes committed before a plan was saved remain resumable.
         from services.handlers.chat_image_request import validate_single_image_request
         settings=validate_single_image_request(normalized,len(resolved))
         actual={**normalized,**{k:settings[k] for k in ('model','resolution','output_format','aspect_ratio')}}
