@@ -114,7 +114,7 @@ def real_replay(monkeypatch, tmp_path, mock_db):
     for message in data['checkpoint']['messages']:
         originals.extend(copy.deepcopy(raw) for raw in message.get('tool_calls', [])
                          if ':round:2:' in raw['id'] and raw['function']['name'] == 'generate_image')
-    assert len(originals) == 6
+    assert len(originals) == data.get('expected_count', 6)
     arguments = [json.loads(raw['function']['arguments']) for raw in originals]
     resolver_calls = Mock()
     # Keep Python descriptor binding when counting full original decoding.
@@ -160,12 +160,16 @@ async def select(replay, arguments, entrypoint):
     await execute(replay.runtime, replay.prepared, replay.handler, replay.request, calls)
 
 
+def mapped_args(replay, arguments):
+    from tests.test_chat_content_bundle import real_mapping
+    mapping, _ = real_mapping(replay, arguments)
+    return {**{key: copy.deepcopy(value) for key, value in arguments.items() if key not in {'prompt', 'source_prompt'}},
+            'chat_input': mapping}
+
+
 def complete_prompt(replay, arguments):
-    from services.handlers.chat_content_bundle import bundle
-    source = arguments['source_prompt']
-    row = next(row for row in replay.rows if row['id'] == source['message_id'])
-    parts = json.loads(row['content']) if isinstance(row['content'], str) else row['content']
-    return bundle(parts[source['content_index']]['text'], arguments['prompt'])[0]
+    from tests.test_chat_content_bundle import real_mapping
+    return real_mapping(replay, arguments)[1]
 
 
 @pytest.mark.asyncio
@@ -184,23 +188,9 @@ async def test_real_single_and_all_preserve_original_text_and_reference(real_rep
         replay.runtime.checkpoint_base[content_tools.STATE] = copy.deepcopy(replay.saved[-1][content_tools.STATE])
         if '_task_execution' in replay.saved[-1]:
             replay.runtime.task_execution_state = TaskState.model_validate(replay.saved[-1]['_task_execution'])
-    calls = []
-    for index, original in enumerate(arguments):
-        args = copy.deepcopy(original)
-        if entrypoint == 'direct':
-            args['source_prompt'].pop('sha256')
-        else:
-            args.pop('source_prompt')
-        if entrypoint.endswith('_selector'):
-            replay.prepared.content_controls_available = True
-            args.pop('prompt')
-            args['chat_text_source'] = {**{key: value for key, value in original['source_prompt'].items() if key != 'sha256'},
-                'sha256': hashlib.sha256(original['prompt'].encode()).hexdigest(), 'mode': 'exact'}
-            from services.agent.tool_args_validator import validate_tool_args
-            tools = content_tools.model_tools([build_capability_catalog().require('generate_image').to_schema()])
-            _cleaned, error = validate_tool_args('generate_image', args, tools)
-            assert not error
-        calls.append(call('generate_image', args, f'image-{index}'))
+    calls = [call('generate_image', mapped_args(replay, original), f'image-{index}')
+             for index, original in enumerate(arguments)]
+    replay.prepared.content_controls_available = True
     await execute(replay.runtime, replay.prepared, replay.handler, replay.request, calls)
     assert len(replay.generation) == count, str(replay.prepared.messages[-1])[:900]
     assert replay.resolver_calls.call_count == 1
@@ -213,12 +203,12 @@ async def test_real_single_and_all_preserve_original_text_and_reference(real_rep
     assert len(recipes) == count
     for expected, actual, recipe in zip(arguments, replay.generation, recipes):
         complete = complete_prompt(replay, expected)
-        assert actual['prompt'] == (expected['prompt'] if entrypoint == 'direct' else complete)
+        assert actual['prompt'] == complete
         assert recipe['normalized']['prompt'] == complete
         assert actual['mode'] == expected['mode'] == 'image_to_image'
         assert actual['references'] == expected['references']
         assert recipe['resolved'][0]['content_sha256'] == hashlib.sha256(original_bytes).hexdigest()
-        assert recipe['normalized']['source_prompt']['sha256'] == hashlib.sha256(complete.encode()).hexdigest()
+        assert recipe['normalized']['source_prompt']['handoff']['version'] == 2
     if entrypoint == 'legacy':
         assert len(replay.history_outputs) == 1
         from services.agent.tool_result_envelope import SOURCE_SELECTION_BUDGET
@@ -246,6 +236,7 @@ async def test_real_original_wrong_hashes_stop_before_dispatch(real_replay):
 async def test_real_revision_selects_latest_second_item(real_replay, entrypoint, count):
     replay = real_replay
     second = replay.arguments[1]
+    previous_second = copy.deepcopy(second)
     revised = second['prompt'] + '\n本轮修订：封面文字保持清晰。'
     message = {'id': str(uuid4()), 'conversation_id': replay.task['conversation_id'],
         'org_id': replay.task['org_id'], 'role': 'assistant', 'status': 'completed',
@@ -262,11 +253,45 @@ async def test_real_revision_selects_latest_second_item(real_replay, entrypoint,
     second['source_prompt'] = {'message_id': message['id'], 'content_index': 0}
     arguments = replay.arguments if count == 6 else [second]
     await select(replay, arguments, entrypoint)
+    replay.prepared.content_controls_available = True
+    updated_args = []
+    for args in arguments:
+        if args is not second:
+            updated_args.append(mapped_args(replay, args))
+            continue
+        revised_args = mapped_args(replay, previous_second)
+        mapping = revised_args['chat_input']
+        old_source = previous_second['source_prompt']
+        old_row = next(row for row in replay.rows if row['id'] == old_source['message_id'])
+        old_parts = json.loads(old_row['content']) if isinstance(old_row['content'], str) else old_row['content']
+        old_text = old_parts[old_source['content_index']]['text']
+        a = old_text.index(previous_second['prompt']); b = a + len(previous_second['prompt'])
+        split = []
+        for part in mapping['parts']:
+            if part['action'] == 'text' and part['start'] <= a < b <= part['end']:
+                if part['start'] < a:
+                    split.append({**part, 'end': a})
+                split.append({'source': 0, 'start': a, 'end': b, 'action': 'superseded',
+                              'target': 'prompt', 'reason': '本轮只替换正文，其他方案要求继承'})
+                if b < part['end']:
+                    split.append({**part, 'start': b})
+            else:
+                split.append(part)
+        replacement = len(split)
+        for part in split:
+            if part['action'] == 'superseded': part['superseded_by'] = replacement
+        mapping['sources'].append({'message_id': message['id'], 'content_index': 0})
+        split.append({'source': 1, 'start': 0, 'end': len(revised), 'action': 'text', 'target': 'prompt'})
+        mapping['parts'] = split
+        updated_args.append(revised_args)
     await execute(replay.runtime, replay.prepared, replay.handler, replay.request, [
-        call('generate_image', {k: v for k, v in args.items() if k != 'source_prompt'}, f'revised-{index}')
-        for index, args in enumerate(arguments)])
-    assert [args['prompt'] for args in replay.generation] == [complete_prompt(replay, args) for args in arguments]
-    assert replay.generation[1 if count == 6 else 0]['prompt'] == revised
+        call('generate_image', args, f'revised-{index}') for index, args in enumerate(updated_args)])
+    assert len(replay.generation) == count
+    updated = replay.generation[1 if count == 6 else 0]['prompt']
+    assert revised in updated and '负面提示词' in updated
+    assert '统一保留内容' in updated
+    for old, actual in zip(arguments, replay.generation):
+        if old is not second: assert actual['prompt'] == complete_prompt(replay, old)
     assert replay.resolver_calls.call_count == 1
 
 
@@ -287,12 +312,13 @@ async def test_real_partial_failure_preserves_successful_siblings(real_replay):
     replay = real_replay
     arguments = copy.deepcopy(replay.arguments)
     for index, args in enumerate(arguments):
-        if index != 1:
-            args['source_prompt'].pop('sha256')
+        arguments[index] = mapped_args(replay, args)
+        if index == 1:
+            arguments[index]['chat_input']['sources'][0]['sha256'] = '0' * 64
     await execute(replay.runtime, replay.prepared, replay.handler, replay.request, [
         call('generate_image', args, f'partial-{index}') for index, args in enumerate(arguments)])
     assert len(replay.generation) == 5
-    assert [args['prompt'] for args in replay.generation] == [args['prompt'] for index, args in enumerate(arguments) if index != 1]
+    assert [args['prompt'] for args in replay.generation] == [complete_prompt(replay, args) for index, args in enumerate(replay.arguments) if index != 1]
     assert all(args['mode'] == 'image_to_image' and args['references'] for args in replay.generation)
     assert '停止提交' in replay.handler._tool_result_stop_reason
     assert replay.resolver_calls.call_count == 1
@@ -303,13 +329,19 @@ async def test_real_selection_change_after_checkpoint_stops_before_dispatch(real
     replay = real_replay
     explicit_canvas(replay)
     await select(replay, replay.arguments, 'new')
+    frozen_inputs = [mapped_args(replay, args) for args in replay.arguments]
+    for args in frozen_inputs:
+        source = args['chat_input']['sources'][0]
+        row = next(row for row in replay.rows if row['id'] == source['message_id'])
+        parts = json.loads(row['content']) if isinstance(row['content'], str) else row['content']
+        source['sha256'] = hashlib.sha256(parts[source['content_index']]['text'].encode()).hexdigest()
     source_id = replay.arguments[0]['source_prompt']['message_id']
     original = next(row for row in replay.rows if row['id'] == source_id)
     original['content'] = [{'type': 'text', 'text': '原文已经变更'}]
     replay.db.set_table_data('messages', replay.rows)
     await execute(replay.runtime, replay.prepared, replay.handler, replay.request, [
-        call('generate_image', {k: v for k, v in args.items() if k != 'source_prompt'}, f'changed-{index}')
-        for index, args in enumerate(replay.arguments)])
+        call('generate_image', args, f'changed-{index}')
+        for index, args in enumerate(frozen_inputs)])
     assert replay.generation == []
     assert '停止提交' in replay.handler._tool_result_stop_reason
 
@@ -320,8 +352,9 @@ async def test_real_batch_cache_rechecks_deleted_reference(real_replay):
     from services.tools import ToolCall
     replay = real_replay
     explicit_canvas(replay)
-    args = copy.deepcopy(replay.arguments[0])
-    args['source_prompt'].pop('sha256')
+    original = mapped_args(replay, replay.arguments[0])
+    args, _ = content_tools.bind_mapping(replay.db, replay.task['id'], replay.prepared.execution_context,
+        'generate_image', {key: value for key, value in original.items() if key != 'chat_input'}, original['chat_input'])
     calls = [ToolCall('cache-first', 'generate_image', args), ToolCall('cache-second', 'generate_image', args)]
     state = record_calls(None, replay.runtime.task_bootstrap, calls, build_capability_catalog())
     prepare = replay.runtime.task_image_resource_resolver.prepare_batch()
@@ -348,8 +381,9 @@ async def test_real_frozen_legacy_text_uses_existing_history_proof(real_replay, 
     replay.db.set_table_data('messages', replay.rows)
     replay.db.set_table_data('tasks', [replay.task])
     await select(replay, replay.arguments, entrypoint)
+    replay.prepared.content_controls_available = True
     await execute(replay.runtime, replay.prepared, replay.handler, replay.request, [
-        call('generate_image', {k: v for k, v in args.items() if k != 'source_prompt'}, f'legacy-text-{index}')
+        call('generate_image', mapped_args(replay, args), f'legacy-text-{index}')
         for index, args in enumerate(replay.arguments)])
     assert [args['prompt'] for args in replay.generation] == [complete_prompt(replay, args) for args in replay.arguments]
 
@@ -388,7 +422,7 @@ async def test_user_reference_canvas_requirement_overrides_selected_plan(real_re
     replay.db.set_table_data('messages', replay.rows)
     args = copy.deepcopy(replay.arguments[0])
     args['source_prompt'].pop('sha256')
-    await execute(replay.runtime, replay.prepared, replay.handler, replay.request, [call('generate_image', args, 'keep-canvas')])
+    await execute(replay.runtime, replay.prepared, replay.handler, replay.request, [call('generate_image', mapped_args(replay, args), 'keep-canvas')])
     assert replay.generation == []
     assert 'IMAGE_ASPECT_RATIO_UNSUPPORTED' in str(replay.prepared.messages)
     assert '80:79' in replay.handler._tool_result_stop_reason
@@ -428,7 +462,7 @@ async def test_selected_exact_pixels_cannot_silently_become_a_resolution_tier(re
     parts[index]['text'] = parts[index]['text'].replace(original, args['prompt'])
     row['content'] = parts
     replay.db.set_table_data('messages', replay.rows)
-    await execute(replay.runtime, replay.prepared, replay.handler, replay.request, [call('generate_image', args, 'exact-pixels')])
+    await execute(replay.runtime, replay.prepared, replay.handler, replay.request, [call('generate_image', mapped_args(replay, args), 'exact-pixels')])
     assert replay.generation == []
     assert 'IMAGE_EXACT_SIZE_UNSUPPORTED' in replay.handler._tool_result_stop_reason
 
@@ -444,6 +478,6 @@ async def test_history_discovery_does_not_force_a_second_read_for_verified_nativ
     for args in arguments:
         args['source_prompt'].pop('sha256')
     await execute(replay.runtime, replay.prepared, replay.handler, replay.request, [
-        call('generate_image', args, f'from-history-{index}') for index, args in enumerate(arguments)])
-    assert [args['prompt'] for args in replay.generation] == [args['prompt'] for args in arguments]
+        call('generate_image', mapped_args(replay, args), f'from-history-{index}') for index, args in enumerate(arguments)])
+    assert [args['prompt'] for args in replay.generation] == [complete_prompt(replay, args) for args in arguments]
     assert replay.resolver_calls.call_count == 1

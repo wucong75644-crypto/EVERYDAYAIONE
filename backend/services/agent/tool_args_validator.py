@@ -157,6 +157,14 @@ def validate_tool_args(
                     f"收到 string。请传 JSON 数组"
                 )
 
+    # Mapped calls are assembled and validated against the canonical tool
+    # contract before dispatch. Unmapped calls must still satisfy their original
+    # required/alternative branches; exposing chat_input cannot erase that gate.
+    if 'chat_input' in properties and 'anyOf' in schema and 'chat_input' not in cleaned:
+        from services.tools.argument_validation import _issues
+        if _issues(cleaned, {'anyOf': schema['anyOf']}):
+            return cleaned, '参数校验失败：缺少原工具必填参数；引用聊天内容时提交chat_input输入映射。'
+
     # ── 2. 必填参数缺失检查 ──
     missing = required - set(cleaned.keys())
     if missing:

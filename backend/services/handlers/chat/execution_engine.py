@@ -898,7 +898,8 @@ async def _run_loop(
             and not fast_knowledge and not coverage_blocked(runtime)
             and not (runtime.task_execution_state is not None and revision_blocked(runtime)))
         if prepared.content_controls_available:
-            tools = [*content_tools.model_tools(tools), *content_tools.SCHEMAS]
+            tools = [*content_tools.model_tools(tools, mapping_names=content_tools.checkpoint_state(runtime).get('names', ())),
+                     *content_tools.SCHEMAS]
         prepared.content_visible_tool_names = {tool['function']['name'] for tool in tools if 'function' in tool}
         current_model_round = model_round
         if direct_enabled(runtime):
@@ -1447,7 +1448,7 @@ async def _execute_tools_impl(
                             candidates = content_tools.discover(context, args['query'], blocked)
                             names.update(item['name'] for item in candidates)
                             result = {'ok': True, 'tools': candidates}
-                        elif call['name'] == content_tools.READ and set(args) <= {'message_id', 'text_exact', 'text_exacts', 'selection_scope'}:
+                        elif call['name'] == content_tools.READ and set(args) <= {'message_id', 'text_exact', 'text_exacts', 'selection_scope', 'for_mapping'}:
                             result = {'ok': True, **await asyncio.to_thread(content_tools.source_text,
                                 handler.db, request.task_id, context, args)}
                             sources = result.get('sources') or ([result['source']] if 'source' in result else [])
@@ -1526,12 +1527,41 @@ async def _execute_tools_impl(
             except (ValueError, TypeError):
                 args = None
             content_state = content_tools.checkpoint_state(runtime)
-            if call['name'] in content_tools.INPUT_TOOLS and content_state.get('source_selection_failed'):
+            saved_binding = content_state.get('bindings', {}).get(call['id'], {})
+            if (isinstance(args, dict) and 'chat_input' not in args
+                    and saved_binding.get('kind') == 'input_mapping'
+                    and isinstance(saved_binding.get('input_arguments'), dict)
+                    and saved_binding.get('proof', {}).get('tool') == call['name']):
+                from services.task_execution.reducer import digest
+                if digest(args) == saved_binding.get('arguments_sha256'):
+                    # A checkpoint may contain either the model's proposal or
+                    # its already assembled call. Rebuild from pinned sources
+                    # and original code, never inject a file body a second time.
+                    import copy
+                    args = {**copy.deepcopy(saved_binding['input_arguments']),
+                            'chat_input': copy.deepcopy(saved_binding['mapping'])}
+            if (call['name'] in content_tools.INPUT_TOOLS or isinstance(args, dict) and 'chat_input' in args) and content_state.get('source_selection_failed'):
                 direct_errors[call['id']] = ('CHAT_SOURCE_UNAVAILABLE',
                     '引用尚未核实，请先重新定位需要执行的原文。')
                 projected_calls.append(call)
                 continue
             automatically_selected = False
+            if isinstance(args, dict) and 'chat_input' in args:
+                mapping = args.pop('chat_input')
+                try:
+                    if (not content_tools.enabled(runtime, prepared.execution_context)
+                            or not recovery_only and not getattr(prepared, 'content_controls_available', False)):
+                        raise PermissionError('CHAT_INPUT_MAPPING_UNAVAILABLE')
+                    resolved, source = await asyncio.to_thread(content_tools.bind_mapping, handler.db,
+                        request.task_id, prepared.execution_context, call['name'], args, mapping)
+                    bound_sources[call['id']] = (args, source, resolved)
+                    projected_calls.append({**call, 'arguments': json.dumps(resolved, ensure_ascii=False)})
+                except (ValueError, TypeError, PermissionError, KeyError) as error:
+                    code = str(error)
+                    code = code if code.startswith(('CHAT_INPUT_', 'CHAT_SOURCE_')) else 'CHAT_INPUT_MAPPING_INVALID'
+                    direct_errors[call['id']] = (code, '本次未派发，输入映射核验失败：' + code)
+                    projected_calls.append(call)
+                continue
             try:
                 if (isinstance(args, dict) and call['name'] in content_tools.INPUT_TOOLS
                         and not any(key in args for key in ('plan_source', 'source_prompt'))):
@@ -1887,7 +1917,7 @@ async def _execute_tools_impl(
                     arguments = json.loads(call.get('arguments') or '{}')
                 except (ValueError, TypeError):
                     arguments = {}
-                if isinstance(arguments, dict) and {'text_exact', 'text_exacts'}.intersection(arguments):
+                if isinstance(arguments, dict) and ({'text_exact', 'text_exacts'}.intersection(arguments) or arguments.get('for_mapping')):
                     source_read_failed = True
                     state = content_tools.checkpoint_state(runtime)
                     runtime.checkpoint_base[content_tools.STATE] = {**state, 'source_selection_failed': True}
@@ -1922,7 +1952,14 @@ async def _execute_tools_impl(
         ecom_arguments.observe(results)
         if ecom_arguments.stop_message:
             handler._tool_result_stop_reason = ecom_arguments.stop_message
-    if any(code.startswith(('CHAT_SOURCE', 'IMAGE_SOURCE', 'IMAGE_ORIGINAL', 'IMAGE_REFERENCE',
+    for call, result, is_error, _display in results:
+        if not is_error:
+            continue
+        code = str(getattr(getattr(result, 'error', None), 'message', None)
+                   or getattr(result, 'error_message', None) or getattr(result, 'exception', ''))
+        if code.startswith(('CHAT_INPUT_', 'CHAT_SOURCE_')):
+            direct_errors.setdefault(call['id'], (code, '执行输入未通过核验，本次停止自动提交：' + code))
+    if any(code.startswith(('CHAT_INPUT', 'CHAT_SOURCE', 'IMAGE_SOURCE', 'IMAGE_ORIGINAL', 'IMAGE_REFERENCE',
                             'IMAGE_QUOTED', 'IMAGE_ASSET', 'IMAGE_CONTENT', 'IMAGE_LEGACY',
                             'RESOURCE_', 'TASK_IMAGE_INPUT', 'TASK_IMAGE_RESOURCE',
                             'IMAGE_SIZE', 'IMAGE_ASPECT', 'IMAGE_EXACT', 'IMAGE_CANVAS', 'IMAGE_DIMENSIONS',

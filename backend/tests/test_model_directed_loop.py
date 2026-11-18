@@ -471,7 +471,8 @@ async def test_chat_revision_discovery_and_binding_video_and_word(monkeypatch, t
     image_args = content_tools.bind_call(handler.db, request.task_id, prepared.execution_context,
         'generate_image', {'mode': 'text_to_image'}, {**source, 'mode': 'exact'})
     assert image_args['prompt'] == revision
-    assert image_args['source_prompt'] == {k: v for k, v in source.items() if k != 'text'}
+    assert image_args['source_prompt']['handoff']['version'] == 2
+    assert image_args['source_prompt']['handoff']['mapping']['sources'][0]['message_id'] == source['message_id']
 
     delivered = {}
     async def accept(calls, *_args, **kwargs):
@@ -504,9 +505,12 @@ async def test_chat_revision_discovery_and_binding_video_and_word(monkeypatch, t
     handler._execute_tool_calls.side_effect = accept
     runtime.task_operation_store = SimpleNamespace(registry=build_capability_catalog())
     await execute(runtime, prepared, handler, request, [
-        call('generate_video', {'prompt': '模型误用了旧稿'}, 'video'),
+        call('generate_video', {'chat_input': {'sources': [{'message_id': message_id, 'content_index': 0}],
+            'parts': [{'source': 0, 'start': 0, 'end': len(revision), 'action': 'text', 'target': 'prompt'}]}}, 'video'),
         call('code_execute', {'code': "from docx import Document\ndoc = Document()\ndoc.add_paragraph(chat_source_text)\ndoc.save('下载/revision.docx')\nemit_file('下载/revision.docx')",
-             }, 'word'),
+            'description': '按修订稿交付Word',
+            'chat_input': {'sources': [{'message_id': message_id, 'content_index': 0}],
+                'parts': [{'source': 0, 'start': 0, 'end': len(revision), 'action': 'text', 'target': 'chat_source_text'}]}}, 'word'),
     ])
     assert delivered == {'video_prompt': revision, 'word': revision}
     bindings = runtime.checkpoint_base[content_tools.STATE]['bindings']
@@ -515,7 +519,7 @@ async def test_chat_revision_discovery_and_binding_video_and_word(monkeypatch, t
     await execute(runtime, prepared, handler, request, [
         call('generate_video', {'prompt': revision, 'chat_text_source': {**source, 'mode': 'exact'}}, 'stale'),
     ])
-    assert 'CHAT_SOURCE_BUNDLE_CHANGED' in str(prepared.messages[-1]['content'])
+    assert 'CHAT_SOURCE_DOCUMENT_CHANGED' in str(prepared.messages[-1]['content'])
     handler._execute_tool_calls.assert_awaited_once()
     await execute(runtime, prepared, handler, request, [
         call(content_tools.READ, {'text_exact': revision}, 'failed-selection'),
@@ -590,15 +594,19 @@ async def test_original_prompt_skill_text_then_second_item_in_new_turn(monkeypat
         return [(raw, AgentResult('受控图片调用'), False, '受控图片调用')]
 
     handler._execute_tool_calls.side_effect = accept
+    start = text.index(prompts[1]); end = start + len(prompts[1])
+    mapped_parts = [
+        {'source': 0, 'start': 0, 'end': start, 'action': 'exclude', 'reason': '其他提示词及编号'},
+        {'source': 0, 'start': start, 'end': end, 'action': 'text', 'target': 'prompt'},
+        {'source': 0, 'start': end, 'end': len(text), 'action': 'exclude', 'reason': '本次未选择的其余提示词'}]
     await execute(runtime, prepared, handler, request, [
-        call('generate_image', {'mode': 'text_to_image', 'prompt': prompts[1],
-             'aspect_ratio': plan.image_plans[1].aspect_ratio,
-             }, 'second-image'),
-    ])
+        call('generate_image', {'mode': 'text_to_image', 'chat_input': {
+             'sources': [{'message_id': message_id, 'content_index': 0}], 'parts': mapped_parts},
+             'aspect_ratio': plan.image_plans[1].aspect_ratio}, 'second-image')])
     assert len(seen) == 1
     assert seen[0]['prompt'] == selected['text']
     assert prompts[1] in seen[0]['prompt'] and prompts[0] not in seen[0]['prompt']
-    assert seen[0]['source_prompt']['message_id'] == message_id
+    assert seen[0]['source_prompt']['handoff']['mapping']['sources'][0]['message_id'] == message_id
     assert 'plan_source' not in seen[0]
 
 @pytest.mark.asyncio
@@ -696,9 +704,21 @@ async def test_selected_fragments_survive_batch_reads_without_last_item_overwrit
     runtime.task_operation_store = SimpleNamespace(registry=build_capability_catalog())
     runtime.task_image_resource_resolver = SimpleNamespace(
         prepare_request=AsyncMock(side_effect=lambda args, *_args, **_kwargs: (args, [], None)))
-    await execute(runtime, prepared, handler, request, [
-        call('generate_image', {'mode': 'text_to_image', 'prompt': text, 'aspect_ratio': '1:1'}, f'image-{index}')
-        for index, text in enumerate(texts)])
+    prepared.content_controls_available = True
+    mapped_calls = []
+    full = '\n'.join(texts)
+    for index, text in enumerate(texts):
+        parts = []
+        for other in texts:
+            start = full.index(other)
+            part = {'source': 0, 'start': start, 'end': start + len(other)}
+            part.update(action='text', target='prompt') if other == text else part.update(action='exclude', reason='本次选择另一条')
+            parts.append(part)
+        parts.append({'source': 0, 'start': len(texts[0]), 'end': len(texts[0]) + 1,
+                      'action': 'exclude', 'reason': '原段落分隔符不进入本次提示词'})
+        mapped_calls.append(call('generate_image', {'mode': 'text_to_image', 'aspect_ratio': '1:1',
+            'chat_input': {'sources': [{'message_id': message_id, 'content_index': 0}], 'parts': parts}}, f'image-{index}'))
+    await execute(runtime, prepared, handler, request, mapped_calls)
     assert seen == texts
     proofs = content_tools.checkpoint_state(runtime)['bindings']
     assert proofs['image-0']['sha256'] != proofs['image-1']['sha256']

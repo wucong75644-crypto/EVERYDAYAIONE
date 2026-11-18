@@ -484,9 +484,11 @@ async def test_exact_history_selects_prompt_without_summary_guess(facts,monkeypa
         history=json.loads(await owner._get_conversation_context({"message_ids":[first],"text_exact":prompt}))
         selected=history["selected_prompt"]
         complete = "方案一\n" + prompt + "\n结尾"
-        assert selected["prompt"]==complete and selected["source_prompt"]["sha256"]==hashlib.sha256(complete.encode()).hexdigest()
+        assert selected["prompt"]==prompt and selected["source_prompt"]["sha256"]==hashlib.sha256(prompt.encode()).hexdigest()
         resolver=ChatImageInputResolver(owner,base_revision=2,input_message_id="")
-        source=resolver.source_prompt(selected["source_prompt"],complete)
+        source=resolver.source_prompt(selected["source_prompt"],prompt)
+        with pytest.raises(ValueError,match="CHAT_INPUT_MAPPING_REQUIRED"):
+            resolver.complete_source_prompt(selected["source_prompt"],prompt)
         assert source['bundle']['selection']['end']-source['bundle']['selection']['start']==len(prompt)
         fragment=json.loads(await owner._get_conversation_context({"message_ids":[first],"text_exact":prompt,"selection_scope":"fragment"}))
         assert fragment['selected_prompt']['prompt']==prompt
@@ -809,6 +811,63 @@ async def test_image_handler_accepts_without_native_prepare_or_provider(facts,mo
             child=db.execute("SELECT request_params,turn_id,execution_token,credit_transaction_id FROM tasks WHERE id=%s",(result["task_id"],)).fetchone()
             assert child[0]["_media_request_v1"]["prompt"]=="  original  "
             assert child[1:]==(None,None,None)
+    finally:
+        _dispatch_call_id.reset(token)
+        raw.pool.close()
+
+
+async def test_mapped_input_is_verified_before_acceptance_and_frozen_replay_is_idempotent(facts, monkeypatch, tmp_path):
+    import json
+    from types import SimpleNamespace
+    from unittest.mock import patch, AsyncMock
+    from core.config import Settings
+    from core.local_db import LocalDBClient
+    from core.db_scope import ScopedDatabaseClient, DatabaseScope, DatabaseAccessKind
+    from services.handlers.chat_input_handoff import assemble
+    from services.handlers.chat_image_request import ChatImageInputResolver, ChatImageNotAcceptedError
+    from services.handlers.image_handler import ImageHandler
+    from services.tools.catalog import build_capability_catalog
+    from services.tools.dispatcher import _dispatch_call_id
+    settings = Settings(_env_file=None, database_url='postgresql://invalid/test', jwt_secret_key='isolated-test-key',
+                        file_workspace_root=str(tmp_path), chat_image_async_enabled=True)
+    monkeypatch.setattr('core.config.get_settings', lambda: settings)
+    monkeypatch.setattr('services.websocket_manager.ws_manager.send_to_task_or_user', AsyncMock())
+    raw = LocalDBClient(psycopg.conninfo.make_conninfo(facts['dsn'], user='everydayai'), min_size=1, max_size=3)
+    scoped = ScopedDatabaseClient(raw, DatabaseScope(facts['user'], None, DatabaseAccessKind.RUNTIME))
+    origin = facts['snapshot']['origin']; source_id = str(uuid4())
+    original = '分析说明\n真实执行正文\n不能改商标\n'
+    with psycopg.connect(facts['dsn']) as db:
+        for mid, role, content in [(origin['input_message_id'], 'user', '按方案生成1:1'), (source_id, 'assistant', original)]:
+            db.execute('INSERT INTO messages(id,conversation_id,role,content,status,context_revision) VALUES (%s,%s,%s,%s,\'completed\',0)',
+                       (mid, origin['conversation_id'], role, json.dumps([{'type': 'text', 'text': content}])))
+    owner = SimpleNamespace(db=scoped, user_id=facts['user'], workspace_user_id=facts['user'], org_id=None,
+        task_id=facts['parent'], conversation_id=origin['conversation_id'], image_execution_token=facts['token'],
+        context_scope='user', execution_mode='interactive', resource_manifest=None, cancellation_event=None)
+    native = ChatImageInputResolver(owner, base_revision=0, input_message_id=origin['input_message_id'])
+    mapping = {'sources': [{'message_id': source_id, 'content_index': 0}], 'parts': [
+        {'source': 0, 'first_line': 1, 'last_line': 1, 'action': 'exclude', 'reason': '分析说明不参与生成'},
+        {'source': 0, 'first_line': 2, 'last_line': 3, 'action': 'text', 'target': 'prompt'}]}
+    parameters = build_capability_catalog().require('generate_image').to_schema()['function']['parameters']
+    from services.handlers.chat_context.image_sources import content_parts
+    outputs, proof = assemble(mapping, lambda s: {'text': content_parts(native._message(s['message_id'])['content'])[0]['text'],
+                                                 'context_revision': 0}, parameters)
+    args = {'mode': 'text_to_image', **outputs, 'source_prompt': {'handoff': {**proof, 'tool': 'generate_image'}}}
+    token = _dispatch_call_id.set('mapped-accept')
+    try:
+        with patch('services.adapters.factory.create_image_adapter') as provider:
+            with pytest.raises(ChatImageNotAcceptedError, match='CHAT_INPUT_TARGET_CHANGED'):
+                await ImageHandler(scoped).accept_chat_image(owner, {**args, 'prompt': '只剩正文，漏掉约束'})
+            result = await ImageHandler(scoped).accept_chat_image(owner, args)
+            provider.assert_not_called()
+        with psycopg.connect(facts['dsn']) as db:
+            snapshot = db.execute('SELECT request_params FROM tasks WHERE id=%s', (result['task_id'],)).fetchone()[0]['_media_request_v1']
+            assert snapshot['prompt'] == '真实执行正文\n不能改商标\n'
+            assert snapshot['source_prompt']['handoff']['mapping']['sources'][0]['context_revision'] == 0
+            assert db.execute('SELECT credits FROM users WHERE id=%s', (facts['user'],)).fetchone()[0] == 100
+        # Recovery reuses the accepted snapshot; it must not rebuild mutable
+        # size provenance from a sibling which was just accepted.
+        repeated = accept(facts, snapshot=snapshot)
+        assert repeated['task_id'] == result['task_id']
     finally:
         _dispatch_call_id.reset(token)
         raw.pool.close()

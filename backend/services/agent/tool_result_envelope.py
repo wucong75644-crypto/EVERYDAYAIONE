@@ -170,7 +170,8 @@ def wrap(
             selected = json.loads(result)
         except (ValueError, TypeError):
             selected = None
-        if isinstance(selected, dict) and ("selected_prompt" in selected or "selected_prompts" in selected):
+        if isinstance(selected, dict) and ("selected_prompt" in selected or "selected_prompts" in selected
+                                           or selected.get('mapping_sources') is True):
             return result
 
     # 确定预算

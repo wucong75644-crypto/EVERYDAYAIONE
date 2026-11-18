@@ -201,7 +201,7 @@ def test_exact_reader_returns_full_prompt_hash_and_existing_file_identity(contex
     proof = result['selected_prompt']['source_prompt']
     assert {key: value for key, value in proof.items() if key != 'bundle'}=={'message_id':row['id'],'content_index':4,
         'sha256':hashlib.sha256(prompt.encode()).hexdigest()}
-    assert proof['bundle']['scope'] == 'item'
+    assert proof['bundle']['scope'] == 'fragment'
     images=[p for p in result['messages'][0]['parts'] if p['type']=='image']
     assert [p['file_id'] for p in images]==[compute_fid(None,'A.png'),compute_fid(None,'B.png')]
     assert [p['reference']['content_index'] for p in images]==[1,3]

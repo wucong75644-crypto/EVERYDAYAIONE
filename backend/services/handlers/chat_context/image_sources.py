@@ -15,9 +15,12 @@ MAX_SOURCE_BYTES = 128000
 def content_parts(content):
     if isinstance(content, str):
         try:
-            content = json.loads(content)
+            parsed = json.loads(content)
         except (ValueError, TypeError):
-            return []
+            parsed = None
+        # Older closed messages can contain raw text, including JSON-looking
+        # prose. Keep it as text; never turn an object into an image locator.
+        return parsed if isinstance(parsed, list) else [{'type': 'text', 'text': content}]
     return content if isinstance(content, list) else []
 
 

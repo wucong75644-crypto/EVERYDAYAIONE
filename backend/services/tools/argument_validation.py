@@ -38,17 +38,27 @@ def _issues(value, schema, path="$", depth=0):
     matches = {
         "object": isinstance(value, Mapping), "array": isinstance(value, (list, tuple)),
         "string": isinstance(value, str), "integer": type(value) is int,
+        "boolean": type(value) is bool, "number": type(value) in (int, float), "null": value is None,
     }
-    if expected and not matches.get(expected, False):
+    if expected and not any(matches.get(kind, False) for kind in (expected if isinstance(expected, list) else [expected])):
         add(f"类型必须为 {expected}")
         return issues
+    if "anyOf" in schema and not any(not _issues(value, branch, path, depth + 1) for branch in schema['anyOf']):
+        add('不符合anyOf参数分支')
+    if "allOf" in schema:
+        for branch in schema['allOf']:
+            issues.extend(_issues(value, branch, path, depth + 1))
+    if "not" in schema and not _issues(value, schema['not'], path, depth + 1):
+        add('命中禁止的参数组合')
+    if "const" in schema and value != schema['const']:
+        add('值不符合const')
     if "enum" in schema and value not in schema["enum"]:
         add("可选值为 " + json.dumps(schema["enum"], ensure_ascii=False))
+    if "oneOf" in schema:
+        count = sum(not _issues(value, branch, path, depth + 1) for branch in schema["oneOf"])
+        if count != 1:
+            add("必须且只能选择一种参数形式")
     if isinstance(value, Mapping):
-        if "oneOf" in schema:
-            count = sum(not _issues(value, branch, path, depth + 1) for branch in schema["oneOf"])
-            if count != 1:
-                add("必须且只能选择一种参数形式")
         properties = schema.get("properties", {})
         for key in schema.get("required", ()):
             if key not in value:
@@ -75,7 +85,11 @@ def _issues(value, schema, path="$", depth=0):
         for bound, op in (("maxItems", lambda n: len(value) > n), ("minItems", lambda n: len(value) < n)):
             if bound in schema and op(schema[bound]):
                 add(f"{bound}={schema[bound]}")
-        for index, child in enumerate(value[:17]):
+        if schema.get('uniqueItems'):
+            keys = [json.dumps(thaw(child), sort_keys=True, allow_nan=False) for child in value]
+            if len(set(keys)) != len(keys):
+                add('数组元素必须唯一')
+        for index, child in enumerate(value):
             issues.extend(_issues(child, schema.get("items", {}), f"{path}[{index}]", depth + 1))
     if isinstance(value, str):
         for bound, op in (("minLength", lambda n: len(value) < n), ("maxLength", lambda n: len(value) > n)):
@@ -83,8 +97,13 @@ def _issues(value, schema, path="$", depth=0):
                 add(f"{bound}={schema[bound]}")
         if "pattern" in schema and re.search(schema["pattern"], value) is None:
             add("格式不符合字段 pattern")
-    if type(value) is int and "minimum" in schema and value < schema["minimum"]:
-        add(f"最小值为 {schema['minimum']}")
+    if type(value) in (int, float):
+        if not math.isfinite(value):
+            add('数值必须有限')
+        if 'minimum' in schema and value < schema['minimum']:
+            add(f"最小值为 {schema['minimum']}")
+        if 'maximum' in schema and value > schema['maximum']:
+            add(f"最大值为 {schema['maximum']}")
     return issues[:16]
 
 

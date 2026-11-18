@@ -131,7 +131,10 @@ class ToolRuntime:
                 original, source, expected = binding
                 current = await asyncio.to_thread(bind_call, self.executor.db, context.task_id,
                     context, call.name, original, source)
-                if current != expected or thaw(call.arguments) != expected:
+                # File target resolution has its own policy/version proof and
+                # durable canonical binding. Check the proposed source mapping
+                # against its original arguments, before that native conversion.
+                if current != expected or thaw(original_call.arguments) != expected:
                     raise PermissionError('CHAT_SOURCE_CHANGED')
 
             await verify_chat_source()

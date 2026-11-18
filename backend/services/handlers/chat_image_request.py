@@ -499,6 +499,11 @@ class ChatImageInputResolver:
 
     def source_prompt(self, source: dict, prompt: str) -> dict:
         """A source is exact text and hash; no summary-based reconstruction."""
+        if isinstance(source, dict) and set(source) == {'handoff'}:
+            outputs = self.verify_handoff(source['handoff'])
+            if outputs.get('prompt') != prompt:
+                raise ValueError('CHAT_INPUT_TARGET_CHANGED')
+            return deepcopy(source)
         if isinstance(source, dict) and 'bundle' in source:
             if (not {'message_id', 'content_index'} <= set(source)
                     or set(source) - {'message_id', 'content_index', 'sha256', 'bundle', 'adaptation'}):
@@ -532,12 +537,8 @@ class ChatImageInputResolver:
             raise ValueError("IMAGE_SOURCE_PROMPT_INVALID")
         source = {"sha256": hashlib.sha256(prompt.encode()).hexdigest(), **source}
         row = self._message(source["message_id"])
-        content = row["content"]
-        if isinstance(content, str):
-            try:
-                content = json.loads(content)
-            except json.JSONDecodeError:
-                content = [{"type": "text", "text": content}]
+        from services.handlers.chat_context.image_sources import content_parts
+        content = content_parts(row['content'])
         index = source["content_index"]
         if type(index) is not int or index < 0 or not isinstance(content, list) or index >= len(content):
             raise ValueError("IMAGE_SOURCE_PROMPT_INVALID")
@@ -551,15 +552,62 @@ class ChatImageInputResolver:
 
     def complete_source_prompt(self, source: dict, prompt: str):
         """Complete new message inputs; already accepted task snapshots stay exact."""
-        if 'bundle' in source or 'task_id' in source:
+        if 'handoff' in source or 'task_id' in source:
             return prompt, self.source_prompt(source, prompt)
-        self.source_prompt(source, prompt)
         from services.handlers.chat_context.image_sources import content_parts
-        from services.handlers.chat_content_bundle import bundle
-        text = content_parts(self._message(source['message_id'])['content'])[source['content_index']]['text']
-        assembled, proof = bundle(text, prompt)
-        return assembled, {'message_id': source['message_id'], 'content_index': source['content_index'],
-                           'sha256': hashlib.sha256(assembled.encode()).hexdigest(), 'bundle': proof}
+        from services.handlers.chat_input_handoff import assemble, legacy_mapping
+        from services.tools.catalog import build_tool_catalog
+        row = self._message(source['message_id'])
+        parts = content_parts(row['content'])
+        index = source.get('content_index')
+        if type(index) is not int or not 0 <= index < len(parts) or parts[index].get('type') != 'text':
+            raise ValueError('IMAGE_SOURCE_PROMPT_INVALID')
+        text = parts[index]['text']
+        if 'bundle' in source:
+            # Verify the saved proof independently of the proposed prompt so
+            # mismatched bytes and missing purpose decisions are distinct.
+            proof = source['bundle']
+            try:
+                original = '\n\n'.join(text[p['start']:p['end']] for p in proof['spans'])
+            except (KeyError, TypeError):
+                raise ValueError('CHAT_SOURCE_PROOF_INVALID') from None
+            from services.handlers.chat_content_bundle import verify
+            verify(text, original, proof)
+            if original != text:
+                raise ValueError('CHAT_INPUT_MAPPING_REQUIRED')
+        verified = self.source_prompt(source, prompt)
+        document = {'text': text, 'context_revision': row.get('context_revision')}
+        mapping = legacy_mapping({'message_id': source['message_id'], 'content_index': index,
+                                  'text': text if 'adaptation' in source else prompt}, document,
+                                 mode='adapted' if 'adaptation' in source else 'exact',
+                                 instruction=source.get('adaptation'))
+        parameters = build_tool_catalog().require('generate_image').to_schema()['function']['parameters']
+        outputs, proof = assemble(mapping, lambda _: document, parameters,
+                                  reserved=('source_prompt', 'plan_source'))
+        return outputs['prompt'], {'handoff': {**proof, 'tool': 'generate_image'}}
+
+    def verify_handoff(self, proof):
+        from services.handlers.chat_input_handoff import assemble
+        from services.handlers.chat_context.image_sources import content_parts
+        from services.tools.catalog import build_tool_catalog
+        if not isinstance(proof, dict) or proof.get('version') != 2 or proof.get('tool') != 'generate_image':
+            raise ValueError('CHAT_INPUT_PROOF_INVALID')
+        if not getattr(self.owner, 'personal_context_allowed', True):
+            raise PermissionError('CHAT_INPUT_SOURCE_DENIED')
+        def read(source):
+            row = self._message(source['message_id'])
+            if row.get('role') not in {'user', 'assistant'}:
+                raise PermissionError('CHAT_INPUT_SOURCE_DENIED')
+            parts = content_parts(row['content'])
+            index = source['content_index']
+            if not 0 <= index < len(parts) or parts[index].get('type') != 'text':
+                raise ValueError('CHAT_INPUT_SOURCE_INVALID')
+            return {'text': parts[index]['text'], 'context_revision': row.get('context_revision')}
+        parameters = build_tool_catalog().require('generate_image').to_schema()['function']['parameters']
+        outputs, canonical = assemble(proof['mapping'], read, parameters, reserved=('source_prompt', 'plan_source'))
+        if {**canonical, 'tool': 'generate_image'} != proof:
+            raise ValueError('CHAT_INPUT_PROOF_CHANGED')
+        return outputs
 
     def locate_source_prompt(self, prompt: str):
         """Cover legacy direct calls which copied a quote but omitted its locator.

@@ -69,14 +69,15 @@ def _schema_web_search():
 def _schema_image_history():
     return {"type": "function", "function": {
         "name": "get_conversation_context",
-        "description": "读取当前获准会话基线内的精确历史原文及图片来源。历史提示词必须读原文后复用，不能用摘要猜测。返回 message_id/content_index/sha256；task_id 可读取已发布图片实际输入的完整提示词。已在上下文中的原文可直接用消息定位交给执行工具；text_exacts 可一次选取多段，精确读取只返回选中内容及图片来源。每次最多20条/8个指定消息。",
+        "description": "读取当前获准会话基线内的精确历史原文及图片来源。历史提示词必须读原文后复用，不能用摘要猜测。返回 message_id/content_index/sha256；task_id 可读取已发布图片实际输入的完整提示词。已在上下文中的原文可直接用消息定位交给执行工具；text_exacts 可一次选取多段，精确读取只返回选中片段及图片来源，不按标题扩展或分类。引用原文执行时使用真实目标工具的chat_input明确映射、排除和修订；每个来源part均须完整交代去向。每次最多20条/8个指定消息。",
         "parameters": {"type": "object", "additionalProperties": False, "properties": {
             "limit": {"type": "integer", "minimum": 1, "maximum": 20},
             "message_ids": {"type": "array", "maxItems": 8, "items": {"type": "string"}},
             "task_id": {"type": "string"},
+            "for_mapping": {"type":"boolean","description":"建立chat_input前按message_ids读取带行起点的完整来源；超限减少消息数。不与task_id或text_exact(s)混用。"},
             "text_exacts": {"type":"array","minItems":1,"maxItems":100,"items":{"type":"string","minLength":1,"maxLength":20000},"description":"一次精确选取多条原文，按请求顺序返回。与text_exact互斥。"},
-            "text_exact": {"type":"string","minLength":1,"maxLength":20000,"description":"用于定位所选条目的原文；默认返回完整条目及共同要求，包含补充说明、限制及素材要求，不能只摘正文。"},
-            "selection_scope": {"type":"string","enum":["item","fragment"],"description":"默认item交付完整条目。只有用户明确要求仅使用局部文字时才能用fragment。"},
+            "text_exact": {"type":"string","minLength":1,"maxLength":20000,"description":"读取逐字原文片段；不自动决定哪些属于执行内容，执行用途通过chat_input声明。"},
+            "selection_scope": {"type":"string","enum":["item","fragment"],"description":"旧读取兼容字段，仅返回原文片段，不自动扩展；不会替代输入映射。"},
         }},
     }}
 
