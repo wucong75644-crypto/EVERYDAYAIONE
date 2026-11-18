@@ -198,8 +198,10 @@ def test_exact_reader_returns_full_prompt_hash_and_existing_file_identity(contex
     row,_,prompt,read=exact_reader(context,legacy)
     result=json.loads(read({'message_ids':[row['id']],'text_exact':prompt}))
     assert result['selected_prompt']['prompt']==prompt
-    assert result['selected_prompt']['source_prompt']=={'message_id':row['id'],'content_index':4,
+    proof = result['selected_prompt']['source_prompt']
+    assert {key: value for key, value in proof.items() if key != 'bundle'}=={'message_id':row['id'],'content_index':4,
         'sha256':hashlib.sha256(prompt.encode()).hexdigest()}
+    assert proof['bundle']['scope'] == 'item'
     images=[p for p in result['messages'][0]['parts'] if p['type']=='image']
     assert [p['file_id'] for p in images]==[compute_fid(None,'A.png'),compute_fid(None,'B.png')]
     assert [p['reference']['content_index'] for p in images]==[1,3]
@@ -356,7 +358,7 @@ def test_prompt_locator_uses_host_hash_and_still_rejects_changed_text(context):
         native.source_prompt({**source, 'sha256': '0' * 64}, prompt)
     import json
     row['content'][4]['text'] = ('无关长正文' * 5000) + prompt
-    result = json.loads(read({'message_ids': [row['id']], 'text_exact': prompt}))
+    result = json.loads(read({'message_ids': [row['id']], 'text_exact': prompt, 'selection_scope': 'fragment'}))
     text = [part['text'] for part in result['messages'][0]['parts'] if part['type'] == 'text']
     assert text == [prompt]
     assert len(json.dumps(result, ensure_ascii=False)) < 4000

@@ -483,10 +483,14 @@ async def test_exact_history_selects_prompt_without_summary_guess(facts,monkeypa
         owner=ToolExecutor(ScopedDatabaseClient(raw,DatabaseScope(facts["user"],None,DatabaseAccessKind.RUNTIME)),facts["user"],conv,task_id=facts["parent"])
         history=json.loads(await owner._get_conversation_context({"message_ids":[first],"text_exact":prompt}))
         selected=history["selected_prompt"]
-        assert selected["prompt"]==prompt and selected["source_prompt"]["sha256"]==hashlib.sha256(prompt.encode()).hexdigest()
+        complete = "方案一\n" + prompt + "\n结尾"
+        assert selected["prompt"]==complete and selected["source_prompt"]["sha256"]==hashlib.sha256(complete.encode()).hexdigest()
         resolver=ChatImageInputResolver(owner,base_revision=2,input_message_id="")
-        source=resolver.source_prompt(selected["source_prompt"],prompt)
-        assert source["end"]-source["start"]==len(prompt)
+        source=resolver.source_prompt(selected["source_prompt"],complete)
+        assert source['bundle']['selection']['end']-source['bundle']['selection']['start']==len(prompt)
+        fragment=json.loads(await owner._get_conversation_context({"message_ids":[first],"text_exact":prompt,"selection_scope":"fragment"}))
+        assert fragment['selected_prompt']['prompt']==prompt
+        resolver.source_prompt(fragment['selected_prompt']['source_prompt'],prompt)
         with pytest.raises(PermissionError,match="REVISION_DENIED"):
             await owner._get_conversation_context({"message_ids":[second]})
         with pytest.raises(ValueError,match="AMBIGUOUS"):

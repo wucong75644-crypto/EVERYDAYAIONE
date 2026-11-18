@@ -160,6 +160,14 @@ async def select(replay, arguments, entrypoint):
     await execute(replay.runtime, replay.prepared, replay.handler, replay.request, calls)
 
 
+def complete_prompt(replay, arguments):
+    from services.handlers.chat_content_bundle import bundle
+    source = arguments['source_prompt']
+    row = next(row for row in replay.rows if row['id'] == source['message_id'])
+    parts = json.loads(row['content']) if isinstance(row['content'], str) else row['content']
+    return bundle(parts[source['content_index']]['text'], arguments['prompt'])[0]
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize('entrypoint', ['new', 'legacy', 'legacy_parallel', 'direct', 'new_selector', 'legacy_selector'])
 @pytest.mark.parametrize('count', [1, 6])
@@ -204,14 +212,17 @@ async def test_real_single_and_all_preserve_original_text_and_reference(real_rep
                if 'image.direct.recipe' in artifact.validations]
     assert len(recipes) == count
     for expected, actual, recipe in zip(arguments, replay.generation, recipes):
-        assert actual['prompt'] == expected['prompt']
+        complete = complete_prompt(replay, expected)
+        assert actual['prompt'] == (expected['prompt'] if entrypoint == 'direct' else complete)
+        assert recipe['normalized']['prompt'] == complete
         assert actual['mode'] == expected['mode'] == 'image_to_image'
         assert actual['references'] == expected['references']
         assert recipe['resolved'][0]['content_sha256'] == hashlib.sha256(original_bytes).hexdigest()
-        assert recipe['normalized']['source_prompt']['sha256'] == hashlib.sha256(expected['prompt'].encode()).hexdigest()
+        assert recipe['normalized']['source_prompt']['sha256'] == hashlib.sha256(complete.encode()).hexdigest()
     if entrypoint == 'legacy':
         assert len(replay.history_outputs) == 1
-        assert len(replay.history_outputs[0]) < 8000
+        from services.agent.tool_result_envelope import SOURCE_SELECTION_BUDGET
+        assert len(replay.history_outputs[0]) <= SOURCE_SELECTION_BUDGET
     # Native preparation for actual acceptance still rereads and verifies originals.
     first = replay.generation[0]
     await replay.runtime.task_image_resource_resolver.prepare_request(
@@ -254,7 +265,7 @@ async def test_real_revision_selects_latest_second_item(real_replay, entrypoint,
     await execute(replay.runtime, replay.prepared, replay.handler, replay.request, [
         call('generate_image', {k: v for k, v in args.items() if k != 'source_prompt'}, f'revised-{index}')
         for index, args in enumerate(arguments)])
-    assert [args['prompt'] for args in replay.generation] == [args['prompt'] for args in arguments]
+    assert [args['prompt'] for args in replay.generation] == [complete_prompt(replay, args) for args in arguments]
     assert replay.generation[1 if count == 6 else 0]['prompt'] == revised
     assert replay.resolver_calls.call_count == 1
 
@@ -340,7 +351,7 @@ async def test_real_frozen_legacy_text_uses_existing_history_proof(real_replay, 
     await execute(replay.runtime, replay.prepared, replay.handler, replay.request, [
         call('generate_image', {k: v for k, v in args.items() if k != 'source_prompt'}, f'legacy-text-{index}')
         for index, args in enumerate(replay.arguments)])
-    assert [args['prompt'] for args in replay.generation] == [args['prompt'] for args in replay.arguments]
+    assert [args['prompt'] for args in replay.generation] == [complete_prompt(replay, args) for args in replay.arguments]
 
 
 @pytest.mark.asyncio

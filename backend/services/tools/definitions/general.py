@@ -75,7 +75,8 @@ def _schema_image_history():
             "message_ids": {"type": "array", "maxItems": 8, "items": {"type": "string"}},
             "task_id": {"type": "string"},
             "text_exacts": {"type":"array","minItems":1,"maxItems":100,"items":{"type":"string","minLength":1,"maxLength":20000},"description":"一次精确选取多条原文，按请求顺序返回。与text_exact互斥。"},
-            "text_exact": {"type":"string","minLength":1,"maxLength":20000,"description":"从返回原文逐字选取的完整提示词；服务器确认唯一原文位置并返回它的sha256。"},
+            "text_exact": {"type":"string","minLength":1,"maxLength":20000,"description":"用于定位所选条目的原文；默认返回完整条目及共同要求，包含补充说明、限制及素材要求，不能只摘正文。"},
+            "selection_scope": {"type":"string","enum":["item","fragment"],"description":"默认item交付完整条目。只有用户明确要求仅使用局部文字时才能用fragment。"},
         }},
     }}
 

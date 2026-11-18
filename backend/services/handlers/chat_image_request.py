@@ -499,6 +499,22 @@ class ChatImageInputResolver:
 
     def source_prompt(self, source: dict, prompt: str) -> dict:
         """A source is exact text and hash; no summary-based reconstruction."""
+        if isinstance(source, dict) and 'bundle' in source:
+            if (not {'message_id', 'content_index'} <= set(source)
+                    or set(source) - {'message_id', 'content_index', 'sha256', 'bundle', 'adaptation'}):
+                raise ValueError('IMAGE_SOURCE_PROMPT_INVALID')
+            from services.handlers.chat_context.image_sources import content_parts
+            from services.handlers.chat_content_bundle import verify
+            row = self._message(source['message_id'])
+            parts = content_parts(row['content'])
+            index = source['content_index']
+            if type(index) is not int or not 0 <= index < len(parts) or parts[index].get('type') != 'text':
+                raise ValueError('IMAGE_SOURCE_PROMPT_INVALID')
+            verify(parts[index]['text'], prompt, source['bundle'], adaptation=source.get('adaptation'))
+            digest = hashlib.sha256(prompt.encode()).hexdigest()
+            if source.get('sha256', digest) != digest:
+                raise ValueError('IMAGE_SOURCE_PROMPT_CHANGED')
+            return {**deepcopy(source), 'sha256': digest}
         if isinstance(source, dict) and set(source) in ({"task_id"}, {"task_id", "sha256"}):
             source = {"sha256": hashlib.sha256(prompt.encode()).hexdigest(), **source}
             row=self.owner.db.table("tasks").select("user_id,org_id,conversation_id,type,status,assistant_message_id,request_params").eq("id",source["task_id"]).single().execute().data
@@ -532,6 +548,47 @@ class ChatImageInputResolver:
             raise ValueError("IMAGE_SOURCE_PROMPT_CHANGED")
         start=part["text"].index(prompt)
         return {**deepcopy(source),"start":start,"end":start+len(prompt)}
+
+    def complete_source_prompt(self, source: dict, prompt: str):
+        """Complete new message inputs; already accepted task snapshots stay exact."""
+        if 'bundle' in source or 'task_id' in source:
+            return prompt, self.source_prompt(source, prompt)
+        self.source_prompt(source, prompt)
+        from services.handlers.chat_context.image_sources import content_parts
+        from services.handlers.chat_content_bundle import bundle
+        text = content_parts(self._message(source['message_id'])['content'])[source['content_index']]['text']
+        assembled, proof = bundle(text, prompt)
+        return assembled, {'message_id': source['message_id'], 'content_index': source['content_index'],
+                           'sha256': hashlib.sha256(assembled.encode()).hexdigest(), 'bundle': proof}
+
+    def locate_source_prompt(self, prompt: str):
+        """Cover legacy direct calls which copied a quote but omitted its locator.
+
+        Search only the same bounded, closed history used for native discovery;
+        a match is a proposal and still goes through _message/source validation.
+        New prompts without historical matches retain their existing behavior.
+        """
+        from services.handlers.chat_context.image_sources import content_parts
+        rows = self.owner.db.table('messages').select(
+            'id,conversation_id,org_id,context_revision,content,status,role,message_kind'
+        ).eq('conversation_id', self.owner.conversation_id).lte('context_revision', self.base_revision).eq(
+            'message_kind', 'conversation').in_('status', ['completed', 'interrupted']).order(
+            'context_revision', desc=True).limit(100).execute().data or []
+        rows += list(self.legacy_sources.values())
+        matches = set()
+        for row in rows:
+            if (row.get('conversation_id') != self.owner.conversation_id or row.get('org_id') != self.owner.org_id
+                    or row.get('role') not in {'user', 'assistant'}):
+                continue
+            for index, part in enumerate(content_parts(row.get('content'))):
+                if part.get('type') == 'text' and isinstance(part.get('text'), str) and prompt in part['text']:
+                    matches.add((str(row['id']), index))
+        if len(matches) > 1:
+            raise ValueError('CHAT_SOURCE_UNAVAILABLE_OR_AMBIGUOUS')
+        if not matches:
+            return None
+        message_id, index = matches.pop()
+        return {'message_id': message_id, 'content_index': index}
 
     def validate_source_task(self, task_id: str) -> None:
         row = self.owner.db.table("tasks").select(

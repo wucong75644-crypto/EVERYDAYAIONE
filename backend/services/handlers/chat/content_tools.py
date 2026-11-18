@@ -39,10 +39,12 @@ SCHEMAS = (
     schema(DISCOVER, '查找当前可用但尚未提供的业务工具。用能力名称或简短目标查询，下一轮使用真实工具定义。',
            {'query': {'type': 'string', 'minLength': 1, 'maxLength': 160}}, ('query',)),
     schema(READ, '在当前会话已关闭的历史中读取原文。先找消息，再用 text_exact 精确选择目标片段。'
-                 'text_exact 选择一条，text_exacts 一次选择多条，返回选中原文并保存选择。改编时显式传 mode=adapted。',
+                 'text_exact 定位一条，text_exacts 批量定位；默认交付完整条目及共同要求，不能遗漏补充说明和限制。'
+                 '仅用户明确只使用局部原文时传 selection_scope=fragment。改编时显式传 mode=adapted。',
            {'message_id': {'type': 'string'}, 'text_exact': {'type': 'string', 'maxLength': 20000},
             'text_exacts': {'type': 'array', 'minItems': 1, 'maxItems': 100,
-                            'items': {'type': 'string', 'minLength': 1, 'maxLength': 20000}}}),
+                            'items': {'type': 'string', 'minLength': 1, 'maxLength': 20000}},
+            'selection_scope': {'type': 'string', 'enum': ['item', 'fragment']}}),
 )
 
 
@@ -60,6 +62,7 @@ def model_tools(tools):
                     'message_id': {'type': 'string'}, 'content_index': {'type': 'integer', 'minimum': 0},
                     'sha256': {'type': 'string'}, 'text': {'type': 'string', 'maxLength': 20000},
                     'mode': {'enum': ['exact', 'adapted']},
+                    'bundle': {'type': 'object', 'description': '原样使用读取结果中的完整性凭据，不能修改'},
                 },
                 'description': ('选择已读取的来源；多条同消息片段用返回的sha256区分，后台取回原文。也可提供text由后台核验。exact 沿用原文，adapted 表示用户要求改编。'
                                 'code_execute 中用 chat_source_text 读取后台注入的正文，调用 emit_file 交付文件。'),
@@ -105,7 +108,8 @@ def discover(context, query, blocked=()):
 
 
 def select_text_fragments(messages, arguments):
-    """Select unique original fragments, preserving caller order and source identity."""
+    """Quotes locate complete execution units; explicit fragments stay available."""
+    from services.handlers.chat_content_bundle import bundle
     if 'text_exact' in arguments and 'text_exacts' in arguments:
         raise ValueError('CHAT_SOURCE_SELECTION_CONFLICT')
     if not {'text_exact', 'text_exacts'}.intersection(arguments):
@@ -127,11 +131,16 @@ def select_text_fragments(messages, arguments):
                 if (part['text'].count(text) != 1
                         or arguments.get('content_index', part['content_index']) != part['content_index']):
                     continue
+                assembled, proof = bundle(part['text'], text, scope=arguments.get('selection_scope', 'item'))
                 matches.append({'message_id': str(message['message_id']),
                                 'content_index': part['content_index'],
-                                'sha256': hashlib.sha256(text.encode()).hexdigest(), 'text': text})
+                                'sha256': hashlib.sha256(assembled.encode()).hexdigest(), 'text': assembled,
+                                'bundle': proof})
         if len(matches) != 1:
             raise ValueError('CHAT_SOURCE_UNAVAILABLE_OR_AMBIGUOUS')
+        if any((s['message_id'], s['content_index'], s['sha256']) ==
+               (matches[0]['message_id'], matches[0]['content_index'], matches[0]['sha256']) for s in selected):
+            raise ValueError('CHAT_SOURCE_OVERLAPPING_UNITS_SELECT_COMPLETE_ITEM')
         selected.append(matches[0])
     return selected
 
@@ -163,12 +172,13 @@ def selected_source(state, arguments):
         if not isinstance(explicit, dict):
             raise ValueError('CHAT_SOURCE_INVALID')
         if (not {'message_id', 'content_index', 'mode'} <= set(explicit)
-                or set(explicit) - {'message_id', 'content_index', 'mode', 'text', 'sha256'}
+                or set(explicit) - {'message_id', 'content_index', 'mode', 'text', 'sha256', 'bundle'}
                 or type(explicit['content_index']) is not int or explicit['content_index'] < 0):
             raise ValueError('CHAT_SOURCE_INVALID')
         if 'text' in explicit:
             return explicit
-        matches = [source for source in sources if all(source.get(key) == value
+        matches = [source for source in sources if all((source.get(key) == value
+                   or key == 'sha256' and source.get('bundle', {}).get('selection', {}).get('sha256') == value)
                    for key, value in explicit.items() if key != 'mode')]
         if len(matches) != 1:
             raise ValueError('CHAT_SOURCE_SELECTION_REQUIRED')
@@ -176,7 +186,8 @@ def selected_source(state, arguments):
     if not sources:
         return None
     prompt = arguments.get('prompt')
-    matches = [source for source in sources if source['text'] == prompt]
+    matches = [source for source in sources if source['text'] == prompt or isinstance(prompt, str)
+               and source.get('bundle', {}).get('selection', {}).get('sha256') == hashlib.sha256(prompt.encode()).hexdigest()]
     if len(matches) == 1:
         return matches[0]
     if len(sources) == 1:
@@ -247,16 +258,29 @@ def source_text(db, task_id, context, args):
 
 
 def bind_call(db, task_id, context, name, arguments, source):
+    from services.handlers.chat_content_bundle import verify, adapted_input
     if (name not in INPUT_TOOLS or not isinstance(source, dict)
-            or set(source) not in ({'message_id', 'content_index', 'sha256', 'text', 'mode'},
-                                  {'message_id', 'content_index', 'text', 'mode'})
+            or not {'message_id', 'content_index', 'text', 'mode'} <= set(source)
+            or set(source) - {'message_id', 'content_index', 'sha256', 'text', 'mode', 'bundle'}
             or type(source['content_index']) is not int or source['content_index'] < 0
             or source['mode'] not in ('exact', 'adapted')):
         raise ValueError('CHAT_SOURCE_INVALID')
-    verified = source_text(db, task_id, context, {'message_id': source['message_id'],
-        'content_index': source['content_index'], 'text_exact': source['text']})['source']
-    if any(verified[key] != value for key, value in source.items() if key != 'mode'):
-        raise ValueError('CHAT_SOURCE_CHANGED')
+    if 'bundle' in source:
+        # Fetch through the existing scoped/frozen-history reader. Do not trust
+        # checkpoint or model supplied offsets, spans or completeness claims.
+        history = source_text(db, task_id, context, {'message_id': source['message_id']})
+        part = next((item for item in history['messages'] if item['content_index'] == source['content_index']), None)
+        if part is None or part.get('truncated'):
+            raise ValueError('CHAT_SOURCE_UNAVAILABLE')
+        verify(part['text'], source['text'], source['bundle'])
+        verified = {key: value for key, value in source.items() if key != 'mode'}
+        if verified.get('sha256', hashlib.sha256(verified['text'].encode()).hexdigest()) != hashlib.sha256(verified['text'].encode()).hexdigest():
+            raise ValueError('CHAT_SOURCE_CHANGED')
+    else:
+        verified = source_text(db, task_id, context, {'message_id': source['message_id'],
+            'content_index': source['content_index'], 'text_exact': source['text']})['source']
+        if 'sha256' in source and hashlib.sha256(source['text'].encode()).hexdigest() != source['sha256']:
+            raise ValueError('CHAT_SOURCE_CHANGED')
     result = dict(arguments)
     if name == 'code_execute':
         code = result.get('code')
@@ -289,4 +313,11 @@ def bind_call(db, task_id, context, name, arguments, source):
     elif (name == 'generate_image' and ('plan_source' in result or 'source_prompt' in result)
           or not isinstance(result.get('prompt'), str) or not result['prompt'].strip()):
         raise ValueError('CHAT_SOURCE_PROMPT_REQUIRED')
+    elif verified.get('bundle', {}).get('scope') == 'item':
+        instruction = result['prompt']
+        result['prompt'] = adapted_input(verified['text'], instruction)
+        if name == 'generate_image':
+            result['source_prompt'] = {**{k: v for k, v in verified.items() if k not in {'text', 'sha256'}},
+                                      'sha256': hashlib.sha256(result['prompt'].encode()).hexdigest(),
+                                      'adaptation': instruction}
     return result

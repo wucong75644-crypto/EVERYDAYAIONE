@@ -98,6 +98,16 @@ def test_canvas_prompt_conflict_blocked_before_freeze():
         resolve(prompt="产品摄影，画布比例3:4")
 
 
+def test_complete_source_keeps_original_canvas_facts_without_overriding_output():
+    from services.handlers.image_size_requirements import selected_source_size
+    prompt = '原图画布比例为80:79。\n原图宽高比：80:79。\n输出比例1:1。'
+    args, _ = resolve('使用1:1', prompt=prompt)
+    assert args['aspect_ratio'] == '1:1' and args['prompt'] == prompt
+    assert selected_source_size(prompt)['aspect_ratio'] == '1:1'
+    with pytest.raises(ValueError, match='PROMPT_CONFLICT'):
+        resolve(prompt='保持原图比例3:4。输出比例1:1。')
+
+
 def test_frozen_target_does_not_change_with_user_next_turn():
     refs=[reference()]
     args,target=resolve("统一1:1、2K",refs=refs)

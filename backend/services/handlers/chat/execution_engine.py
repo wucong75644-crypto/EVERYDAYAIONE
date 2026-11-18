@@ -1447,7 +1447,7 @@ async def _execute_tools_impl(
                             candidates = content_tools.discover(context, args['query'], blocked)
                             names.update(item['name'] for item in candidates)
                             result = {'ok': True, 'tools': candidates}
-                        elif call['name'] == content_tools.READ and set(args) <= {'message_id', 'text_exact', 'text_exacts'}:
+                        elif call['name'] == content_tools.READ and set(args) <= {'message_id', 'text_exact', 'text_exacts', 'selection_scope'}:
                             result = {'ok': True, **await asyncio.to_thread(content_tools.source_text,
                                 handler.db, request.task_id, context, args)}
                             sources = result.get('sources') or ([result['source']] if 'source' in result else [])
@@ -1559,9 +1559,9 @@ async def _execute_tools_impl(
                 projected_calls.append({**call, 'arguments': json.dumps(resolved, ensure_ascii=False)})
             except (ValueError, TypeError, PermissionError, KeyError) as error:
                 code = str(error)
+                code = code if code.startswith('CHAT_') else 'CHAT_SOURCE_UNAVAILABLE'
                 direct_errors[call['id']] = (
-                    code if code.startswith('CHAT_') else 'CHAT_SOURCE_UNAVAILABLE',
-                    '无法核实引用的聊天原文。请重新定位所需内容。')
+                    code, '执行内容未通过来源或完整性核验，本次未派发：' + code + '。请重新定位所需内容。')
                 projected_calls.append(call)
         calls = projected_calls
         visible = getattr(prepared, 'content_visible_tool_names', None)

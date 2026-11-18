@@ -515,7 +515,7 @@ async def test_chat_revision_discovery_and_binding_video_and_word(monkeypatch, t
     await execute(runtime, prepared, handler, request, [
         call('generate_video', {'prompt': revision, 'chat_text_source': {**source, 'mode': 'exact'}}, 'stale'),
     ])
-    assert '无法核实引用的聊天原文' in str(prepared.messages[-1]['content'])
+    assert 'CHAT_SOURCE_BUNDLE_CHANGED' in str(prepared.messages[-1]['content'])
     handler._execute_tool_calls.assert_awaited_once()
     await execute(runtime, prepared, handler, request, [
         call(content_tools.READ, {'text_exact': revision}, 'failed-selection'),
@@ -596,7 +596,8 @@ async def test_original_prompt_skill_text_then_second_item_in_new_turn(monkeypat
              }, 'second-image'),
     ])
     assert len(seen) == 1
-    assert seen[0]['prompt'] == prompts[1]
+    assert seen[0]['prompt'] == selected['text']
+    assert prompts[1] in seen[0]['prompt'] and prompts[0] not in seen[0]['prompt']
     assert seen[0]['source_prompt']['message_id'] == message_id
     assert 'plan_source' not in seen[0]
 
@@ -685,6 +686,8 @@ async def test_selected_fragments_survive_batch_reads_without_last_item_overwrit
     prepared.content_controls_available = reader == 'new'
     name = content_tools.READ if reader == 'new' else 'get_conversation_context'
     location = {'message_id': message_id} if reader == 'new' else {'message_ids': [message_id]}
+    # This test explicitly selects individual fragments, not entire documents.
+    location['selection_scope'] = 'fragment'
     reads = ([call(name, {**location, 'text_exact': text}, f'read-{index}') for index, text in enumerate(texts)]
              if parallel else [call(name, {**location, 'text_exacts': texts}, 'read-all')])
     await execute(runtime, prepared, handler, request, reads)

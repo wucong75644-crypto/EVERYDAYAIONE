@@ -96,10 +96,18 @@ def user_size_intent(text: str) -> dict:
 
 def selected_source_size(prompt: str) -> dict:
     """Explicit output declarations in verified selected content, excluding product geometry."""
-    declarations = re.findall(
+    declarations = [match[0] for match in re.finditer(
         r'(?:输出(?:比例|尺寸|分辨率)|画布(?:比例|尺寸)|aspect[_ ]ratio)'
         r'\s*[:：=为是]?\s*(?:\d+\s*[:：xX×]\s*\d+|\d+[kK])', prompt, re.I)
+        if not source_canvas_fact(prompt, match.start())]
     return user_size_intent('，'.join(declarations))
+
+
+def source_canvas_fact(text, start):
+    """Source-image metadata is data, not a competing output requirement."""
+    prefix = text[max(0, start - 20):start]
+    return bool(re.search(r'(?:原图|参考图)(?:的)?(?:画布)?\s*$', prefix)
+                and not re.search(r'(?:保持|沿用|保留|输出).{0,8}$', prefix))
 
 
 def resolve_size_requirement(args: dict, references: list[dict], *, intent=None, previous=None) -> tuple[dict, dict]:
@@ -194,6 +202,8 @@ def resolve_size_requirement(args: dict, references: list[dict], *, intent=None,
     declarations = []
     pattern = r"(?:宽高比|画布比例|输出比例|aspect[_ ]ratio|比例)\s*[:：为是约]?\s*(\d+\s*[:：]\s*\d+)"
     for match in re.finditer(pattern, prompt, re.I):
+        if source_canvas_fact(prompt, match.start()):
+            continue
         prefix = prompt[max(0, match.start() - 8):match.start()]
         if re.search(r"(?:产品|主体|笔记本|包装盒).{0,4}$", prefix) and not re.search(r"画布|输出", match.group(0)):
             continue

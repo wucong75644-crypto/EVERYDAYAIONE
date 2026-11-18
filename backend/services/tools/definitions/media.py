@@ -67,6 +67,8 @@ def _schema_generate_image_async():
                             "task_id":{"type":"string"},
                             "message_id":{"type":"string"},"content_index":{"type":"integer","minimum":0},
                             "sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"},
+                            "bundle":{"type":"object","description":"后台返回的完整内容凭据，原样传回；不要自行构造"},
+                            "adaptation":{"type":"string","description":"后台组装改编输入时保留的改编要求，不替代原始方案"},
                         }},
                     "plan_source":{"type":"object","additionalProperties":False,
                         "required":["plan_id","revision","item_id"],"properties":{

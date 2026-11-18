@@ -57,7 +57,7 @@ class ConversationToolMixin:
 
     def _exact_image_history(self, args: dict) -> str:
         from services.handlers.chat_image_request import ChatImageInputResolver, REQUEST_KEY
-        if (set(args) - {"limit", "message_ids", "task_id", "text_exact", "text_exacts"} or self.context_scope != "user"
+        if (set(args) - {"limit", "message_ids", "task_id", "text_exact", "text_exacts", "selection_scope"} or self.context_scope != "user"
                 or self.workspace_user_id != self.user_id or not self.personal_context_allowed
                 or not self.task_id):
             raise PermissionError("IMAGE_HISTORY_SCOPE_DENIED")
@@ -128,8 +128,13 @@ class ConversationToolMixin:
                 if not fragments:
                     continue
                 parts = [part for part in message['parts'] if part['type'] == 'image']
-                parts.extend({'type': 'text', 'content_index': source['content_index'],
-                              'text': source['text'], 'sha256': source['sha256']} for source in fragments)
+                for source in fragments:
+                    original = next(part['text'] for part in message['parts']
+                                    if part['type'] == 'text' and part['content_index'] == source['content_index'])
+                    selection = source['bundle']['selection']
+                    parts.append({'type': 'text', 'content_index': source['content_index'],
+                                  'text': original[selection['start']:selection['end']],
+                                  'sha256': selection['sha256'], 'selected_prompt_sha256': source['sha256']})
                 compact_messages.append({**message, 'parts': parts})
             output['messages'] = compact_messages
             prompts = [{'prompt': source['text'], 'source_prompt': {

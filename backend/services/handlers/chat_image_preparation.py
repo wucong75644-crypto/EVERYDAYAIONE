@@ -52,8 +52,14 @@ def prepare_input(resolver,args,*,scoped,workflow,settings,composition=None,entr
     normalized=resolver.normalize_legacy(args)
     if normalized.get("background")=="transparent" and not settings.chat_image_transparent_enabled:
         raise PermissionError("CHAT_IMAGE_TRANSPARENT_DISABLED")
+    if (not plan_proof and 'source_prompt' not in normalized
+            and isinstance(normalized.get('prompt'), str) and normalized['prompt'].strip()):
+        source = resolver.locate_source_prompt(normalized['prompt'])
+        if source is not None:
+            normalized['source_prompt'] = source
     if 'source_prompt' in normalized:
-        normalized['source_prompt'] = resolver.source_prompt(normalized['source_prompt'], normalized['prompt'])
+        normalized['prompt'], normalized['source_prompt'] = resolver.complete_source_prompt(
+            normalized['source_prompt'], normalized['prompt'])
     references = normalized.get('references', [])
     if reference_cache is None:
         refs = resolver.resolve(references)
