@@ -493,7 +493,7 @@ async def bind_image_recipes(runtime,calls,registry):
     from services.tools.argument_validation import parse_model_image_arguments
     resolver=getattr(runtime,'task_image_resource_resolver',None)
     prepare=getattr(resolver,'prepare_request',None)
-    prepare_batch = getattr(resolver, 'prepare_batch', None)
+    prepare_batch = getattr(resolver, '__dict__', {}).get('prepare_batch')
     if prepare_batch is not None:
         prepare = prepare_batch()
     errors={}
