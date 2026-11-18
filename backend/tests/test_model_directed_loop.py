@@ -624,3 +624,78 @@ async def test_exact_word_delivery_checks_host_file_before_upload(monkeypatch, t
     document.save(path)
     await sandbox._upload_payload_files([payload])
     upload.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_source_failure_preserves_reason_and_stops_automatic_generation(monkeypatch):
+    runtime, prepared, handler, request = case()
+    runtime.task_operation_store = SimpleNamespace(registry=build_capability_catalog())
+    runtime.task_image_resource_resolver = SimpleNamespace(
+        prepare_request=AsyncMock(side_effect=ValueError('IMAGE_SOURCE_PROMPT_CHANGED')))
+    monkeypatch.setattr('services.handlers.chat.execution_engine.compact_tool_context', AsyncMock())
+    await execute(runtime, prepared, handler, request, [
+        call('generate_image', {'mode': 'image_to_image', 'prompt': '原提示词',
+             'references': [{'message_id': str(uuid4()), 'content_index': 1, 'role': '产品'}],
+             'source_prompt': {'message_id': str(uuid4()), 'content_index': 0},
+             'aspect_ratio': '1:1'}, 'bad-source'),
+    ])
+    handler._execute_tool_calls.assert_not_awaited()
+    assert 'IMAGE_SOURCE_PROMPT_CHANGED' in str(prepared.messages[-1]['content'])
+    assert '停止提交' in handler._tool_result_stop_reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('reader', ['new', 'legacy'])
+@pytest.mark.parametrize('parallel', [False, True])
+async def test_selected_fragments_survive_batch_reads_without_last_item_overwrite(monkeypatch, mock_db, reader, parallel):
+    from services.agent.agent_result import AgentResult
+    from services.agent.conversation_tool_mixin import ConversationToolMixin
+    from services.handlers.chat import content_tools
+
+    runtime, prepared, handler, request = case()
+    message_id, input_id = str(uuid4()), str(uuid4())
+    texts = ['第一个版本：新品首发。', '第二个版本：限时优惠。']
+    mock_db.set_table_data('tasks', [{'id': request.task_id, 'user_id': request.user_id, 'org_id': None,
+        'conversation_id': request.conversation_id, 'base_context_revision': 1,
+        'input_message_id': input_id, 'request_params': {}}])
+    mock_db.set_table_data('messages', [{'id': message_id, 'role': 'assistant', 'org_id': None,
+        'conversation_id': request.conversation_id, 'status': 'completed', 'message_kind': 'conversation',
+        'context_revision': 1, 'content': [{'type': 'text', 'text': '\n'.join(texts)}]}])
+    handler.db = mock_db
+    owner = SimpleNamespace(db=mock_db, user_id=request.user_id, workspace_user_id=request.user_id,
+        org_id=None, conversation_id=request.conversation_id, task_id=request.task_id,
+        context_scope='user', personal_context_allowed=True, execution_mode='interactive')
+    seen = []
+
+    async def accept(calls, *_args, **_kwargs):
+        results = []
+        for raw in calls:
+            args = json.loads(raw['arguments'])
+            if raw['name'] == 'get_conversation_context':
+                output = ConversationToolMixin._exact_image_history(owner, args)
+            else:
+                seen.append(args['prompt'])
+                output = '本地替身'
+            results.append((raw, AgentResult(output), False, output))
+        return results
+
+    handler._execute_tool_calls.side_effect = accept
+    monkeypatch.setattr(content_tools, '_check_identity', lambda *_: None)
+    monkeypatch.setattr('services.handlers.chat.execution_engine.compact_tool_context', AsyncMock())
+    prepared.content_controls_available = reader == 'new'
+    name = content_tools.READ if reader == 'new' else 'get_conversation_context'
+    location = {'message_id': message_id} if reader == 'new' else {'message_ids': [message_id]}
+    reads = ([call(name, {**location, 'text_exact': text}, f'read-{index}') for index, text in enumerate(texts)]
+             if parallel else [call(name, {**location, 'text_exacts': texts}, 'read-all')])
+    await execute(runtime, prepared, handler, request, reads)
+    state = content_tools.checkpoint_state(runtime)
+    assert [source['text'] for source in state['selected_sources']] == texts
+    runtime.task_operation_store = SimpleNamespace(registry=build_capability_catalog())
+    runtime.task_image_resource_resolver = SimpleNamespace(
+        prepare_request=AsyncMock(side_effect=lambda args, *_args, **_kwargs: (args, [], None)))
+    await execute(runtime, prepared, handler, request, [
+        call('generate_image', {'mode': 'text_to_image', 'prompt': text, 'aspect_ratio': '1:1'}, f'image-{index}')
+        for index, text in enumerate(texts)])
+    assert seen == texts
+    proofs = content_tools.checkpoint_state(runtime)['bindings']
+    assert proofs['image-0']['sha256'] != proofs['image-1']['sha256']

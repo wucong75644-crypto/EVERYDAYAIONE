@@ -94,6 +94,14 @@ def user_size_intent(text: str) -> dict:
     return intent
 
 
+def selected_source_size(prompt: str) -> dict:
+    """Explicit output declarations in verified selected content, excluding product geometry."""
+    declarations = re.findall(
+        r'(?:输出(?:比例|尺寸|分辨率)|画布(?:比例|尺寸)|aspect[_ ]ratio)'
+        r'\s*[:：=为是]?\s*(?:\d+\s*[:：xX×]\s*\d+|\d+[kK])', prompt, re.I)
+    return user_size_intent('，'.join(declarations))
+
+
 def resolve_size_requirement(args: dict, references: list[dict], *, intent=None, previous=None) -> tuple[dict, dict]:
     """Return normalized execution specs plus immutable provenance.
 

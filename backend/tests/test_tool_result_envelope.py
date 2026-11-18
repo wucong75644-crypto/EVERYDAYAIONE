@@ -9,8 +9,19 @@ tool_result_envelope 单元测试
 """
 
 import asyncio
+import json
 
 import pytest
+
+
+def test_bounded_exact_source_results_preserve_body_and_proof_together():
+    from services.agent.tool_result_envelope import SOURCE_SELECTION_BUDGET
+    result = json.dumps({'selected_prompts': [
+        {'prompt': '原文' * 2500, 'source_prompt': {'message_id': 'm', 'content_index': 1, 'sha256': 'a' * 64}}
+    ]}, ensure_ascii=False)
+    assert 3000 < len(result) < SOURCE_SELECTION_BUDGET
+    assert wrap('get_conversation_context', result) == result
+    assert wrap_for_erp_agent('get_conversation_context', result) == result
 
 from services.agent.tool_result_envelope import (
     wrap,

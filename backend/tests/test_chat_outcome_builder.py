@@ -174,3 +174,12 @@ def test_skill_proposal_reference_survives_completion_and_api():
     }]
     validated = TypeAdapter(list[ContentPart]).validate_python(wire)
     assert validated[0].proposal_id == "proposal-1"
+
+
+def test_source_reads_stay_in_execution_records_and_out_of_visible_message():
+    blocks = [{'type': 'tool_step', 'tool_name': 'get_conversation_context',
+               'tool_call_id': 'read-source', 'status': 'completed', 'output': 'private source metadata'},
+              {'type': 'text', 'text': '已准备所选内容'}]
+    parts = build_content_parts(blocks, fallback_text="")
+    assert [part.type for part in parts] == ['text']
+    assert blocks[0]['tool_call_id'] == 'read-source'

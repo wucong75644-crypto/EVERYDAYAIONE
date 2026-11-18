@@ -247,3 +247,14 @@ describe('task progress discovery', () => {
     expect(screen.queryByTestId('task-progress-source')).not.toBeInTheDocument();
   });
 });
+
+
+it.each([true, false])('keeps background source reads out of the message while streaming=%s', (isStreaming) => {
+  const message = normalizeMessage({ id: 'source-read', conversation_id: 'c1', role: 'assistant', status: 'completed',
+    content: [{ type: 'tool_step', tool_name: 'get_conversation_context', tool_call_id: 'read', status: 'completed',
+      output: 'private source metadata' }, { type: 'text', text: '方案已准备好' }] });
+  render(<MessageContentBlocks message={message} imageAssets={[]} fileBlocks={[]} isStreaming={isStreaming}
+    isRegenerating={false} textContent="方案已准备好" onImageClick={vi.fn()} />);
+  expect(screen.queryByText(/get_conversation_context/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/private source metadata/)).not.toBeInTheDocument();
+});

@@ -4,7 +4,7 @@ import uuid
 from services.handlers.chat_image_request import ChatImageNotAcceptedError
 
 
-def prepare_input(resolver,args,*,scoped,workflow,settings,composition=None,entry_checked=False):
+def prepare_input(resolver,args,*,scoped,workflow,settings,composition=None,entry_checked=False,reference_cache=None):
     owner=resolver.owner
     if not entry_checked:validate_entry(owner,args,scoped=scoped,workflow=workflow,settings=settings,composition=composition)
     plan_source=args.get("plan_source")
@@ -52,7 +52,19 @@ def prepare_input(resolver,args,*,scoped,workflow,settings,composition=None,entr
     normalized=resolver.normalize_legacy(args)
     if normalized.get("background")=="transparent" and not settings.chat_image_transparent_enabled:
         raise PermissionError("CHAT_IMAGE_TRANSPARENT_DISABLED")
-    refs=resolver.resolve(normalized.get("references",[]))
+    if 'source_prompt' in normalized:
+        normalized['source_prompt'] = resolver.source_prompt(normalized['source_prompt'], normalized['prompt'])
+    references = normalized.get('references', [])
+    if reference_cache is None:
+        refs = resolver.resolve(references)
+    else:
+        import json
+        from copy import deepcopy
+        cache_key = json.dumps(references, sort_keys=True, ensure_ascii=False)
+        if cache_key not in reference_cache:
+            reference_cache[cache_key] = resolver.resolve(references)
+        refs = deepcopy(reference_cache[cache_key])
+        resolver.verify(refs, digest=False)
     if plan_proof:
         frozen_sources={entry["source_id"]:entry for entry in plan["input_snapshot"]["resolved_references"]}
         from services.agent.image.ecommerce_planner.contracts import source_id
@@ -63,8 +75,16 @@ def prepare_input(resolver,args,*,scoped,workflow,settings,composition=None,entr
                     or expected["file_version"]!=reference["file_version"]
                     or expected["workspace_path"]!=reference["workspace_path"]):
                 raise ValueError("ECOM_PLAN_REFERENCE_CHANGED")
-    from services.handlers.image_size_requirements import resolve_size_requirement
+    from services.handlers.image_size_requirements import resolve_size_requirement, selected_source_size
     intent, previous = resolver.size_context()
+    size_fields = {'aspect_ratio', 'mode', 'width', 'height', 'orientation'}
+    source = normalized.get('source_prompt')
+    if source and not size_fields.intersection(intent) and not size_fields.intersection(previous):
+        selected_size = selected_source_size(normalized['prompt'])
+        if selected_size:
+            provenance = {f'source_{key}': source[key] for key in ('message_id', 'task_id') if key in source}
+            previous = {**selected_size, 'mode': 'explicit', **previous, **provenance}
+            intent = {**{key: selected_size[key] for key in ('width', 'height') if key in selected_size}, **intent}
     if plan_proof:
         locked_size = plan["target_size"]
         ratio = locked_size["aspect_ratio"]
@@ -84,8 +104,6 @@ def prepare_input(resolver,args,*,scoped,workflow,settings,composition=None,entr
         target_size = locked_size
     else:
         normalized, target_size = resolve_size_requirement(normalized, refs, intent=intent, previous=previous)
-    if "source_prompt" in normalized:
-        normalized["source_prompt"] = resolver.source_prompt(normalized["source_prompt"],normalized["prompt"])
     if "source_task_id" in normalized:
         resolver.validate_source_task(normalized["source_task_id"])
     return normalized,refs,target_size,plan_proof

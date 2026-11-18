@@ -69,11 +69,12 @@ def _schema_web_search():
 def _schema_image_history():
     return {"type": "function", "function": {
         "name": "get_conversation_context",
-        "description": "读取当前获准会话基线内的精确历史原文及图片来源。历史提示词必须读原文后复用，不能用摘要猜测。返回 message_id/content_index/sha256；task_id 可读取已发布图片实际输入的完整提示词。每次最多20条/8个指定消息。",
+        "description": "读取当前获准会话基线内的精确历史原文及图片来源。历史提示词必须读原文后复用，不能用摘要猜测。返回 message_id/content_index/sha256；task_id 可读取已发布图片实际输入的完整提示词。已在上下文中的原文可直接用消息定位交给执行工具；text_exacts 可一次选取多段，精确读取只返回选中内容及图片来源。每次最多20条/8个指定消息。",
         "parameters": {"type": "object", "additionalProperties": False, "properties": {
             "limit": {"type": "integer", "minimum": 1, "maximum": 20},
             "message_ids": {"type": "array", "maxItems": 8, "items": {"type": "string"}},
             "task_id": {"type": "string"},
+            "text_exacts": {"type":"array","minItems":1,"maxItems":100,"items":{"type":"string","minLength":1,"maxLength":20000},"description":"一次精确选取多条原文，按请求顺序返回。与text_exact互斥。"},
             "text_exact": {"type":"string","minLength":1,"maxLength":20000,"description":"从返回原文逐字选取的完整提示词；服务器确认唯一原文位置并返回它的sha256。"},
         }},
     }}

@@ -341,3 +341,30 @@ def test_deleted_origin_preserves_workspace_permission_asset_and_image_checks(co
         files.resolve_safe_path('B.png').write_bytes(b'not an image')
     with pytest.raises((PermissionError, ValueError, OSError)):
         resolver(context).resolve([{'message_id': current['id'], 'content_index': 0, 'role': 'product'}])
+
+
+def test_prompt_locator_uses_host_hash_and_still_rejects_changed_text(context):
+    row, owner, prompt, read = exact_reader(context)
+    native = resolver(context)
+    source = {'message_id': row['id'], 'content_index': 4}
+    verified = native.source_prompt(source, prompt)
+    assert verified['sha256'] == hashlib.sha256(prompt.encode()).hexdigest()
+    assert 'sha256' not in source
+    with pytest.raises(ValueError, match='IMAGE_SOURCE_PROMPT_CHANGED'):
+        native.source_prompt(source, '模型改写的正文')
+    with pytest.raises(ValueError, match='IMAGE_SOURCE_PROMPT_CHANGED'):
+        native.source_prompt({**source, 'sha256': '0' * 64}, prompt)
+    import json
+    row['content'][4]['text'] = ('无关长正文' * 5000) + prompt
+    result = json.loads(read({'message_ids': [row['id']], 'text_exact': prompt}))
+    text = [part['text'] for part in result['messages'][0]['parts'] if part['type'] == 'text']
+    assert text == [prompt]
+    assert len(json.dumps(result, ensure_ascii=False)) < 4000
+
+
+def test_exact_history_over_response_budget_requires_smaller_selection(context):
+    row, _owner, _prompt, read = exact_reader(context)
+    text = 'A' * 16000
+    row['content'][4]['text'] = text
+    with pytest.raises(ValueError, match='IMAGE_HISTORY_SELECTION_TOO_LARGE_SELECT_FEWER_FRAGMENTS'):
+        read({'message_ids': [row['id']], 'text_exact': text})

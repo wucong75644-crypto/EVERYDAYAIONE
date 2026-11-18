@@ -197,3 +197,10 @@ def test_current_unpersisted_image_also_gets_server_canvas_facts(tmp_path,monkey
     sources=discovered_image_sources({"role":"user","content":[{"type":"image","workspace_path":"original.png"}]},MagicMock(),org_id=None,owner_id=user)
     assert sources[0]["canvas"]["aspect_ratio"]=="1:1"
     assert "message_id" not in sources[0]["reference"]
+
+
+def test_verified_source_size_uses_explicit_output_labels_and_preserves_pixels():
+    from services.handlers.image_size_requirements import selected_source_size
+    assert selected_source_size('产品比例2:3，主体宽高比4:5。') == {}
+    assert selected_source_size('产品比例2:3，输出比例1:1。') == {'aspect_ratio': '1:1'}
+    assert selected_source_size('输出尺寸1254×1254像素。') == {'width': 1254, 'height': 1254}

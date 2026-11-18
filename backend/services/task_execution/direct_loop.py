@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import re
 import json
 from dataclasses import replace
 from uuid import UUID
@@ -492,6 +493,9 @@ async def bind_image_recipes(runtime,calls,registry):
     from services.tools.argument_validation import parse_model_image_arguments
     resolver=getattr(runtime,'task_image_resource_resolver',None)
     prepare=getattr(resolver,'prepare_request',None)
+    prepare_batch = getattr(resolver, 'prepare_batch', None)
+    if prepare_batch is not None:
+        prepare = prepare_batch()
     errors={}
     verified = set()
     for raw in calls:
@@ -520,8 +524,11 @@ async def bind_image_recipes(runtime,calls,registry):
                 source_call_id=raw['id'],step_id=binding.step_id,validations=('artifact.exists','image.direct.recipe'))
             state=register_artifacts(state,[artifact])
         except (ValueError,TypeError,PermissionError,OSError) as error:
-            code=str(error) if isinstance(error,TaskError) else 'TASK_IMAGE_INPUT_UNAVAILABLE'
-            errors[raw['id']]=(code,'图片输入尚未核实，本次未派发：'+code)
+            reason = getattr(error, 'code', None) or str(error)
+            code = reason if re.fullmatch(r'[A-Z][A-Z0-9_]{1,100}', reason) else 'TASK_IMAGE_INPUT_UNAVAILABLE'
+            guidance = getattr(error, 'guidance', '')
+            errors[raw['id']] = (code, '生图输入校验失败，本次未派发：' + code
+                                + ('。' + guidance if guidance else ''))
     return state,errors
 
 

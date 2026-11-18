@@ -57,7 +57,7 @@ class ConversationToolMixin:
 
     def _exact_image_history(self, args: dict) -> str:
         from services.handlers.chat_image_request import ChatImageInputResolver, REQUEST_KEY
-        if (set(args) - {"limit", "message_ids", "task_id", "text_exact"} or self.context_scope != "user"
+        if (set(args) - {"limit", "message_ids", "task_id", "text_exact", "text_exacts"} or self.context_scope != "user"
                 or self.workspace_user_id != self.user_id or not self.personal_context_allowed
                 or not self.task_id):
             raise PermissionError("IMAGE_HISTORY_SCOPE_DENIED")
@@ -114,18 +114,35 @@ class ConversationToolMixin:
         reason = ((parent.get("request_params") or {}).get("_image_sources_v1") or {}).get("unavailable_reason")
         if reason:
             output["image_sources_unavailable_reason"] = reason
-        if "text_exact" in args:
-            exact=args["text_exact"]
-            if not isinstance(exact,str) or not 1<=len(exact)<=20000:
-                raise ValueError("IMAGE_HISTORY_PROMPT_INVALID")
-            matches=[(message,part) for message in messages for part in message["parts"]
-                if part["type"]=="text" and part["text"].count(exact)==1]
-            if len(matches)!=1:
-                raise ValueError("IMAGE_HISTORY_PROMPT_AMBIGUOUS")
-            message,part=matches[0]
-            output["selected_prompt"]={"prompt":exact,"source_prompt":{"message_id":message["message_id"],
-                "content_index":part["content_index"],"sha256":hashlib.sha256(exact.encode()).hexdigest()}}
+        if 'text_exact' in args or 'text_exacts' in args:
+            from services.handlers.chat.content_tools import select_text_fragments
+            try:
+                selected = select_text_fragments(messages, args)
+            except ValueError as error:
+                if str(error) == 'CHAT_SOURCE_UNAVAILABLE_OR_AMBIGUOUS':
+                    raise ValueError('IMAGE_HISTORY_PROMPT_AMBIGUOUS') from error
+                raise
+            compact_messages = []
+            for message in messages:
+                fragments = [source for source in selected if source['message_id'] == str(message['message_id'])]
+                if not fragments:
+                    continue
+                parts = [part for part in message['parts'] if part['type'] == 'image']
+                parts.extend({'type': 'text', 'content_index': source['content_index'],
+                              'text': source['text'], 'sha256': source['sha256']} for source in fragments)
+                compact_messages.append({**message, 'parts': parts})
+            output['messages'] = compact_messages
+            prompts = [{'prompt': source['text'], 'source_prompt': {
+                key: value for key, value in source.items() if key != 'text'}} for source in selected]
+            if 'text_exacts' in args:
+                output['selected_prompts'] = prompts
+            else:
+                output['selected_prompt'] = prompts[0]
         result=json.dumps(output,ensure_ascii=False)
+        if 'text_exact' in args or 'text_exacts' in args:
+            from services.agent.tool_result_envelope import SOURCE_SELECTION_BUDGET
+            if len(result) > SOURCE_SELECTION_BUDGET:
+                raise ValueError('IMAGE_HISTORY_SELECTION_TOO_LARGE_SELECT_FEWER_FRAGMENTS')
         if len(result.encode())>128000:
             raise ValueError("IMAGE_HISTORY_TOO_LARGE_SELECT_FEWER_MESSAGES")
         return result

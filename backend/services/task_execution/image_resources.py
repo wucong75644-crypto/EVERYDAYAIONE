@@ -138,7 +138,7 @@ def create_resolver(handler,request,context):
             intent,previous=native.size_context()
             return resolve_size_requirement(dict(arguments),references,intent=intent,previous=previous)
         return await asyncio.to_thread(read)
-    async def prepare_request(arguments,state,call_id,*,binding_required=True):
+    async def prepare_request(arguments,state,call_id,*,binding_required=True,reference_cache=None):
         def read():
             from core.config import get_settings
             from core.db_scope import DatabaseScope,DatabaseAccessKind,ScopedDatabaseClient
@@ -152,13 +152,15 @@ def create_resolver(handler,request,context):
             from services.skills.coordination import Composition
             composition=(parent.get('request_params') or {}).get('_skill_composition')
             composition=Composition.model_validate(composition) if composition is not None else None
-            normalized,refs,_target,proof=prepare_input(native,dict(arguments),scoped=scoped,workflow=workflow,settings=get_settings(),composition=composition)
+            normalized,refs,_target,proof=prepare_input(native,dict(arguments),scoped=scoped,workflow=workflow,settings=get_settings(),composition=composition,reference_cache=reference_cache)
             verify_native_resources(state.model_dump(mode='json'),call_id,arguments,normalized,refs,native=native,
                 binding_required=binding_required)
             settings=validate_single_image_request(normalized,len(refs))
-            native.verify(refs)
+            native.verify(refs, digest=reference_cache is None)
             return {**normalized,**{k:settings[k] for k in ('model','resolution','output_format','aspect_ratio')}},refs,proof
         return await asyncio.to_thread(read)
+    from functools import partial
+    resolve.prepare_batch = lambda: partial(prepare_request, reference_cache={})
     resolve.prepare_request=prepare_request
     resolve.size_requirement=size_requirement
     return resolve

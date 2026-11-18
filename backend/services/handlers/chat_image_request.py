@@ -487,9 +487,9 @@ class ChatImageInputResolver:
             raise ValueError("IMAGE_REFERENCE_CHANGED")
         return target
 
-    def verify(self, references: list[dict]) -> None:
+    def verify(self, references: list[dict], *, digest=True) -> None:
         for reference in references:
-            self._verify_reference(reference)
+            self._verify_reference(reference, digest=digest)
 
     def preview(self, reference):
         # Read-only display checks identity/current permission/file version.
@@ -499,7 +499,8 @@ class ChatImageInputResolver:
 
     def source_prompt(self, source: dict, prompt: str) -> dict:
         """A source is exact text and hash; no summary-based reconstruction."""
-        if isinstance(source,dict) and set(source)=={"task_id","sha256"}:
+        if isinstance(source, dict) and set(source) in ({"task_id"}, {"task_id", "sha256"}):
+            source = {"sha256": hashlib.sha256(prompt.encode()).hexdigest(), **source}
             row=self.owner.db.table("tasks").select("user_id,org_id,conversation_id,type,status,assistant_message_id,request_params").eq("id",source["task_id"]).single().execute().data
             if (row.get("user_id")!=self.owner.user_id or row.get("org_id")!=self.owner.org_id
                     or row.get("conversation_id")!=self.owner.conversation_id or row.get("type")!="image"
@@ -510,8 +511,10 @@ class ChatImageInputResolver:
             if snapshot.get("prompt")!=prompt or hashlib.sha256(prompt.encode()).hexdigest()!=source["sha256"]:
                 raise ValueError("IMAGE_SOURCE_PROMPT_CHANGED")
             return deepcopy(source)
-        if (not isinstance(source, dict) or set(source) != {"message_id", "content_index", "sha256"}):
+        if (not isinstance(source, dict) or set(source) not in
+                ({"message_id", "content_index"}, {"message_id", "content_index", "sha256"})):
             raise ValueError("IMAGE_SOURCE_PROMPT_INVALID")
+        source = {"sha256": hashlib.sha256(prompt.encode()).hexdigest(), **source}
         row = self._message(source["message_id"])
         content = row["content"]
         if isinstance(content, str):

@@ -569,6 +569,14 @@ async def _run_loop(
     repeated_tool_call_guard: _RepeatedToolCallGuard | None = None,
     finalize_task=None,
 ) -> str | None:
+    from services.task_execution.model_directed import enabled as direct_enabled
+    if direct_enabled(runtime):
+        stopped = content_tools.checkpoint_state(runtime).get('stop_message')
+        if stopped:
+            blocks.append({'type': 'text', 'text': stopped})
+            totals.text += stopped
+            await sink.on_block(blocks[-1])
+            return None
     if runtime and runtime.task_execution_state is not None:
         from services.task_execution.user_changes import activate_for_delivery
         from services.task_execution.requirement_changes import refresh as refresh_user_changes
@@ -1181,7 +1189,10 @@ async def _read_turn(
             accumulate_tool_call_delta(calls, chunk.tool_calls)
             if runtime is not None and not task_review:
                 for index, call in calls.items():
-                    if index in previewed_indices or not call.get("name") or call["name"] in SKILL_CONTROL_TOOLS or call["name"] == SAVE_IMAGE_PLAN or call["name"] in content_tools.CONTROLS:
+                    if (index in previewed_indices or not call.get("name")
+                            or call["name"] in SKILL_CONTROL_TOOLS
+                            or call["name"] in {SAVE_IMAGE_PLAN, "get_conversation_context"}
+                            or call["name"] in content_tools.CONTROLS):
                         continue
                     preview_id = _actor_tool_preview_id(
                         runtime.turn_id, model_round, index,
@@ -1414,6 +1425,9 @@ async def _execute_tools_impl(
             state = content_tools.checkpoint_state(runtime)
             names = set(state.get('names', ()))
             context = prepared.execution_context
+            selected_in_batch = False
+            source_read_failed = False
+            source_read_message = '无法核实所选原文，本轮已停止提交，请明确要使用的内容后继续。'
             for call in calls:
                 result = {'ok': False, 'code': 'CHAT_CONTENT_CONTROL_BARRIER'}
                 if call['name'] in content_tools.CONTROLS:
@@ -1433,19 +1447,21 @@ async def _execute_tools_impl(
                             candidates = content_tools.discover(context, args['query'], blocked)
                             names.update(item['name'] for item in candidates)
                             result = {'ok': True, 'tools': candidates}
-                        elif call['name'] == content_tools.READ and set(args) <= {'message_id', 'text_exact'}:
+                        elif call['name'] == content_tools.READ and set(args) <= {'message_id', 'text_exact', 'text_exacts'}:
                             result = {'ok': True, **await asyncio.to_thread(content_tools.source_text,
                                 handler.db, request.task_id, context, args)}
-                            if 'source' in result:
-                                state = {**state, 'source_selection_failed': False,
-                                         'selected_source': {**result['source'], 'mode': 'exact'}}
-                            else:
-                                state = {**state, 'source_selection_failed': True}
+                            sources = result.get('sources') or ([result['source']] if 'source' in result else [])
+                            if sources:
+                                state = content_tools.remember_selection(state, result, append=selected_in_batch)
+                                selected_in_batch = True
                         else:
                             raise ValueError('CHAT_CONTENT_ARGUMENTS_INVALID')
                     except (ValueError, TypeError, PermissionError, KeyError) as error:
                         code = str(error)
                         if call['name'] == content_tools.READ:
+                            source_read_failed = True
+                            if 'TOO_LARGE' in code:
+                                source_read_message = '所选内容超出单次读取上限，本轮已停止提交，请分批选择。'
                             state = {**state, 'source_selection_failed': True}
                         result = {'ok': False, 'code': code if code.startswith('CHAT_') else 'CHAT_CONTENT_UNAVAILABLE'}
                 output = json.dumps(result, ensure_ascii=False)
@@ -1453,6 +1469,10 @@ async def _execute_tools_impl(
                 for block in blocks:
                     if block.get('tool_call_id') == call['id']:
                         block.update(status='error', output=output)
+            if source_read_failed:
+                message = source_read_message
+                state = {**state, 'source_selection_failed': True, 'stop_message': message}
+                handler._tool_result_stop_reason = message
             runtime.checkpoint_base[content_tools.STATE] = {**state, 'names': sorted(names)}
             await runtime.safe_point(SafePoint.AFTER_TOOL, replay_payload=_build_replay_context(
                 prepared.messages, blocks, turn, next_model_round=next_model_round,
@@ -1511,21 +1531,30 @@ async def _execute_tools_impl(
                     '引用尚未核实，请先重新定位需要执行的原文。')
                 projected_calls.append(call)
                 continue
-            selected = content_state.get('selected_source')
-            if (isinstance(args, dict) and call['name'] in content_tools.INPUT_TOOLS
-                    and 'chat_text_source' not in args and selected
-                    and not any(key in args for key in ('plan_source', 'source_prompt'))):
-                args['chat_text_source'] = selected
+            automatically_selected = False
+            try:
+                if (isinstance(args, dict) and call['name'] in content_tools.INPUT_TOOLS
+                        and not any(key in args for key in ('plan_source', 'source_prompt'))):
+                    selected = content_tools.selected_source(content_state, args)
+                    if selected is not None:
+                        automatically_selected = 'chat_text_source' not in args
+                        args['chat_text_source'] = selected
+            except ValueError as error:
+                direct_errors[call['id']] = (str(error), '存在多条已选原文，请明确本次调用使用哪一条。')
+                projected_calls.append(call)
+                continue
             if not isinstance(args, dict) or 'chat_text_source' not in args:
                 projected_calls.append(call)
                 continue
             source = args.pop('chat_text_source')
             try:
                 if (not content_tools.enabled(runtime, prepared.execution_context)
-                        or (not recovery_only and not getattr(prepared, 'content_controls_available', False))):
+                        or (not recovery_only and not automatically_selected
+                            and not getattr(prepared, 'content_controls_available', False))):
                     raise PermissionError('CHAT_SOURCE_DENIED')
                 resolved = await asyncio.to_thread(content_tools.bind_call, handler.db, request.task_id,
                     prepared.execution_context, call['name'], args, source)
+                source = {**source, 'sha256': hashlib.sha256(source['text'].encode()).hexdigest()}
                 bound_sources[call['id']] = (args, source, resolved)
                 projected_calls.append({**call, 'arguments': json.dumps(resolved, ensure_ascii=False)})
             except (ValueError, TypeError, PermissionError, KeyError) as error:
@@ -1847,6 +1876,45 @@ async def _execute_tools_impl(
             'image_binding_writer': persist_workflow_binding}
            if runtime and runtime.skill_runtime is not None and runtime.skill_runtime.checkpoint_version == 2 else {}),
     ) if ready_calls else []
+    if direct_enabled(runtime):
+        selected_in_batch = False
+        source_read_failed = False
+        for call, result, is_error, _display in results:
+            if call['name'] != 'get_conversation_context':
+                continue
+            if is_error:
+                try:
+                    arguments = json.loads(call.get('arguments') or '{}')
+                except (ValueError, TypeError):
+                    arguments = {}
+                if isinstance(arguments, dict) and {'text_exact', 'text_exacts'}.intersection(arguments):
+                    source_read_failed = True
+                    state = content_tools.checkpoint_state(runtime)
+                    runtime.checkpoint_base[content_tools.STATE] = {**state, 'source_selection_failed': True}
+                    error = getattr(result, 'exception', None) or getattr(result, 'summary', result)
+                    handler._tool_result_stop_reason = (
+                        '所选内容超出单次读取上限，本轮已停止提交，请分批选择。' if 'TOO_LARGE' in str(error)
+                        else '无法核实所选原文，本轮已停止提交，请明确要使用的内容后继续。')
+                continue
+            try:
+                from services.tools.result import ToolResult
+                raw = result.raw if isinstance(result, ToolResult) else getattr(result, 'summary', result)
+                selection = json.loads(raw)
+            except (ValueError, TypeError, AttributeError):
+                continue
+            if isinstance(selection, dict):
+                state = content_tools.checkpoint_state(runtime)
+                try:
+                    updated = content_tools.remember_selection(state, selection, append=selected_in_batch)
+                    runtime.checkpoint_base[content_tools.STATE] = updated
+                    selected_in_batch = selected_in_batch or bool(updated.get('selected_sources'))
+                except ValueError:
+                    source_read_failed = True
+                    handler._tool_result_stop_reason = '所选原文过多，请分批选择后继续。'
+        if source_read_failed:
+            state = content_tools.checkpoint_state(runtime)
+            runtime.checkpoint_base[content_tools.STATE] = {**state, 'source_selection_failed': True,
+                'stop_message': handler._tool_result_stop_reason}
     if rejected or direct_reused:
         by_call = {item[0]["id"]: item for item in [*results, *rejected,*direct_reused]}
         results = [by_call[call["id"]] for call in calls]
@@ -1854,6 +1922,17 @@ async def _execute_tools_impl(
         ecom_arguments.observe(results)
         if ecom_arguments.stop_message:
             handler._tool_result_stop_reason = ecom_arguments.stop_message
+    if any(code.startswith(('CHAT_SOURCE', 'IMAGE_SOURCE', 'IMAGE_ORIGINAL', 'IMAGE_REFERENCE',
+                            'IMAGE_QUOTED', 'IMAGE_ASSET', 'IMAGE_CONTENT', 'IMAGE_LEGACY',
+                            'RESOURCE_', 'TASK_IMAGE_INPUT', 'TASK_IMAGE_RESOURCE',
+                            'IMAGE_SIZE', 'IMAGE_ASPECT', 'IMAGE_EXACT', 'IMAGE_CANVAS', 'IMAGE_DIMENSIONS',
+                            'IMAGE_RESOLUTION')) for code, _message in direct_errors.values()):
+        reasons = list(dict.fromkeys(message for _code, message in direct_errors.values()))
+        handler._tool_result_stop_reason = '本轮已停止提交。' + '\n'.join(reasons)
+        if direct_enabled(runtime):
+            state = content_tools.checkpoint_state(runtime)
+            runtime.checkpoint_base[content_tools.STATE] = {**state, 'source_selection_failed': True,
+                'stop_message': handler._tool_result_stop_reason}
     for call, result, is_error, _display in results:
         if (call["name"] == "plan_ecommerce_images" and is_error
                 and getattr(result, "metadata", {}).get("stop_workflow") is True):
