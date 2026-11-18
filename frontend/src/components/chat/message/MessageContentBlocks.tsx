@@ -105,6 +105,7 @@ export default function MessageContentBlocks({
           );
         }
         if (part.type === 'tool_step') {
+          if (part.tool_name === 'save_task_image_plan') return null;
           if (presentation.hidden.has(idx)) return null;
           const ts = part as { tool_name: string; tool_call_id: string; status: 'running' | 'completed' | 'error' | 'cancelled'; code?: string; output?: string; input?: string; elapsed_ms?: number };
           if (ts.tool_name === 'generate_image' && ts.status !== 'error') return null;

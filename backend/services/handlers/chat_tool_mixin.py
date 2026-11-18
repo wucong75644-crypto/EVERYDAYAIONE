@@ -73,6 +73,7 @@ class ChatToolMixin(ChatToolResultMixin):
         image_binding_writer=None,
         task_image_operations=None,
         recovery_only=False,
+        chat_source_bindings=None,
     ) -> List[tuple]:
         """执行工具调用：安全检查 → 并行/串行分批 → 返回结果
 
@@ -140,6 +141,7 @@ class ChatToolMixin(ChatToolResultMixin):
         executor._task_image_operations = task_image_operations
         executor._task_execution_state = getattr(getattr(self,'_actor_runtime',None),'task_execution_state',None)
         executor._task_recovery_only = recovery_only
+        executor._chat_source_bindings = chat_source_bindings or {}
         executor.tool_runtime.context()  # clear any previous execution identity before restore
         if getattr(self, "_tool_selection_history_task_id", None) == task_id:
             executor.tool_runtime.resource_selections.restore(

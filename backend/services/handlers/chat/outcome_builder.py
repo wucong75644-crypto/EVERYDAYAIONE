@@ -87,6 +87,9 @@ def _build_part(block: dict[str, Any]) -> ContentPart | None:
     if block_type == "skill_step":
         return SkillStepPart(**block)
     if block_type == "tool_step":
+        from services.task_execution.model_directed import SAVE_IMAGE_PLAN
+        if block.get("tool_name") == SAVE_IMAGE_PLAN:
+            return None
         return ToolStepPart(
             tool_name=block["tool_name"],
             tool_call_id=block["tool_call_id"],

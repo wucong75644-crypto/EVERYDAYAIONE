@@ -123,6 +123,18 @@ class ToolRuntime:
             bind_resolved=getattr(lifecycle,'bind_resolved_arguments',None)
             if file_call is not None and bind_resolved is not None:
                 await bind_resolved(original_call,call,context,decision)
+            async def verify_chat_source():
+                binding = getattr(self.executor, '_chat_source_bindings', {}).get(call.call_id)
+                if binding is None:
+                    return
+                from services.handlers.chat.content_tools import bind_call
+                original, source, expected = binding
+                current = await asyncio.to_thread(bind_call, self.executor.db, context.task_id,
+                    context, call.name, original, source)
+                if current != expected or thaw(call.arguments) != expected:
+                    raise PermissionError('CHAT_SOURCE_CHANGED')
+
+            await verify_chat_source()
             # Read-only peek: completed business calls do not require a second
             # approval. Current policy/action/resources are checked above.
             if lifecycle is not None:
@@ -167,6 +179,7 @@ class ToolRuntime:
                 self.check_lifetime(context)
                 from services.task_execution.requirement_changes import gate as user_change_gate
                 await user_change_gate(self.executor)
+                await verify_chat_source()
                 if file_call is not None:
                     # Membership/manifest may have changed while approval waited.
                     resolve_resources(self.executor, name, call.arguments)

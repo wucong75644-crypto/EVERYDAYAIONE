@@ -135,8 +135,9 @@ def stage_image_plan_batch(runtime, prepared, blocks, calls, assistant, registry
         output = json.dumps(result, ensure_ascii=False)
         prepared.messages.append({'role': 'tool', 'tool_call_id': call['id'], 'content': output})
         blocks[:] = [b for b in blocks if b.get('tool_call_id') != call['id']]
-        blocks.append({'type': 'tool_step', 'tool_name': call['name'], 'tool_call_id': call['id'],
-            'presentation': 'model_directed', 'status': 'completed' if result['ok'] else 'error', 'output': output})
+        if call['name'] != SAVE_IMAGE_PLAN:
+            blocks.append({'type': 'tool_step', 'tool_name': call['name'], 'tool_call_id': call['id'],
+                'presentation': 'model_directed', 'status': 'error', 'output': output})
     return candidate
 
 

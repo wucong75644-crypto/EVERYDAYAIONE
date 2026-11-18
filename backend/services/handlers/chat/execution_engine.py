@@ -38,6 +38,8 @@ from services.skills.runtime import (ACTIVATE_SKILL, ACTIVATE_SKILL_SCHEMA, DEAC
     DEACTIVATE_SKILL_SCHEMA, SKILL_CONTROL_TOOLS, control_result)
 from services.skills.selection import SkillSelection
 from services.skills.feedback import skill_step
+from services.handlers.chat import content_tools
+from services.task_execution.model_directed import SAVE_IMAGE_PLAN
 
 
 @dataclass(frozen=True)
@@ -823,7 +825,9 @@ async def _run_loop(
                 **prepared.execution_context.feature_flags, 'knowledge_refs_present': True})
         tools = prepare_tool_turn(
             core_tools=prepared.core_tools,
-            discovered_names=prepared.tool_context.discovered_tools,
+            discovered_names=(prepared.tool_context.discovered_tools | set(
+                content_tools.checkpoint_state(runtime).get("names", ()))
+                if runtime else prepared.tool_context.discovered_tools),
             org_id=handler.org_id,
             turn=turn,
             messages=prepared.messages,
@@ -882,6 +886,12 @@ async def _run_loop(
         if runtime and runtime.task_execution_state is not None and revision_blocked(runtime):
             tools=[REVISION_SCHEMA]
             if phase_repair(runtime):tools.extend([ACTIVATE_SKILL_SCHEMA,DEACTIVATE_SKILL_SCHEMA])
+        prepared.content_controls_available = (content_tools.enabled(runtime, prepared.execution_context)
+            and not fast_knowledge and not coverage_blocked(runtime)
+            and not (runtime.task_execution_state is not None and revision_blocked(runtime)))
+        if prepared.content_controls_available:
+            tools = [*content_tools.model_tools(tools), *content_tools.SCHEMAS]
+        prepared.content_visible_tool_names = {tool['function']['name'] for tool in tools if 'function' in tool}
         current_model_round = model_round
         if direct_enabled(runtime):
             from services.task_execution.direct_loop import context_message as direct_context
@@ -1171,7 +1181,7 @@ async def _read_turn(
             accumulate_tool_call_delta(calls, chunk.tool_calls)
             if runtime is not None and not task_review:
                 for index, call in calls.items():
-                    if index in previewed_indices or not call.get("name") or call["name"] in SKILL_CONTROL_TOOLS:
+                    if index in previewed_indices or not call.get("name") or call["name"] in SKILL_CONTROL_TOOLS or call["name"] == SAVE_IMAGE_PLAN or call["name"] in content_tools.CONTROLS:
                         continue
                     preview_id = _actor_tool_preview_id(
                         runtime.turn_id, model_round, index,
@@ -1324,6 +1334,7 @@ async def _execute_tools(**kwargs):
     sequence=runtime.replay_save_sequence
     original_state=runtime.task_execution_state
     original_skills=runtime.skill_runtime
+    original_checkpoint=copy.deepcopy(runtime.checkpoint_base)
     original_plan=runtime.task_direct_plan
     original_plan_owner=runtime.task_direct_plan_owner
     original_plan_id=runtime.task_direct_plan_id
@@ -1334,6 +1345,7 @@ async def _execute_tools(**kwargs):
         if runtime.replay_save_sequence==sequence:
             runtime.task_execution_state=original_state
             runtime.skill_runtime=original_skills
+            runtime.checkpoint_base=original_checkpoint
             runtime.task_direct_plan=original_plan
             runtime.task_direct_plan_owner=original_plan_owner
             runtime.task_direct_plan_id=original_plan_id
@@ -1388,14 +1400,67 @@ async def _execute_tools_impl(
     from services.task_execution.model_directed import enabled as direct_enabled
     direct_errors={}
     direct_reused=[]
+    bound_sources = {}
     if direct_enabled(runtime):
         from services.task_execution.direct_loop import (
             retire_saved_image_method, stage_plan_calls, stage_native_calls, stage_image_plan_batch,
         )
-        from services.task_execution.model_directed import SAVE_IMAGE_PLAN
         assistant=_assistant_tool_message(turn_text,calls)
         if getattr(prepared,'last_provider_output',None):assistant['_dashscope_output']=prepared.last_provider_output
         if getattr(prepared,'last_reasoning_content',''):assistant['reasoning_content']=prepared.last_reasoning_content
+        if any(c['name'] in content_tools.CONTROLS for c in calls):
+            if not assistant_already_present:
+                prepared.messages.append(assistant)
+            state = content_tools.checkpoint_state(runtime)
+            names = set(state.get('names', ()))
+            context = prepared.execution_context
+            for call in calls:
+                result = {'ok': False, 'code': 'CHAT_CONTENT_CONTROL_BARRIER'}
+                if call['name'] in content_tools.CONTROLS:
+                    try:
+                        if recovery_only or not getattr(prepared, 'content_controls_available', False):
+                            raise PermissionError('CHAT_CONTENT_CONTROL_UNAVAILABLE')
+                        args = json.loads(call.get('arguments') or '{}')
+                        if not isinstance(args, dict):
+                            raise ValueError('CHAT_CONTENT_ARGUMENTS_INVALID')
+                        if call['name'] == content_tools.DISCOVER and set(args) == {'query'}:
+                            from services.tools.runtime_context import _check_identity
+                            from types import SimpleNamespace
+                            await asyncio.to_thread(_check_identity, SimpleNamespace(db=handler.db), context)
+                            from services.task_execution.direct_loop import active_image_profiles, saved_image_plans
+                            blocked = {'image_agent'} if (active_image_profiles(runtime)
+                                or saved_image_plans(runtime.task_execution_state)) else set()
+                            candidates = content_tools.discover(context, args['query'], blocked)
+                            names.update(item['name'] for item in candidates)
+                            result = {'ok': True, 'tools': candidates}
+                        elif call['name'] == content_tools.READ and set(args) <= {'message_id', 'text_exact'}:
+                            result = {'ok': True, **await asyncio.to_thread(content_tools.source_text,
+                                handler.db, request.task_id, context, args)}
+                            if 'source' in result:
+                                state = {**state, 'source_selection_failed': False,
+                                         'selected_source': {**result['source'], 'mode': 'exact'}}
+                            else:
+                                state = {**state, 'source_selection_failed': True}
+                        else:
+                            raise ValueError('CHAT_CONTENT_ARGUMENTS_INVALID')
+                    except (ValueError, TypeError, PermissionError, KeyError) as error:
+                        code = str(error)
+                        if call['name'] == content_tools.READ:
+                            state = {**state, 'source_selection_failed': True}
+                        result = {'ok': False, 'code': code if code.startswith('CHAT_') else 'CHAT_CONTENT_UNAVAILABLE'}
+                output = json.dumps(result, ensure_ascii=False)
+                prepared.messages.append({'role': 'tool', 'tool_call_id': call['id'], 'content': output})
+                for block in blocks:
+                    if block.get('tool_call_id') == call['id']:
+                        block.update(status='error', output=output)
+            runtime.checkpoint_base[content_tools.STATE] = {**state, 'names': sorted(names)}
+            await runtime.safe_point(SafePoint.AFTER_TOOL, replay_payload=_build_replay_context(
+                prepared.messages, blocks, turn, next_model_round=next_model_round,
+                repeated_tool_call_guard=repeated_tool_call_guard))
+            for block in blocks:
+                if block.get('tool_call_id') in previewed_call_ids:
+                    await sink.on_block_update(block)
+            return None
         if any(c['name']=='resume_task_execution' for c in calls):
             from services.task_execution.direct_loop import resume_from_model
             await resume_from_model(runtime,prepared,blocks,calls,assistant,turn=turn,
@@ -1413,6 +1478,9 @@ async def _execute_tools_impl(
                 next_model_round=next_model_round, repeated_tool_call_guard=repeated_tool_call_guard)
             if runtime.skill_runtime is not original_skills:
                 _apply_skill_context(prepared, runtime.skill_runtime)
+            for block in blocks:
+                if block.get('tool_call_id') in previewed_call_ids:
+                    await sink.on_block_update(block)
             return None
         calls,staged=stage_plan_calls(runtime,prepared,blocks,calls,assistant)
         assistant_already_present=assistant_already_present or staged
@@ -1431,9 +1499,65 @@ async def _execute_tools_impl(
                 repeated_tool_call_guard=repeated_tool_call_guard))
             if planned_marker is not None:await sink.on_block(planned_marker)
             return None
+        projected_calls = []
+        for call in calls:
+            try:
+                args = json.loads(call.get('arguments') or '{}')
+            except (ValueError, TypeError):
+                args = None
+            content_state = content_tools.checkpoint_state(runtime)
+            if call['name'] in content_tools.INPUT_TOOLS and content_state.get('source_selection_failed'):
+                direct_errors[call['id']] = ('CHAT_SOURCE_UNAVAILABLE',
+                    '引用尚未核实，请先重新定位需要执行的原文。')
+                projected_calls.append(call)
+                continue
+            selected = content_state.get('selected_source')
+            if (isinstance(args, dict) and call['name'] in content_tools.INPUT_TOOLS
+                    and 'chat_text_source' not in args and selected
+                    and not any(key in args for key in ('plan_source', 'source_prompt'))):
+                args['chat_text_source'] = selected
+            if not isinstance(args, dict) or 'chat_text_source' not in args:
+                projected_calls.append(call)
+                continue
+            source = args.pop('chat_text_source')
+            try:
+                if (not content_tools.enabled(runtime, prepared.execution_context)
+                        or (not recovery_only and not getattr(prepared, 'content_controls_available', False))):
+                    raise PermissionError('CHAT_SOURCE_DENIED')
+                resolved = await asyncio.to_thread(content_tools.bind_call, handler.db, request.task_id,
+                    prepared.execution_context, call['name'], args, source)
+                bound_sources[call['id']] = (args, source, resolved)
+                projected_calls.append({**call, 'arguments': json.dumps(resolved, ensure_ascii=False)})
+            except (ValueError, TypeError, PermissionError, KeyError) as error:
+                code = str(error)
+                direct_errors[call['id']] = (
+                    code if code.startswith('CHAT_') else 'CHAT_SOURCE_UNAVAILABLE',
+                    '无法核实引用的聊天原文。请重新定位所需内容。')
+                projected_calls.append(call)
+        calls = projected_calls
+        visible = getattr(prepared, 'content_visible_tool_names', None)
+        if not recovery_only and visible is not None:
+            for call in calls:
+                if call['name'] == 'generate_video' and call['name'] not in visible:
+                    direct_errors[call['id']] = ('CHAT_TOOL_DISCOVERY_REQUIRED',
+                        '请先查找可用的视频工具并按下一轮的实际定义调用。')
+        if bound_sources:
+            state = content_tools.checkpoint_state(runtime)
+            proofs = dict(state.get('bindings', {}))
+            from services.task_execution.reducer import digest
+            for call_id, (_args, source, resolved) in bound_sources.items():
+                proof = {k: v for k, v in source.items() if k != 'text'}
+                proof['arguments_sha256'] = digest(resolved)
+                if call_id in proofs and proofs[call_id] != proof:
+                    direct_errors[call_id] = ('CHAT_SOURCE_CHANGED', '引用或参数与已保存的调用不一致。')
+                else:
+                    proofs[call_id] = proof
+            runtime.checkpoint_base[content_tools.STATE] = {**state, 'bindings': proofs}
         if not any(c['name'] in SKILL_CONTROL_TOOLS or c['name'] in TASK_CONTROL_TOOLS for c in calls):
             from services.tools.catalog import build_capability_catalog
-            candidate,direct_errors=stage_native_calls(runtime,prepared,calls,build_capability_catalog())
+            candidate, native_errors = stage_native_calls(runtime, prepared,
+                [call for call in calls if call['id'] not in direct_errors], build_capability_catalog())
+            direct_errors.update(native_errors)
             if candidate is not runtime.task_execution_state:
                 if not assistant_already_present:
                     prepared.messages.append(assistant);assistant_already_present=True
@@ -1571,10 +1695,10 @@ async def _execute_tools_impl(
         assistant["reasoning_content"] = prepared.last_reasoning_content
     if not assistant_already_present:
         prepared.messages.append(assistant)
-    await _sink_tool_calls(sink, [c for c in calls if c["name"] not in SKILL_CONTROL_TOOLS], turn + 1)
+    await _sink_tool_calls(sink, [c for c in calls if c["name"] not in SKILL_CONTROL_TOOLS and c["name"] != SAVE_IMAGE_PLAN], turn + 1)
     start_times: dict[str, float] = {}
     for call in calls:
-        if call["name"] in SKILL_CONTROL_TOOLS:
+        if call["name"] in SKILL_CONTROL_TOOLS or call["name"] == SAVE_IMAGE_PLAN:
             continue
         block = build_running_step(call)
         start_times[call["id"]] = time.monotonic()
@@ -1712,6 +1836,7 @@ async def _execute_tools_impl(
         agent_domain=prepared.execution_context.agent_domain,
         **({'task_image_operations': image_operations} if image_operations is not None else {}),
         **({'recovery_only': True} if recovery_only else {}),
+        **({'chat_source_bindings': bound_sources} if direct_enabled(runtime) and bound_sources else {}),
         **({"authorized_tool_names": prepared.execution_context.authorized_tool_names,
             "image_skill_snapshot": tuple({"skill_key": active.skill_key, "revision": active.revision,
                 "body_sha256": active.body_sha256, "rendered_sha256": active.rendered_sha256}
