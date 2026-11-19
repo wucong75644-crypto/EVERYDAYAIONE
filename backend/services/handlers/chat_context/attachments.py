@@ -27,7 +27,7 @@ _TEXT_EXTS = {
 
 # status → action 单一事实来源（修改时只动这里）
 _STATUS_ACTIONS: Dict[str, str] = {
-    "image": "图片已作为视觉输入，可直接查看内容",
+    "image": "图片已作为视觉输入，可直接查看内容，无需额外读取图片",
     "raw": "调 file_analyze 转 Parquet（仅 .xlsx/.xls/.csv/.tsv 支持）",
     "analyzed": "用 <parquet> 字段在 code_execute 中 pd.read_parquet 读取，不要重复 file_analyze",
     "parquet": "用 <path> 字段在 code_execute 中 pd.read_parquet 读取",
