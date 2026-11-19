@@ -34,6 +34,77 @@ def ref(row,index=1):
     return {k:row[k] for k in ('artifact_id','sha256')} | {'item_index':index}
 
 @pytest.mark.asyncio
+async def test_authored_display_markdown_survives_revision_without_entering_tool_input():
+    r, p, h, q = case()
+    intro = '# 成品说明\n\n- 阅读顺序'
+    prefix = '## 修订稿\n\n- 编辑记录'
+    original = '原始正文。'
+    revised = '修订正文。\n\n## 限制\n\n保留原标识。'
+    draft = {'title': '稿件', 'display_prefix': intro, 'items': [
+        {'title': '修订稿', 'display_prefix': prefix, 'body': original},
+    ]}
+    first, = await execute(r, p, h, q, [call(co.SAVE, {'document': draft}, 'write')])
+    assert first['text'] == '\n\n'.join((intro, prefix, original))
+    row, = co.catalog(r.task_execution_state)
+    revised_block, = await execute(r, p, h, q, [call(co.SAVE, {
+        'base': {'artifact_id': row['artifact_id'], 'item_index': 1},
+        'updates': [{'item_index': 1, 'item': {'body': revised}}],
+    }, 'revise')])
+    assert revised_block['text'] == '\n\n'.join((intro, prefix, revised))
+    current, = co.catalog(r.task_execution_state)
+    args, _ = co.compile_input(r.task_execution_state, 'generate_video', {}, ref(current))
+    assert args['prompt'] == revised
+
+
+@pytest.mark.asyncio
+async def test_writing_records_one_shared_origin_and_only_explicit_execution_selects_it():
+    from dataclasses import replace
+    from schemas.message import ImagePart, TextPart
+
+    r, p, h, q = case()
+    source = ImagePart(name='原图.png', workspace_path='uploads/original.png')
+    q = replace(q, content=[TextPart(text='参考这张图写两条'), source],
+                context_anchor=SimpleNamespace(input_message_id=str(r.task_bootstrap.input_message_id)))
+    draft = {'title': '两条方案', 'items': [
+        {'title': '第一条', 'body': '正文一。'}, {'title': '第二条', 'body': '正文二。'},
+    ]}
+
+    direct = call(co.SAVE, {'document': draft, 'continue_execution': True}, 'direct')
+    assert not await execute(r, p, h, q, [direct])
+    assert json.loads(p.messages[-1]['content'])['code'] == co.ATTACHMENT_USAGE_REQUIRED
+    assert not co.objects(r.task_execution_state)
+
+    saved, = await execute(r, p, h, q, [call(co.SAVE, {'document': draft}, 'save')])
+    assert saved['content_delivery_final'] and saved['text'].count('正文二。') == 1
+    row, = co.catalog(r.task_execution_state)
+    assert row['source_images'] == [{'index': 1, 'name': '原图.png'}]
+    reference = ref(row, 2)
+    artifact, _, item = co.load(r.task_execution_state, reference)
+    assert not item.materials and not item.options
+    original, = co.ContentRecord.model_validate_json(artifact.inline_text).source_images
+
+    target, _ = co.compile_input(r.task_execution_state, 'generate_image', {}, reference)
+    assert target['mode'] == 'text_to_image' and target['references'] == []
+    select_original = {**reference, 'source_image_indices': [1]}
+    target, _ = co.compile_input(r.task_execution_state, 'generate_image', {}, select_original)
+    assert target['mode'] == 'image_to_image' and target['prompt'] == '正文二。'
+    assert image_plan_item(r.task_execution_state, set(), target) is None
+    assert target['references'] == [
+        {'message_id': str(r.task_bootstrap.input_message_id), 'content_index': 1, 'role': '原图参考'},
+    ]
+    for indices in ([2], [1, 1]):
+        with pytest.raises(TaskError, match='CONTENT_SOURCE_IMAGE_UNAVAILABLE'):
+            co.compile_input(r.task_execution_state, 'generate_image', {}, {**reference, 'source_image_indices': indices})
+
+    await execute(r, p, h, q, [call(co.SAVE, {'base': reference,
+        'updates': [{'item_index': 2, 'item': {'body': '修订版原文。'}}]}, 'revise')])
+    revised, = co.catalog(r.task_execution_state)
+    version, _, item = co.load(r.task_execution_state, ref(revised, 2))
+    assert item.body == '修订版原文。'
+    assert co.ContentRecord.model_validate_json(version.inline_text).source_images == (original,)
+    h._execute_tool_calls.assert_not_awaited()
+
+@pytest.mark.asyncio
 async def test_registration_renders_same_source_and_roundtrips_checkpoint():
     r,p,h,q,row=await registered()
     state=TaskState.model_validate_json(r.task_execution_state.model_dump_json())
@@ -42,7 +113,8 @@ async def test_registration_renders_same_source_and_roundtrips_checkpoint():
     assert doc.model_dump(mode='json')==co.ContentDocument.model_validate(document()).model_dump(mode='json')
     assert hashlib.sha256(a.inline_text.encode()).hexdigest()==a.sha256
     facts=json.loads(context_message(r)['content'].split('\n')[-1])
-    assert facts['content_objects']==[row]
+    assert facts['content_objects'] == co.catalog(state, include_digests=False)
+    assert 'sha256' not in facts['content_objects'][0] and 'body_sha256' not in facts['content_objects'][0]['items'][0]
     # The model receives an index, not every full plan for each execution.
     assert '完整正文' not in str(facts['content_objects'])
 
@@ -182,17 +254,18 @@ async def test_fresh_upload_revision_single_and_all_reach_native_snapshot(monkey
     assert {v['prompt'] for v in snapshots}=={doc['items'][0]['body'],edited['body'],doc['items'][2]['body']}
 
 @pytest.mark.asyncio
-async def test_active_new_skill_cannot_rewrite_or_call_old_prompt_branch():
-    from tests.test_skill_runtime import Source, item, state, activate
+async def test_retired_skill_does_not_hide_shared_tools_or_load_its_body():
+    from tests.test_skill_runtime import Source, item, state
     r,p,h,q,row=await registered()
-    skills=state(Source([item('chat-image-orchestration',tools=('generate_image','file_search'),content_protocol=co.PROTOCOL)],body='Only content_source.'),platform_tool_names={'generate_image','file_search'})
-    await skills.initialize();assert (await skills.activate(activate('chat-image-orchestration')))['ok']
+    source = Source([item('chat-image-orchestration', tools=('generate_image','file_search'), content_protocol=co.PROTOCOL)])
+    skills = state(source, platform_tool_names={'generate_image','file_search'})
+    await skills.initialize()
     r.skill_runtime=skills
-    assert co.requires_reference(r)
-    assert co.SAVE not in {s['function']['name'] for s in schemas(r)}
-    before=r.task_execution_state
-    await execute(r,p,h,q,[call(co.SAVE,{'document':document()},'forbidden-write')])
-    assert r.task_execution_state==before and 'CONTENT_CONSUMER_CANNOT_REWRITE' in p.messages[-1]['content']
+    assert not skills.model_candidates()
+    assert co.SAVE in {s['function']['name'] for s in schemas(r)}
+    await execute(r, p, h, q, [call('activate_skill', {'skill_id': 'chat-image-orchestration'}, 'retired')])
+    assert not skills.active and 'SKILL_NOT_AVAILABLE' in p.messages[-1]['content']
+    source.load.assert_not_awaited()
     await execute(r,p,h,q,[call('generate_image',{'mode':'text_to_image','prompt':'copied'},'legacy')])
     h._execute_tool_calls.assert_not_awaited()
     assert 'CONTENT_SOURCE_REQUIRED' in str(p.messages[-1])
@@ -222,8 +295,11 @@ async def test_generic_video_and_file_adapters_keep_all_execution_text_and_rejec
     d={'title':'同一份修订稿','notes':'讨论过程，仅说明',
        'items':[{'title':'修订第二稿','body':'第一段完整文字\n第二段完整文字\n共同交付要求：逐段保留', 'materials':[],'options':{}}]}
     await execute(r,p,h,q,[call(co.SAVE,{'document':d},'script')]);row=co.catalog(r.task_execution_state)[0]
-    video,_=co.compile_input(r.task_execution_state,'generate_video',{},ref(row))
-    code,_=co.compile_input(r.task_execution_state,'code_execute',{'code':'print(chat_source_text)','description':'导出Word'},ref(row))
+    selection = {'artifact_id': row['artifact_id'], 'item_index': 1}
+    video, video_binding = co.compile_input(r.task_execution_state, 'generate_video', {}, selection)
+    code, file_binding = co.compile_input(r.task_execution_state, 'code_execute',
+                                         {'code':'print(chat_source_text)','description':'导出Word'}, selection)
+    assert video_binding['reference']['sha256'] == file_binding['reference']['sha256'] == row['sha256']
     namespace={};exec(code['code'],namespace)
     assert namespace['chat_source_text']==video['prompt']
     assert video['prompt']==d['items'][0]['body']
@@ -290,11 +366,11 @@ async def run_content_loop(r, p, h, q, stream, blocks=None):
     return sink, blocks, totals
 
 
-def model_save_chunk(doc):
+def model_save_chunk(doc, *, call_id='provider-save'):
     from services.adapters.types import StreamChunk, ToolCallDelta
 
     return StreamChunk(tool_calls=[
-        ToolCallDelta(index=0, id='provider-save', name=co.SAVE,
+        ToolCallDelta(index=0, id=call_id, name=co.SAVE,
                       arguments_delta=json.dumps({'document': doc}, ensure_ascii=False))
     ])
 

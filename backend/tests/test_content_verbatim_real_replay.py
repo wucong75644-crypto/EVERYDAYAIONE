@@ -98,7 +98,8 @@ async def test_six_original_execution_sections_are_copied_without_runtime_splitt
 
 
 @pytest.mark.asyncio
-async def test_recorded_six_plan_duplicate_delivery_and_second_image(monkeypatch, mock_db, tmp_path):
+@pytest.mark.parametrize('recover_incomplete', [False, True])
+async def test_recorded_six_plan_duplicate_delivery_and_second_image(monkeypatch, mock_db, tmp_path, recover_incomplete):
     """Original failed model response, original uploaded bytes, no external requests."""
     import copy
     import re
@@ -130,12 +131,16 @@ async def test_recorded_six_plan_duplicate_delivery_and_second_image(monkeypatch
     headings = list(re.finditer(r'^# 方案[1-6]｜(.+)$', draft, re.M))
     corrected = copy.deepcopy(incomplete)
     assert len(headings) == len(corrected['items']) == 6
+    corrected['display_prefix'] = draft[:headings[0].start()].removesuffix('\n\n')
     for i, item in enumerate(corrected['items']):
         end = headings[i + 1].start() if i + 1 < len(headings) else len(draft)
-        section = draft[headings[i].end():end]
-        body = section.split('## 完整生图提示词\n\n', 1)[1].removesuffix('\n\n---\n\n').rstrip('\n')
+        section = draft[headings[i].start():end]
+        prefix, body = section.split('## 完整生图提示词\n\n', 1)
+        body = body.removesuffix('\n\n---\n\n').rstrip('\n')
         assert body.split('\n\n## 负面提示词', 1)[0] == item['body']
-        item.update(title=headings[i][1], body=body)
+        item.update(title=headings[i][1],
+                    display_prefix=('---\n\n' if i else '') + prefix.removesuffix('\n\n'),
+                    body='## 完整生图提示词\n\n' + body)
 
     r, p, h, q = case()
     original_skills = OriginalSource()
@@ -146,10 +151,26 @@ async def test_recorded_six_plan_duplicate_delivery_and_second_image(monkeypatch
     assert (await r.skill_runtime.activate_manual(selection))['ok']
     rounds = 0
     save_call = next(c for c in mixed['tool_calls'] if c['function']['name'] == co.SAVE)
+    screenshot_path = os.getenv('CHAT_CONTENT_RETIRED_SKILL_RECORD')
+    screenshot_document = incomplete
+    if screenshot_path:
+        record = json.loads(Path(screenshot_path).read_text())
+        checkpoint = record['tasks'][1]['cp']
+        state = (checkpoint.get('payload') or checkpoint)['_task_execution']
+        screenshot_document = json.loads(state['artifacts'][0]['inline_text'])['document']
+        assert len(screenshot_document['items']) == 6
+        assert all('负面提示词' not in item['body'] for item in screenshot_document['items'])
 
     async def replay_writer(**kwargs):
         nonlocal rounds
         rounds += 1
+        parameters = next(t['function']['parameters'] for t in kwargs['tools'] if t['function']['name'] == co.SAVE)
+        assert 'display_prefix' in parameters['properties']['document']['required']
+        assert 'display_prefix' in parameters['$defs']['ContentItem']['required']
+        if not recover_incomplete:
+            assert rounds == 1
+            yield model_save_chunk(corrected)
+            return
         if rounds == 1:
             for start in range(0, len(draft), 512):
                 yield StreamChunk(content=draft[start:start + 512])
@@ -157,26 +178,32 @@ async def test_recorded_six_plan_duplicate_delivery_and_second_image(monkeypatch
                 ToolCallDelta(index=0, id=save_call['id'], name=co.SAVE,
                               arguments_delta=save_call['function']['arguments'])
             ])
-        else:
-            assert rounds == 2
+        elif rounds == 2:
             assert not co.objects(r.task_execution_state)
             assert not r.checkpoint_base['content_blocks']
             assert any(co.DRAFT_CONFLICT in (m.get('content') or '')
+                       for m in kwargs['messages'] if m['role'] == 'tool')
+            yield model_save_chunk(screenshot_document, call_id='screenshot-incomplete')
+        else:
+            assert rounds == 3 and not co.objects(r.task_execution_state)
+            assert any(co.PRESENTATION_INCOMPLETE in (m.get('content') or '')
                        for m in kwargs['messages'] if m['role'] == 'tool')
             yield model_save_chunk(corrected)
 
     source = copy.deepcopy(next(m for m in data['messages'] if m['role'] == 'user'))
     p.messages[-1]['content'] = source['content'][0]['text']
     sink, blocks, totals = await run_content_loop(r, p, h, q, replay_writer)
-    assert rounds == 2 and not sink.text
+    assert rounds == (3 if recover_incomplete else 1) and not sink.text
     h._execute_tool_calls.assert_not_awaited()
     rendered_parts = serialize_content_parts(build_content_parts(blocks, fallback_text=totals.text))
     assert len(rendered_parts) == len(sink.blocks) == 1
     shown = rendered_parts[0]['text']
-    assert shown == sink.blocks[0]['text']
+    assert shown == sink.blocks[0]['text'] == draft.rstrip('\n')
     assert shown.count('## 负面提示词') == 6
     assert all(item['body'] in shown and shown.count(item['body']) == 1 for item in corrected['items'])
-    assert all(metadata not in shown for metadata in ('# 参考图判断', '输出规格', '素材用途'))
+    assert shown.count('# 参考图判断') == 1
+    assert all(shown.count('## ' + title) == 6
+               for title in ('方案内容', '视觉设定', '参考图使用方式', '完整生图提示词'))
 
     r.task_execution_state = TaskState.model_validate_json(r.task_execution_state.model_dump_json())
     row, = co.catalog(r.task_execution_state)
@@ -238,6 +265,7 @@ async def test_recorded_six_plan_duplicate_delivery_and_second_image(monkeypatch
             frozen['prompt'], [image_url], frozen['aspect_ratio'], frozen['output_format'], frozen['resolution'])
         assert shown.count(bound['prompt']) == 1
         assert bound['prompt'] == second.body == frozen['prompt'] == payload['prompt']
+        assert all(title not in payload['prompt'] for title in ('参考图判断', '方案内容', '视觉设定', '参考图使用方式'))
         assert frozen['mode'] == 'image_to_image' and frozen['num_images'] == 1
         assert frozen['aspect_ratio'] == '1:1'
         assert (frozen['output_format'], frozen['resolution']) == ('png', '1K')
@@ -254,12 +282,12 @@ async def test_recorded_six_plan_duplicate_delivery_and_second_image(monkeypatch
         if not selected:
             selected = True
             facts = json.loads(context_message(r)['content'].split('\n')[-1])
-            assert facts['content_objects'] == [row]
+            assert facts['content_objects'] == co.catalog(r.task_execution_state, include_digests=False)
             tool = next(t['function'] for t in kwargs['tools'] if t['function']['name'] == 'generate_image')
             assert 'content_source' in tool['parameters']['properties']
             yield StreamChunk(tool_calls=[ToolCallDelta(
                 index=0, id='image-second', name='generate_image', arguments_delta=json.dumps({
-                    'content_source': ref(facts['content_objects'][0], 2)
+            'content_source': {'artifact_id': facts['content_objects'][0]['artifact_id'], 'item_index': 2}
                 }))])
         else:
             yield StreamChunk(content='本地参数已就绪。')
@@ -295,7 +323,8 @@ async def test_recorded_content_reference_from_another_turn_acquires_original_ta
                                  'message': message, 'input_message_id': failed['input_message_id']}
     p.messages = [{'role': 'user', 'content': message}]
     facts = json.loads(context_message(r)['content'].split('\n')[-1])
-    assert not facts['content_objects'] and facts['previous_content_objects'][0]['sha256'] == reference['sha256']
+    assert not facts['content_objects'] and facts['previous_content_objects'][0]['artifact_id'] == reference['artifact_id']
+    assert 'sha256' not in facts['previous_content_objects'][0]
 
     async def transfer(source, observation, merged):
         assert source is r.task_followup_candidate
@@ -320,7 +349,7 @@ async def test_recorded_content_reference_from_another_turn_acquires_original_ta
 
 
 @pytest.mark.asyncio
-async def test_recorded_malformed_save_does_not_pass_draft_or_enable_execution_skill():
+async def test_recorded_omitted_fields_save_once_but_empty_catalog_cannot_enable_execution_skill():
     from services.adapters.types import StreamChunk, ToolCallDelta
     from tests.test_content_objects import run_content_loop
     from tests.test_skill_runtime import Source, item, state
@@ -336,7 +365,6 @@ async def test_recorded_malformed_save_does_not_pass_draft_or_enable_execution_s
     assert len(malformed) == 3 and all(isinstance(json.loads(m)['document'], str) for m in malformed)
     def answer(task):
         return json.loads(task['answer']) if isinstance(task['answer'], str) else task['answer']
-    draft = next(part['text'] for part in answer(original) if part['type'] == 'text')
     from dataclasses import replace
     from pydantic import TypeAdapter
     from schemas.message import ContentPart
@@ -351,20 +379,16 @@ async def test_recorded_malformed_save_does_not_pass_draft_or_enable_execution_s
         rounds += 1
         params = next(t['function']['parameters'] for t in kwargs['tools'] if t['function']['name'] == co.SAVE)
         assert params['properties']['document']['type'] == 'object'
-        if rounds <= len(malformed):
-            if rounds > 1:
-                previous_failure = co.INVALID_OBJECT if rounds == 2 else co.ATTACHMENT_USAGE_REQUIRED
-                assert any(previous_failure in (m.get('content') or '') for m in kwargs['messages']
-                           if m['role'] == 'tool')
-            yield StreamChunk(tool_calls=[ToolCallDelta(index=0, id=f'save-{rounds}', name=co.SAVE,
-                                                        arguments_delta=malformed[rounds-1])])
-        else:
-            yield StreamChunk(content=draft)
+        assert params['$defs']['ContentItem']['required'] == ['title', 'body']
+        assert rounds == 1
+        yield StreamChunk(tool_calls=[ToolCallDelta(index=0, id='save-first', name=co.SAVE,
+                                                    arguments_delta=malformed[0])])
 
     sink, blocks, _ = await run_content_loop(r, p, h, q, write)
-    assert rounds == 4 and not co.objects(r.task_execution_state)
-    assert sink.text == co.SAVE_FAILED_TEXT
-    assert [b['text'] for b in blocks if b['type'] == 'text'] == [co.SAVE_FAILED_TEXT]
+    assert rounds == 1 and len(co.objects(r.task_execution_state)) == 1
+    saved, = [b for b in blocks if b['type'] == 'text']
+    assert saved['content_delivery_final'] and not sink.text
+    assert json.loads(p.messages[-1]['content'])['ok'] is True
     h._execute_tool_calls.assert_not_awaited()
 
     skill = next(part for part in answer(followup) if part['type'] == 'skill_step')
@@ -374,12 +398,11 @@ async def test_recorded_malformed_save_does_not_pass_draft_or_enable_execution_s
                              body='Only execute content_source.')
     r.skill_runtime = state(database_source, platform_tool_names={'generate_image', 'file_search'})
     await r.skill_runtime.initialize()
-    r.skill_runtime.directory[key] = r.skill_runtime.directory[key].model_copy(update={'revision': skill['revision']})
+    assert skill['revision']
     activation = call('activate_skill', {'skill_id': key}, 'real-activate')
-    blocks = await execute(r, p, h, q, [activation])
+    await execute(r, p, h, q, [activation])
     assert not r.skill_runtime.active
     database_source.load.assert_not_awaited()
-    assert not any(b.get('type') == 'skill_step' for b in blocks)
-    assert 'SKILL_CONTENT_OBJECT_REQUIRED' in str(p.messages[-1])
+    assert 'SKILL_NOT_AVAILABLE' in str(p.messages[-1])
     from services.task_execution.direct_loop import schemas
     assert co.SCHEMA in schemas(r)

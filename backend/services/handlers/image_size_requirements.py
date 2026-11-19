@@ -226,7 +226,7 @@ def resolve_size_requirement(args: dict, references: list[dict], *, intent=None,
 
 
 def size_preflight_notice(text: str, sources: list[dict]) -> str:
-    """Give the planning model the same size resolver used at acceptance.
+    """Preflight an explicitly requested output size with the native resolver.
 
     No task, provider IO or debit. Unselected, mixed canvases are not collapsed.
     Historical fixed specs remain in history when this message changes one axis.
@@ -234,12 +234,10 @@ def size_preflight_notice(text: str, sources: list[dict]) -> str:
     import json
     try:
         intent = user_size_intent(text)
-        if not intent and not sources:
+        if not intent:
             return ""
         available = [source for source in sources if source.get("available")]
         if not available:
-            if not intent:
-                return ""
             # A resolution-only update depends on the existing task canvas.
             if set(intent) <= {"resolution", "keep_aspect_ratio"}:
                 return "服务器尺寸意图：" + json.dumps(intent, ensure_ascii=False) + "；保留当前任务已确定的比例。"

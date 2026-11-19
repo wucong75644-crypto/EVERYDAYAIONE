@@ -30,6 +30,11 @@ def content_db(dispatch_db):
 
 @pytest.mark.asyncio
 async def test_registered_object_survives_real_new_turn_and_patch_without_new_review(content_db):
+    from psycopg.types.json import Jsonb
+    from services.task_execution.followup import FollowupRestart
+    from services.task_execution.user_changes import restore
+    from tests.test_content_objects import run_content_loop
+
     followup_db=content_db
     f=seed(followup_db)
     async def checkpoint(point,payload):
@@ -48,31 +53,58 @@ async def test_registered_object_survives_real_new_turn_and_patch_without_new_re
     cp=copy.deepcopy(r.checkpoint_base);cp['_task_execution']=closed.model_dump(mode='json')
     cp['_task_execution_expected_revision']=before.revision
     with connect(f) as c:assert save(c,f,cp,expected=before.revision)['outcome']=='saved'
-    old,new,source,obs,merged=new_turn(followup_db,old=f,text='继续原任务，修改第二条')
+    user_request = '继续原任务，修改第二条'
+    old,new,source,_,_=new_turn(followup_db,old=f,text=user_request)
     assert co.catalog(TaskState.model_validate(source['state']))==[original]
-    with connect(new) as c:
-        reply=adopt(c,new,source,obs,merged)
-        assert reply['outcome']=='saved'
-        state=TaskState.model_validate(reply['payload']['_task_execution'])
-        assert co.catalog(state)==[original]
-        assert co.load(state,ref(original,2))[2].body==document()['items'][1]['body']
-        assert c.execute('SELECT count(*) FROM credit_transactions WHERE task_id=%s',(new['task'],)).fetchone()[0]==0
-        assert str(c.execute('SELECT owner_task_id FROM agent_task_states WHERE root_task_id=%s',(old['task'],)).fetchone()[0])==new['task']
     async def next_checkpoint(point,payload):
-        with connect(new) as c:return save(c,new,payload,expected=payload.get('_task_execution_expected_revision',0))
-    r2,p2,h2,q2=case(next_checkpoint)
-    r2.task_bootstrap=replace(r.task_bootstrap,task_id=UUID(new['task']),input_message_id=UUID(new['message']))
-    r2.task_id=new['task'];r2.conversation_id=new['conv'];r2.turn_id=new['turn']
+        with connect(new) as c:
+            if '_task_execution' in payload:
+                return save(c,new,payload,expected=payload['_task_execution_expected_revision'])
+            return c.execute('SELECT save_generation_checkpoint(%s,%s,%s,%s)',
+                (new['task'],new['token'],point.value,Jsonb({**payload,'safe_point':point.value}))).fetchone()[0]
+    def revision_runtime():
+        actor, prepared, handler, request = case(next_checkpoint)
+        actor.task_bootstrap=replace(r.task_bootstrap,task_id=UUID(new['task']),input_message_id=UUID(new['message']))
+        actor.task_id,actor.conversation_id,actor.turn_id=new['task'],new['conv'],new['turn']
+        prepared.execution_context=replace(p.execution_context,task_id=new['task'])
+        prepared.messages=[{'role':'user','content':user_request}]
+        prepared.content_controls_available=True
+        return actor, prepared, handler, replace(q,task_id=new['task'])
+
+    async def transfer(candidate, observation, payload):
+        assert observation == {'relation':'amend','evidence':[user_request]}
+        with connect(new) as c:
+            return adopt(c,new,candidate,observation,payload)
+
+    r2,p2,h2,q2=revision_runtime()
+    r2.task_followup_candidate=source
+    r2.task_followup_adopt=transfer
+    selection = {'artifact_id': original['artifact_id'], 'item_index': 2}
+    changes = {'base': selection, 'updates':[{'item_index':2,'item':{'body':'修订正文\n修订后的完整限制'}}]}
+    with pytest.raises(FollowupRestart):
+        await execute(r2,p2,h2,q2,[call(co.SAVE,changes,'second-revision')])
+    with connect(new) as c:
+        checkpoint = c.execute('SELECT state FROM conversation_turn_checkpoints WHERE task_id=%s',
+                               (new['task'],)).fetchone()[0]
+        assert str(c.execute('SELECT owner_task_id FROM agent_task_states WHERE root_task_id=%s',(old['task'],)).fetchone()[0])==new['task']
+        assert c.execute('SELECT count(*) FROM credit_transactions WHERE task_id=%s',(new['task'],)).fetchone()[0]==0
+    state=TaskState.model_validate(checkpoint['_task_execution'])
+    assert co.catalog(state)==[original]
+    r2,p2,h2,q2=revision_runtime()
     r2.task_execution_state=state;r2.committed_task_execution_revision=state.revision
-    r2.checkpoint_base=copy.deepcopy(reply['payload']);p2.messages=copy.deepcopy(reply['payload']['messages'])
-    p2.execution_context=replace(p.execution_context,task_id=new['task']);p2.content_controls_available=True
-    q2=replace(q,task_id=new['task'])
-    await execute(r2,p2,h2,q2,[call(co.SAVE,{'base':ref(original,2),
-        'updates':[{'item_index':2,'item':{'body':'修订正文\n修订后的完整限制'}}]},'second-revision')])
+    r2.checkpoint_base=checkpoint;p2.messages=copy.deepcopy(checkpoint['messages'])
+    r2.task_user_changes=restore(checkpoint,root_task_id=old['task'],owner_task_id=new['task'])
+    r2._steer_messages.extend(item.message for item in r2.task_user_changes.items if not item.delivered)
+
+    async def unexpected_model(**kwargs):
+        raise AssertionError('The original revision was selected before the owner transfer')
+        yield
+    _, blocks, _ = await run_content_loop(r2,p2,h2,q2,unexpected_model)
+    displayed, = [part for part in blocks if part['type']=='text']
+    assert displayed['content_delivery_final']
     updated=co.catalog(r2.task_execution_state)[0]
     assert updated['revision']==2
     assert co.load(r2.task_execution_state,ref(updated,2))[2].materials==co.load(state,ref(original,2))[2].materials
-    from psycopg.types.json import Jsonb
     with connect(new) as c:
         raw=r2.task_execution_state.model_dump(mode='json')
         assert c.execute('SELECT agent_task_direct_records_valid(%s)',(Jsonb(raw),)).fetchone()[0]
@@ -147,7 +179,9 @@ async def test_direct_content_selection_adopts_saved_task_before_business_dispat
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('scenario', ['text-to-image', 'image-to-image', 'recorded-first', 'recorded-fifth'])
+@pytest.mark.parametrize('scenario', [
+    'text-to-image', 'image-to-image', 'recorded-first', 'recorded-fifth', 'recorded-write-once', 'recorded-retired',
+])
 async def test_chat_executes_from_registration_to_page_receipt(content_db, monkeypatch, tmp_path, scenario):
     import base64
     import hashlib
@@ -200,13 +234,51 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
     with_original = scenario != 'text-to-image'
     recorded = scenario.startswith('recorded-')
     fifth = scenario == 'recorded-fifth'
-    item_index = 5 if fifth else 1
+    write_once = scenario == 'recorded-write-once'
+    retired = scenario == 'recorded-retired'
+    item_index = 2 if write_once else 5 if fifth else 1
     body = '  纸品封面，保留细纹理。\n避免改变装订孔及商标。  '
     ratio = '3:4' if scenario == 'image-to-image' else '1:1'
     question = '参考这张原图修改封面，只生成一张' if with_original else '帮我直接生成一张纸品封面图'
     first_document = None
-    failed_saves = []
-    if recorded:
+    first_arguments = None
+    if write_once:
+        evidence = os.getenv('CHAT_CONTENT_ONE_SAVE_DIR')
+        if not evidence:
+            pytest.skip('Private latest prompt request required')
+        record = json.loads((Path(evidence) / 'latest-record.json').read_text())
+        exact = json.loads((Path(evidence) / 'first-attempt.json').read_text())
+        assert record['verified_latest'] and [entry['ok'] for entry in record['saves']] == [False, False, True]
+        first_arguments = exact['first_arguments']
+        first_document = co.SaveContent.model_validate_json(first_arguments).document.model_dump(mode='json', exclude_unset=True)
+        assert first_document == record['saves'][0]['document']
+        assert all(set(item) == {'title', 'body'} for item in first_document['items'])
+        question = record['question'][0]['text']
+        later_question = '用这张原图把第二条提示词做成一张图片'
+        body = first_document['items'][1]['body']
+    elif retired:
+        path = os.getenv('CHAT_CONTENT_RETIRED_SKILL_RECORD')
+        if not path:
+            pytest.skip('Private online orchestration failure required')
+        record = json.loads(Path(path).read_text())
+        execution, writing = record['tasks']
+        assert record['observed_task_id'] == execution['id'] and record['child_count'] == 0
+        execution_checkpoint = execution['cp'].get('payload') or execution['cp']
+        writing_checkpoint = writing['cp'].get('payload') or writing['cp']
+        failed_call = next(c['function'] for m in execution_checkpoint['messages'] for c in m.get('tool_calls') or []
+                           if c['function']['name'] == 'generate_image')
+        submitted = json.loads(failed_call['arguments'])['content_source']
+        artifact = next(a for a in writing_checkpoint['_task_execution']['artifacts'] if a['id'] == submitted['artifact_id'])
+        first_document = json.loads(artifact['inline_text'])['document']
+        item_index = submitted['item_index']
+        body = first_document['items'][item_index-1]['body']
+        assert submitted['sha256'] == hashlib.sha256(body.encode()).hexdigest()
+        assert submitted['sha256'] != artifact['sha256']
+        def first_text(turn):
+            parts = json.loads(turn['question']) if isinstance(turn['question'],str) else turn['question']
+            return next(part['text'] for part in parts if part['type'] == 'text')
+        question, later_question = first_text(writing), first_text(execution)
+    elif recorded:
         path = os.getenv('CHAT_CONTENT_TWO_SKILL_FAILURES')
         if not path:
             pytest.skip('Private failure records required')
@@ -220,7 +292,6 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
         model_calls = [c['function']['arguments'] for m in original_task['checkpoint']['messages']
                        for c in m.get('tool_calls') or () if c['function']['name'] == co.SAVE]
         if fifth:
-            failed_saves = model_calls
             first_document = json.loads(json.loads(model_calls[1])['document'])
         else:
             first_document = json.loads(model_calls[0])['document']
@@ -230,20 +301,24 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
     input_sha = None
     file_path = 'original/product.png'
     if with_original:
-        evidence = os.getenv('REAL_INPUT_RETEST_DIR') if fifth else os.getenv('CHAT_CONTENT_DUPLICATE_RECORD')
+        evidence = os.getenv('REAL_INPUT_RETEST_DIR') if fifth or write_once else os.getenv('CHAT_CONTENT_DUPLICATE_RECORD')
         if not evidence:
             pytest.skip('Original image for private replay is unavailable')
-        if fifth:
+        if fifth or write_once:
             originals = json.loads((Path(evidence) / 'live-originals.json').read_text())['originals']
             source = next(asset for asset in originals if 'IMG_20261110_131009_f527d6_001.png' in asset['workspace_path'])
         else:
             source = json.loads(Path(evidence).read_text())['original']
         original = base64.b64decode(source['raw_b64'])
         input_sha = hashlib.sha256(original).hexdigest()
+        if write_once:
+            assert source['workspace_path'] == record['attachment']['workspace_path']
+            assert input_sha == exact['original_sha256']
         original_path = FileExecutor(str(tmp_path), f['user'], None).resolve_safe_path(file_path)
         original_path.parent.mkdir(parents=True)
         original_path.write_bytes(original)
-        parts.append(ImagePart(url='https://local.invalid/'+file_path, workspace_path=file_path))
+        parts.append(ImagePart(url='https://local.invalid/'+file_path, workspace_path=file_path,
+                               name=Path(source.get('workspace_path', file_path)).name))
         materials.append({'usage':'input', 'role':'原图', 'reference':{'message_id':f['message'], 'content_index':1}})
     original_message = f['message']
     with psycopg.connect(content_db) as connection:
@@ -266,7 +341,8 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
         r.task_id, r.turn_id, r.conversation_id = f['task'], f['turn'], f['conv']
         p.execution_context = replace(p.execution_context, task_id=f['task'], conversation_id=f['conv'],
             actor_user_id=f['user'], workspace_owner_id=f['user'])
-        q = replace(q, task_id=f['task'], conversation_id=f['conv'], user_id=f['user'], content=request_parts)
+        q = replace(q, task_id=f['task'], conversation_id=f['conv'], user_id=f['user'], content=request_parts,
+                    context_anchor=SimpleNamespace(input_message_id=f['message']))
         p.messages = [{'role':'user','content':request_parts[0].text}]
         p.core_tools.append(build_tool_catalog().require('generate_image').to_schema())
         return r, p, h, q
@@ -276,24 +352,62 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
         return StreamChunk(tool_calls=[ToolCallDelta(index=0,id=name,name=name,arguments_delta=arguments)])
 
     if recorded:
-        for item in first_document['items']:
-            if fifth:
-                # The recorded response omitted the original's use. Supply
-                # the corrected model response explicitly in this test.
-                item['materials'] = materials
-            else:
-                for material in item['materials']:
-                    material['reference']['message_id'] = original_message
-        corrections = iter(failed_saves + [json.dumps({'document':first_document},ensure_ascii=False)])
+        if write_once:
+            from services.prompt_builder.layers.user_layer import UserLayer, UserMessageInput
+            from services.handlers.chat_context.image_sources import image_sources
+
+            discovered, = image_sources({'id': original_message, 'role': 'user',
+                                         'content': [part.model_dump(mode='json') for part in parts]},
+                                        visible_indices=[1])
+            discovered['canvas'] = {'width': 1024, 'height': 1024, 'aspect_ratio': ratio}
+            p.messages = [UserLayer.render(UserMessageInput(
+                question, image_sources=[discovered], image_urls=[parts[1].url])).user_message]
+        else:
+            for item in first_document['items']:
+                if fifth:
+                    item['materials'] = materials
+                else:
+                    for material in item['materials']:
+                        material['reference']['message_id'] = original_message
+            first_arguments = json.dumps({'document':first_document},ensure_ascii=False)
+        registration_rounds = 0
 
         async def register(**kwargs):
-            yield tool_chunk(co.SAVE, arguments=next(corrections))
+            nonlocal registration_rounds
+            registration_rounds += 1
+            assert registration_rounds == 1
+            if write_once:
+                assert '服务器目标尺寸预检' not in str(kwargs['messages'])
+                assert 'inherit_reference' not in str(kwargs['messages'])
+                parameters = next(tool['function']['parameters'] for tool in kwargs['tools']
+                                  if tool['function']['name'] == co.SAVE)
+                assert parameters['$defs']['ContentItem']['required'] == ['title', 'body']
+            yield tool_chunk(co.SAVE, arguments=first_arguments)
 
         registered_sink, registered_blocks, _ = await run_content_loop(r, p, h, q, register)
         saved_block, = [block for block in registered_blocks if block['type'] == 'text']
         assert saved_block['text'].count(body) == 1 and not registered_sink.text
+        assert saved_block['content_delivery_final'] and registration_rounds == 1
+        assert json.loads(p.messages[-1]['content'])['ok'] is True
+        h._execute_tool_calls.assert_not_awaited()
         row, = co.catalog(r.task_execution_state)
         selection = ref(row, item_index)
+        if retired or write_once:
+            del selection['sha256']
+        if write_once:
+            from services.handlers.chat.outcome_builder import build_content_parts
+
+            artifact, saved_doc, saved_item = co.load(r.task_execution_state, selection)
+            saved = co.ContentRecord.model_validate_json(artifact.inline_text)
+            assert saved_block['content_artifact_id'] == artifact.id
+            assert saved_block['text'] == co.render(saved_doc)
+            assert saved_item.body == body and all(not item.materials and not item.options for item in saved_doc.items)
+            delivered, = [part for part in build_content_parts(registered_blocks, fallback_text='') if part.type == 'text']
+            assert delivered.content_artifact_id == artifact.id and delivered.text == saved_block['text']
+            source, = saved.source_images
+            assert source.name == record['attachment']['name']
+            assert source.reference.model_dump(exclude_none=True) == {'message_id': original_message, 'content_index': 1}
+            selection['source_image_indices'] = [1]
         old_task_id = f['task']
         _old, f, previous, _obs, _merged = new_turn(content_db, old=f, text=later_question)
 
@@ -306,6 +420,15 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
         r.task_followup_adopt = transfer
 
         async def select(**kwargs):
+            tool = next(tool['function'] for tool in kwargs['tools'] if tool['function']['name'] == 'generate_image')
+            selector = tool['parameters']['properties']['content_source']
+            assert selector['required'] == ['artifact_id','item_index'] and 'sha256' not in selector['properties']
+            assert 'activate_skill' not in {tool['function']['name'] for tool in kwargs['tools']}
+            if write_once:
+                facts = json.loads(kwargs['messages'][-1]['content'].split('\n')[-1])
+                offered, = facts['previous_content_objects']
+                assert offered['source_images'] == [{'index': 1, 'name': source.name}]
+                assert 'source_image_indices' in selector['properties']
             yield tool_chunk('generate_image', arguments=json.dumps({'content_source':selection}))
 
         with pytest.raises(FollowupRestart):
@@ -341,7 +464,8 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
         if 'aspect_ratio' in native:
             assert native['aspect_ratio'] == ratio
         if recorded:
-            assert native['source_prompt']['content_object']['source'] == selection
+            saved_source = native['source_prompt']['content_object']['source']
+            assert saved_source == {**selection, 'sha256': row['sha256']}
             assert raw['id'].endswith(':continued')
         parsed = ToolCall(raw['id'], raw['name'], native)
         binding = task_image_operations.bindings[raw['id']]
@@ -417,7 +541,7 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
         assert (snapshot['aspect_ratio'],snapshot['resolution'],snapshot['output_format']) == (ratio,'1K','png')
         assert snapshot['origin']['input_message_id'] == f['message']
         if with_original:
-            assert snapshot['references'][0]['width'] == snapshot['references'][0]['height'] == (1024 if fifth else 1254)
+            assert snapshot['references'][0]['width'] == snapshot['references'][0]['height'] == (1024 if fifth or write_once else 1254)
 
         requests = []
         external_id = 'local-' + str(uuid4())

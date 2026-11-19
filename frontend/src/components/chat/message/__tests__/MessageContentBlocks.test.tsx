@@ -59,7 +59,15 @@ vi.mock('../SkillChatProposalCard', () => ({
 }));
 
 it.each([true, false])('renders the entire saved body alongside an image call when streaming=%s', isStreaming => {
-  const savedBody = '改换封面。\n\n说明：保留装订孔和原有材质。';
+  const savedBody = [
+    '# 参考图判断\n\n- 产品摄影参考图',
+    '# 方案1｜改换封面',
+    '## 方案内容\n\n- 更换封面图案',
+    '## 视觉设定\n\n- 哑光纸质',
+    '## 参考图使用方式\n\n- 沿用原图的构图',
+    '## 完整生图提示词\n\n改换封面。',
+    '## 负面提示词\n\n说明：保留装订孔和原有材质。',
+  ].join('\n\n');
   const message = normalizeMessage({
     id: 'saved-image-plan', conversation_id: 'c1', role: 'assistant', status: 'completed',
     content: JSON.stringify([
@@ -69,9 +77,11 @@ it.each([true, false])('renders the entire saved body alongside an image call wh
   });
   render(<MessageContentBlocks message={message} imageAssets={[]} fileBlocks={[]}
     isStreaming={isStreaming} isRegenerating={false} textContent="" onImageClick={vi.fn()} />);
-  const savedBlocks = screen.getAllByText(/说明：保留装订孔和原有材质。/);
-  expect(savedBlocks).toHaveLength(1);
-  expect(savedBlocks[0].textContent).toBe(savedBody);
+  for (const heading of ['参考图判断', '方案1｜改换封面', '方案内容', '视觉设定',
+    '参考图使用方式', '完整生图提示词', '负面提示词']) {
+    expect(screen.getAllByRole('heading', { name: heading })).toHaveLength(1);
+  }
+  expect(screen.getAllByText('说明：保留装订孔和原有材质。')).toHaveLength(1);
 });
 
 describe('MessageContentBlocks Skill proposals', () => {

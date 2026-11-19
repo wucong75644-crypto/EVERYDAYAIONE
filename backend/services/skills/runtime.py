@@ -18,6 +18,7 @@ from services.skills.renderer import (
 )
 from services.skills.resolver import SkillCandidate, skill_tool_ceiling
 from services.skills.context import instruction_message, model_messages
+from services.skills.discovery_policy import retired_platform_skill
 from services.skills.selection import SkillSelection
 from services.skills.coordination import (
     ActionContext, Composition, CompositionConflict, Participant, build_composition, method_for,
@@ -348,6 +349,14 @@ class SkillRuntime:
             for c in candidates
         ])
 
+    def _retired(self, key):
+        candidate = self.directory.get(key)
+        return candidate is not None and retired_platform_skill(key, candidate.scope_kind)
+
+    def model_candidates(self):
+        return [c for c in self.directory.values()
+                if c.catalog_metadata.model_selectable and not self._retired(c.skill_key)]
+
     async def initialize(self, checkpoint: dict | None = None, selection: SkillSelection | None = None,
                          *, load_session_bindings: bool = True, discover_catalog: bool = True):
         self._check_cancelled()
@@ -359,6 +368,7 @@ class SkillRuntime:
         except Exception:
             raise SkillBindingError("无法加载会话固定的 Skill，请检查会话设置后重试。") from None
         self._check_cancelled()
+        bindings = [c for c in bindings if not retired_platform_skill(c.skill_key, c.scope_kind)]
         if len(bindings) > MAX_ACTIVE_SKILLS or len({c.skill_key for c in bindings}) != len(bindings):
             raise SkillBindingError("会话固定的 Skill 超过容量或配置无效，请检查会话设置。")
         self.session_skill_ids = tuple(c.skill_key for c in bindings)
@@ -378,6 +388,8 @@ class SkillRuntime:
                 or len(encoded([c.model_dump(mode="json") for c in selected]).encode("utf-8")) > 65_536):
             raise SkillBindingError("会话固定的 Skill 超过容量，请减少绑定后重试。")
         for candidate in candidates:
+            if retired_platform_skill(candidate.skill_key, candidate.scope_kind):
+                continue
             if candidate.skill_key in self.session_skill_ids:
                 continue
             if not candidate.catalog_metadata.model_selectable and candidate.skill_key != self.manual_skill_id:
@@ -417,28 +429,34 @@ class SkillRuntime:
 
     def messages(self) -> list[dict[str, str]]:
         messages = []
-        advertised = [c for c in self.directory.values() if c.catalog_metadata.model_selectable and self.allows_dynamic_activation]
+        advertised = self.model_candidates() if self.allows_dynamic_activation else []
         if advertised:
             messages.append({"role": "system", "content": self._directory_text(advertised)})
         for active in self.active.values():
+            if self._retired(active.skill_key):
+                continue
             messages.append(instruction_message(
                 active, self.directory[active.skill_key],
                 manual=active.skill_key == self.manual_skill_id, context_version=self.context_version,
                 session=active.skill_key in self.session_skill_ids,
                 scheduled=self.scheduled_snapshot is not None,
             ))
-        if self.composition and any(p.contract for p in self.composition.participants):
+        if self.composition and any(p.contract and not self._retired(p.skill_key)
+                                    for p in self.composition.participants):
             messages.append({'role': 'system', 'content': '[Current Skill composition]\n' + encoded({
                 'action': self.action_context.action, 'stage': self.action_context.stage,
-                'owners': self.composition.owners,
+                'owners': {scope: key for scope, key in self.composition.owners.items() if not self._retired(key)},
                 'instruction': '只执行当前动作适用的方法段。已加载或会话固定不等于必须重跑完整流程；解释问题不启动制作。',
             })})
         return messages
 
     def ensure_messages(self, messages: list[dict[str, Any]]):
-        if self.checkpoint_version == 2:
+        has_retired = any(self._retired(key) for key in self.directory)
+        if self.checkpoint_version == 2 or has_retired:
             current = self.messages()
             prefixes = ('[Turn Skill instructions:', '[Current Skill composition]')
+            if has_retired:
+                prefixes += ('[Turn Skill catalog]',)
             messages[:] = [m for m in messages if not (
                 m.get('role') == 'system' and isinstance(m.get('content'), str)
                 and m['content'].startswith(prefixes) and m not in current)]
@@ -479,6 +497,7 @@ class SkillRuntime:
                             "reasons": [r.model_dump(mode="json") for r in c.reasons]}
                            for c in self.recommendation_batch.candidates
                            if c.skill_id not in self.active and c.skill_id in self.directory
+                           and not self._retired(c.skill_id)
                            and self.directory[c.skill_id].revision == c.revision
                            and self.directory[c.skill_id].catalog_metadata.model_selectable]
             if suggestions:
@@ -490,9 +509,10 @@ class SkillRuntime:
         # Rebuild from current filtered schemas; do not persist stale capabilities.
         if self.context_version == 1:
             return messages
-        if not self.has_active_skills:
+        visible_active = [a for a in self.active.values() if not self._retired(a.skill_key)]
+        if not visible_active and not self.resident:
             names = [tool['function']['name'] for tool in tools]
-            advertised = [c for c in self.directory.values() if c.catalog_metadata.model_selectable]
+            advertised = self.model_candidates()
             if not self.allows_dynamic_activation or ACTIVATE_SKILL not in names or not advertised:
                 return messages
             catalog = self._directory_text(advertised)
@@ -501,7 +521,7 @@ class SkillRuntime:
             content = ('[Current Skill selection]\n'
                        + encoded({'active_skills': [], 'available_tools': names})
                        + '\n当前轮尚未激活 Skill。历史“已启用”不是当前轮的激活状态。'
-                       '先理解用户当前动作；仅在确需某方法时调用 activate_skill，普通工具能完成时无需为命中目录而加载。未明确电商用途默认普通图片；已有提示词要求生成时使用图片编排，不调用电商策划。'
+                       '先理解用户当前动作；仅在确需某方法时调用 activate_skill。已有提示词或已保存方案时直接使用通用图片工具。'
                        '用户确认或继续上一轮 Skill 任务时，先从下面当前目录选择匹配方法并调用 activate_skill，'
                        '读取正文后在下一轮按实际提供的 tools schema 处理当前请求。'
                        '准备或列出工具参数也应先加载该方法，不能从历史代码块猜参数。'
@@ -515,12 +535,12 @@ class SkillRuntime:
             {'skill_id': a.skill_key, 'revision': a.revision,
              'selection': ('scheduled' if self.scheduled_snapshot is not None else 'session' if a.skill_key in self.session_skill_ids
                            else 'user' if a.skill_key == self.manual_skill_id else 'model')}
-            for a in self.active.values()
+            for a in visible_active
         ], [instruction_message(
             a, self.directory[a.skill_key], manual=a.skill_key == self.manual_skill_id,
             context_version=self.context_version,
             session=a.skill_key in self.session_skill_ids, scheduled=self.scheduled_snapshot is not None,
-        ) for a in self.active.values()])
+        ) for a in visible_active])
 
     async def deactivate(self, raw_arguments: str) -> dict:
         self._check_cancelled()
@@ -605,6 +625,8 @@ class SkillRuntime:
             if args:
                 raise SkillError('SKILL_TEMPLATE_ARGS_SERVER_ONLY')
             candidate = self.directory.get(request["skill_id"])
+            if self._retired(request["skill_id"]):
+                raise SkillError("SKILL_NOT_AVAILABLE")
             if candidate is None or (
                 not candidate.catalog_metadata.model_selectable
                 and not (manual and candidate.skill_key == self.manual_skill_id)

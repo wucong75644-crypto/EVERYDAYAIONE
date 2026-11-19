@@ -16,7 +16,7 @@
  * 9. 边界情况
  */
 
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createWSMessageHandlers, flushChunkBuffer, type HandlerDeps, type MessageStoreActions } from '../wsMessageHandlers';
@@ -117,10 +117,13 @@ function createMockDeps(store: MessageStoreActions): HandlerDeps {
 
 describe('independent chat image delivery', () => {
   beforeEach(() => vi.clearAllMocks());
-  it.skipIf(!process.env.CHAT_EXECUTION_WS_REPLAY_DIR).each([
-    'recorded-first', 'recorded-fifth', 'text-to-image', 'image-to-image',
-  ])('projects the actual local worker receipt for %s', scenario => {
-    const dir = process.env.CHAT_EXECUTION_WS_REPLAY_DIR!;
+  const replayDir = process.env.CHAT_EXECUTION_WS_REPLAY_DIR;
+  const scenarios = ['recorded-first', 'recorded-fifth', 'text-to-image', 'image-to-image'];
+  for (const scenario of ['recorded-write-once', 'recorded-retired']) {
+    if (replayDir && existsSync(join(replayDir, scenario + '.json'))) scenarios.push(scenario);
+  }
+  it.skipIf(!replayDir).each(scenarios)('projects the actual local worker receipt for %s', scenario => {
+    const dir = replayDir!;
     const [pending, done] = JSON.parse(readFileSync(join(dir, scenario + '.json'), 'utf8')) as WSIncomingMessage[];
     const store = createMockStore();
     const handlers = createWSMessageHandlers(createMockDeps(store));

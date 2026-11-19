@@ -335,6 +335,13 @@ async def test_original_method_saves_before_dispatch_and_reuses_actual_five_item
     prepared.content_controls_available=True
     original={'title':'原方法五条完整稿','items':[{'title':brief.title,'body':image_prompt(brief),'materials':[],
         'options':{'aspect_ratio':brief.aspect_ratio}} for brief in plan.image_plans]}
+    if key == 'reference-image-prompts':
+        original['display_prefix'] = '# 参考图判断\n\n' + plan.reference_analysis
+        for index, (item, brief) in enumerate(zip(original['items'], plan.image_plans), 1):
+            item['display_prefix'] = (f'# 方案{index}｜{brief.title}\n\n'
+                f'## 方案内容\n\n{brief.layout}\n\n## 视觉设定\n\n{plan.visual_direction}\n\n'
+                f'## 参考图使用方式\n\n{plan.product_facts}')
+            item['body'] = f'## 完整生图提示词\n\n{brief.prompt}\n\n## 负面提示词\n\n{brief.negative_prompt}'
     blocks=await execute(runtime,prepared,handler,request,[call(co.SAVE,{'document':original},'save-five')])
     handler._execute_tool_calls.assert_not_awaited()
     state=runtime.task_execution_state

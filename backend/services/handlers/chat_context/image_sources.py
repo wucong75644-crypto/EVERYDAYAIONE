@@ -55,13 +55,13 @@ def image_sources(row, org_id=None, visible_indices=()):
     return result
 
 
-def format_image_sources(sources):
+def format_image_sources(sources, *, include_size_guidance=True):
     if not sources:
         return ""
     from services.handlers.image_size_requirements import SIZE_GUIDANCE
-    return ("对话图片定位（不是自动选定的生图参考；按用户本次用途复制 reference 中的唯一定位并补充 role，"
-            "或复制服务器 file_id；visually_present=false 仅为来源元数据，不能声称本轮看过图；"
-            "定位缺失先读取 get_conversation_context/file_search，不要编造 ID）。" + SIZE_GUIDANCE + "：\n"
+    return ("对话图片来源。只写文字时，后台会记录本轮原图。实际执行用图时按用户要求选择reference或file_id；"
+            "visually_present=false 仅为来源元数据。canvas 是原图画布，输出规格在执行时确定。"
+            + (SIZE_GUIDANCE if include_size_guidance else "") + "\n"
             + json.dumps([{key: value for key, value in source.items()
                            if key not in {'quoted_message_id', 'quoted_content_index', 'quoted_task_id'}}
                           for source in sources], ensure_ascii=False))

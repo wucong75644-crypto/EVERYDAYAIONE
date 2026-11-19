@@ -49,7 +49,7 @@ SCHEMAS = (
 
 def model_tools(tools):
     """Expose one content reference path, alongside native direct requests."""
-    from services.task_execution.content_objects import ContentReference
+    from services.task_execution.content_objects import ContentReference, ImageContentReference, selection_parameters
     result=[]
     for original in tools:
         name=original.get('function',{}).get('name')
@@ -57,7 +57,8 @@ def model_tools(tools):
         if name not in INPUT_TOOLS:
             result.append(original);continue
         tool=copy.deepcopy(original);parameters=tool['function']['parameters']
-        parameters.setdefault('properties',{})['content_source']=ContentReference.model_json_schema()
+        source = ImageContentReference if name == 'generate_image' else ContentReference
+        parameters.setdefault('properties',{})['content_source']=selection_parameters(source)
         # Old source locators are read-only recovery proofs, never a new model input.
         parameters['properties'].pop('source_prompt',None)
         constraints={key:parameters.pop(key) for key in ('required','anyOf','oneOf','allOf','not','dependentRequired') if key in parameters}

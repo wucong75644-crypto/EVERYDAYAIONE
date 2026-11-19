@@ -170,12 +170,12 @@ def image_plan_item(state, skills_profiles, arguments, *, artifact_id=None):
     plans = saved_image_plans(state)
     source=arguments.get('source_prompt',{})
     if isinstance(source,dict) and 'content_object' in source:
-        from .content_objects import load
-        reference=source['content_object']['source']
+        from .content_objects import ImageContentReference, load
+        reference = ImageContentReference.model_validate(source['content_object']['source'])
         artifact,_document,item=load(state,reference)
         if artifact_id is not None and artifact.id!=artifact_id:raise TaskError('TASK_IMAGE_ARGUMENTS_NOT_PLANNED')
         if arguments.get('prompt')!=item.body:raise TaskError('CONTENT_ARGUMENT_CHANGED')
-        return {'artifact_id':artifact.id,'image_item_index':reference['item_index']} if artifact.image_method else None
+        return {'artifact_id':artifact.id,'image_item_index':reference.item_index} if artifact.image_method else None
     if artifact_id is None and (not plans and not skills_profiles
             or not plans and (arguments.get('plan_source') or arguments.get('source_prompt'))):
         # These references are verified independently by native image preparation.
@@ -233,23 +233,26 @@ def context_message(runtime,*,state=None):
         for artifact in facts['previous_task'].get('artifacts',[]):artifact.pop('inline_text',None)
     if active_image_profiles(runtime):
         facts['image_method_instruction']='按原方法完成创作；每条保存一份包含全部要求和限制的完整最终原文body，使用save_task_text，素材与规格单独绑定。执行时只选择content_source，不再使用save_task_image_plan或拼接提示词。'
-    from .content_objects import catalog
-    facts['content_objects'] = catalog(state)
+    from .content_objects import TAG, catalog
+    facts['content_objects'] = catalog(state, include_digests=False)
     if source is not None and state is None:
         source_state = TaskState.model_validate(source['state'])
-        facts['previous_content_objects'] = catalog(source_state)
+        facts['previous_content_objects'] = catalog(source_state, include_digests=False)
     if state is not None:
         facts.update(revision=state.revision,status=state.status,
             operations=[v.model_dump(mode='json') for v in state.operations],
             artifacts=[v.model_dump(mode='json',exclude={'inline_text'}) for v in state.artifacts],
             completed_call_steps=[v.step_id for v in state.results])
+    artifacts = facts['previous_task']['artifacts'] if 'previous_task' in facts else facts.get('artifacts', ())
+    for artifact in artifacts:
+        if TAG in artifact.get('validations', ()):
+            artifact.pop('sha256', None)
     return {'role':'system','content':PREFIX+INSTRUCTIONS+'\n'+json.dumps(facts,ensure_ascii=False)}
 
 
 def schemas(runtime,controller=None):
-    from .content_objects import SCHEMA as CONTENT_SCHEMA, requires_reference
-    result=[PLAN_SCHEMA]
-    if not requires_reference(runtime):result.append(CONTENT_SCHEMA)
+    from .content_objects import save_schema
+    result=[PLAN_SCHEMA, save_schema(runtime)]
     if runtime.task_execution_state is None and followup_source(runtime):result.append(RESUME_SCHEMA)
     if controller is not None:
         for schema in controller.schemas():
@@ -626,14 +629,22 @@ def content_followup_state(runtime):
 
 def can_resume_content_calls(runtime, calls):
     from services.handlers.chat.content_tools import INPUT_TOOLS
-    from .content_objects import compile_input
+    from .content_objects import SAVE, SaveContent, compile_input, is_current, load
 
-    if not calls or any(call['name'] not in INPUT_TOOLS for call in calls):
+    revision = len(calls) == 1 and calls[0]['name'] == SAVE
+    if not calls or (not revision and any(call['name'] not in INPUT_TOOLS for call in calls)):
         return False
     state = content_followup_state(runtime)
     if state is None:
         return False
     try:
+        if revision:
+            draft = SaveContent.model_validate_json(calls[0]['arguments'])
+            if draft.base is None or not is_current(state, draft.base.artifact_id):
+                return False
+            _, document, _ = load(state, draft.base)
+            indices = {update.item_index for update in draft.updates}
+            return len(indices) == len(draft.updates) and max(indices) <= len(document.items)
         for call in calls:
             args = json.loads(call['arguments'])
             if not isinstance(args, dict) or 'content_source' not in args:
@@ -689,6 +700,7 @@ async def resume_from_model(runtime,prepared,blocks,calls,assistant,*,turn,model
                             selected_content=False):
     """The main model chooses affiliation; the original fenced transfer commits it."""
     from .followup import FollowupObservation,apply
+    from .content_objects import SAVE
     source=followup_source(runtime)
     chosen = calls if selected_content else [c for c in calls if c['name'] == 'resume_task_execution']
     observation=None;error_code=None
@@ -696,7 +708,8 @@ async def resume_from_model(runtime,prepared,blocks,calls,assistant,*,turn,model
         if source is None or runtime.task_execution_state is not None:raise TaskError('TASK_FOLLOWUP_SOURCE_CHANGED')
         if not selected_content and len(chosen) != 1:
             raise TaskError('TASK_FOLLOWUP_INPUT_INVALID')
-        selection = {'relation': 'continue'} if selected_content else json.loads(chosen[0]['arguments'])
+        selection = ({'relation': 'amend' if chosen[0]['name'] == SAVE else 'continue'}
+                     if selected_content else json.loads(chosen[0]['arguments']))
         if not isinstance(selection, dict) or selection.get('relation') not in ('continue', 'amend'):
             raise TaskError('TASK_FOLLOWUP_INPUT_INVALID')
         user_message = source.get('message')
@@ -716,7 +729,7 @@ async def resume_from_model(runtime,prepared,blocks,calls,assistant,*,turn,model
             'instruction': '先接回真实历史任务，再根据恢复上下文决定业务调用；本批未派发任何业务操作。'}
         if selected and selected_content:
             result.update(accepted=False, content_followup=True, instruction=(
-                '指定成果属于正在接回的原任务。本次尚未派发。恢复后对原条目使用相同content_source与原参数提交。'
+                '指定成果属于正在接回的原任务。本次尚未派发。后台将沿用所选条目与原参数。'
             ))
         if error_code:result['code']=error_code
         prepared.messages.append({'role':'tool','tool_call_id':call['id'],'content':json.dumps(result,ensure_ascii=False)})

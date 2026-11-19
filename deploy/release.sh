@@ -46,7 +46,6 @@ usage() {
   --backend-only         仅部署后端
   --enable-knowledge     安装知识解析依赖并启用自动整理及历史回填（包含后端发布）
   --enable-agent-task-execution 开启新编排入口，保持新增ERP写适配关闭
-  --publish-chat-image-platform-skill 发布仓库锁定的官方聊天图片编排 Skill 并核验全员可发现
   --chat-image-skill-target PATH 从本地清单更新指定个人编排 Skill（包含后端发布）
   --skip-test            复用已完成的定向测试，跳过执行器全量测试；保留构建/迁移/健康检查
   --rollback SHA         从 origin/main 历史中的提交回滚应用版本，不回滚数据库迁移
@@ -75,7 +74,6 @@ skip_test=false
 enable_knowledge=false
 enable_agent_task_execution=false
 chat_image_skill_target=''
-publish_chat_image_platform_skill=false
 declare -a task_files=()
 declare -a source_only_files=()
 declare -a migration_files=()
@@ -129,8 +127,7 @@ while [[ $# -gt 0 ]]; do
         --enable-agent-task-execution)
             enable_agent_task_execution=true; shift ;;
         --publish-chat-image-platform-skill)
-            publish_chat_image_platform_skill=true
-            shift
+            fail "官方聊天图片编排已下线，图片执行使用通用链路"
             ;;
         --chat-image-skill-target)
             [[ $# -ge 2 && -f "$2" ]] || fail "缺少个人编排 Skill 目标清单"
@@ -174,12 +171,6 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
-
-if [[ "$publish_chat_image_platform_skill" == true ]]; then
-    [[ "$frontend_only" == false && "$accept_and_close" == false && -z "$rollback_sha" && -z "$recover_owner" ]] \
-        || fail "--publish-chat-image-platform-skill 只用于包含后端的正常发布"
-    [[ -z "$chat_image_skill_target" ]] || fail "同一次发布请选择官方 Skill 或指定个人 Skill"
-fi
 
 if [[ -n "$chat_image_skill_target" ]]; then
     [[ "$frontend_only" == false && "$accept_and_close" == false && -z "$rollback_sha" && -z "$recover_owner" ]] \
@@ -750,22 +741,6 @@ if [[ -n "$chat_image_skill_target" ]]; then
     ) >>"$release_log" 2>&1; then
         release_executor_state=unconfirmed
         echo "RELEASE_RESULT status=failed stage=chat_image_skill commit=$commit_sha log=$release_log" >&2
-        tail -n 24 "$release_log" >&2
-        exit 1
-    fi
-fi
-
-if [[ "$publish_chat_image_platform_skill" == true ]]; then
-    skill_source=examples/skills/catalog/platform/chat-image-orchestration/v3/SKILL.md
-    if ! (
-        echo 'DEPLOY_STAGE stage=chat_image_platform_skill'
-        ssh -p "$SERVER_PORT" -o ConnectTimeout=10 -o BatchMode=yes "$SERVER_USER@$SERVER_HOST" \
-            /var/www/everydayai/backend/venv/bin/python \
-            /var/www/everydayai/deploy/publish-ecommerce-skill.py --chat-image-orchestration \
-                --source /dev/stdin --apply --lock-token "$release_lock_token" < "$skill_source"
-    ) >>"$release_log" 2>&1; then
-        release_executor_state=unconfirmed
-        echo "RELEASE_RESULT status=failed stage=chat_image_platform_skill commit=$commit_sha log=$release_log" >&2
         tail -n 24 "$release_log" >&2
         exit 1
     fi

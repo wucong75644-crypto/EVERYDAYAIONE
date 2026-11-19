@@ -848,9 +848,8 @@ async def _run_loop(
             permission=prepared.permission,
             execution_context=prepared.execution_context,
         )
-        if runtime and runtime.skill_runtime is not None and runtime.skill_runtime.allows_dynamic_activation and any(
-            c.catalog_metadata.model_selectable for c in runtime.skill_runtime.directory.values()
-        ):
+        if (runtime and runtime.skill_runtime is not None and runtime.skill_runtime.allows_dynamic_activation
+                and runtime.skill_runtime.model_candidates()):
             tools.append(ACTIVATE_SKILL_SCHEMA)
             if any(key != runtime.skill_runtime.manual_skill_id and key not in runtime.skill_runtime.session_skill_ids
                    for key in runtime.skill_runtime.active):
@@ -905,17 +904,6 @@ async def _run_loop(
         if prepared.content_controls_available:
             tools = [*content_tools.model_tools(tools),
                      *content_tools.SCHEMAS]
-        if content_tools.enabled(runtime,prepared.execution_context):
-            if prepared.content_controls_available and content_objects.requires_reference(runtime):
-                import copy
-                tools = copy.deepcopy(tools)
-                for tool in tools:
-                    if tool.get('function',{}).get('name')=='generate_image':
-                        parameters=tool['function']['parameters']
-                        parameters['properties']={'content_source':parameters['properties']['content_source']}
-                        for key in ('oneOf','anyOf','allOf','not'): parameters.pop(key,None)
-                        parameters['required']=['content_source']
-                        tool['function']['description']='执行已登记方案对象的一项；只传content_source，后台逐字传递保存的完整原文，绑定原图和规格，不拼接、改写或摘录提示词。'+tool['function']['description']
         prepared.content_visible_tool_names = {tool['function']['name'] for tool in tools if 'function' in tool}
         current_model_round = model_round
         if direct_enabled(runtime):
@@ -1105,7 +1093,7 @@ async def _read_turn(
     model_gateway = _get_model_gateway(prepared)
     # A provider can stream a draft before revealing its save call. Hold body
     # deltas only in rounds that can register the authoritative answer.
-    hold_content = not task_review and content_objects.SCHEMA in tools
+    hold_content = not task_review and any(t.get('function', {}).get('name') == content_objects.SAVE for t in tools)
     from services.task_execution.direct_loop import followup_source
     awaiting_content_owner = runtime is not None and runtime.task_execution_state is None and followup_source(runtime) is not None
     defer_narrative = getattr(prepared, "defer_ecom_narrative", False)
@@ -1522,6 +1510,7 @@ async def _execute_tools_impl(
         selected_content = (
             not recovery_only and getattr(prepared, 'content_controls_available', False)
             and content_tools.enabled(runtime, prepared.execution_context)
+            and not (turn_text.strip() and any(c['name'] == content_objects.SAVE for c in calls))
             and can_resume_content_calls(runtime, calls)
         )
         if selected_content or any(c['name']=='resume_task_execution' for c in calls):
@@ -1541,32 +1530,35 @@ async def _execute_tools_impl(
                     try:
                         if recovery_only or not content_tools.enabled(runtime,prepared.execution_context):
                             raise TaskError('CONTENT_SAVE_UNAVAILABLE')
-                        if content_objects.requires_reference(runtime):
-                            raise TaskError('CONTENT_CONSUMER_CANNOT_REWRITE')
                         if turn_text.strip():
                             raise TaskError(content_objects.DRAFT_CONFLICT)
                         candidate, artifact, document, value = content_objects.save(
                             runtime, call, build_capability_catalog(),
                             has_image_attachments=any(part.type == 'image' for part in request.content),
+                            source_images=content_objects.current_source_images(request),
                         )
-                        result = {'ok':True,'object':next(row for row in content_objects.catalog(candidate) if row['artifact_id']==artifact.id)}
+                        result = {'ok':True,'object':next(row for row in content_objects.catalog(candidate, include_digests=False)
+                                                         if row['artifact_id']==artifact.id)}
                         if not value.continue_execution or value.show_content:
                             saved_block = {'type': 'text', 'text': content_objects.render(document),
                                            'content_artifact_id': artifact.id, 'content_delivery_final': not value.continue_execution}
                     except (ValueError,TypeError,KeyError) as error:
                         result = {'ok':False,'code':str(error) if isinstance(error,TaskError) else content_objects.INVALID_OBJECT,
-                                  'parameters':content_objects.SCHEMA['function']['parameters']}
+                                  'parameters':content_objects.save_schema(runtime)['function']['parameters']}
                         if result['code'] == content_objects.DRAFT_CONFLICT:
                             result['message'] = (
                                 '上一条回复同时含聊天草稿和登记内容，尚未保存。请重新独立登记，'
-                                '把草稿中每条的完整正文与该条全部执行限制原样放进对应body，'
+                                '把草稿中原版可见结构放进对应display_prefix，每条完整执行正文和限制放进body，'
                                 '按原条目保留素材和规格。不要再输出聊天正文。'
                             )
                         if result['code'] == content_objects.ATTACHMENT_USAGE_REQUIRED:
                             result['message'] = (
-                                '本轮有上传图片。请按实际用途给每条登记原图引用，'
+                                '本轮要求实际执行且有上传图片。请按实际用途给每条登记原图引用，'
                                 '执行使用填input，仅供分析填analysis。保留完整正文和规格。'
                             )
+                        if result['code'] == content_objects.PRESENTATION_INCOMPLETE:
+                            from services.task_execution.methods import REFERENCE_PROMPTS_PRESENTATION
+                            result['message'] = REFERENCE_PROMPTS_PRESENTATION
                         if hasattr(error,'errors'):
                             result['issues']=error.errors(include_input=False,include_url=False,include_context=False)[:12]
                 prepared.messages.append({'role':'tool','tool_call_id':call['id'],'content':json.dumps(result,ensure_ascii=False)})
@@ -2205,19 +2197,11 @@ async def _execute_skill_batch(**kwargs) -> None:
         raise
 
 
-def _has_content_object_for_skill(runtime):
-    from services.task_execution.direct_loop import content_followup_state
-
-    return bool(content_objects.objects(runtime.task_execution_state or content_followup_state(runtime)))
-
-
 async def _execute_skill_batch_impl(
     *, prepared, calls, runtime, blocks, sink, start_times, turn,
     next_model_round, repeated_tool_call_guard,
 ) -> None:
     """Whole model batch barrier, including invalid/disabled activations."""
-    from services.task_execution.model_directed import enabled as direct_enabled
-
     skills = runtime.skill_runtime if runtime else None
     original_skills = skills
     save_sequence = runtime.replay_save_sequence if runtime else 0
@@ -2261,12 +2245,7 @@ async def _execute_skill_batch_impl(
             elif (key == "ecommerce-main-images" and workflow
                     and not await workflow.allows_planning()):
                 result = control_result("SKILL_ROUTING_UNAVAILABLE" if workflow.route and workflow.route["kind"] == "unavailable" else "SKILL_NOT_APPLICABLE",
-                    message="电商策划路由暂不可用。" if workflow.route and workflow.route["kind"] == "unavailable" else "当前任务不需要电商策划；已有提示词直接生图，必要时使用聊天图片编排方法。")
-            elif (direct_enabled(runtime) and isinstance(key, str) and key in skills.directory
-                  and skills.directory[key].catalog_metadata.content_protocol == content_objects.PROTOCOL
-                  and not _has_content_object_for_skill(runtime)):
-                result = control_result('SKILL_CONTENT_OBJECT_REQUIRED',
-                    message='当前没有已保存的可执行成果。先交付完整原文并保存，再选择此方法执行。')
+                    message="电商策划路由暂不可用。" if workflow.route and workflow.route["kind"] == "unavailable" else "已有提示词使用通用图片工具。")
             else:
                 from services.task_execution.methods import completed_phase_bindings
                 retired = ({b.skill_key for b in completed_phase_bindings(runtime.task_execution_state)}
@@ -2287,7 +2266,7 @@ async def _execute_skill_batch_impl(
                             activated_skill_id=result['skill_id'])
                         result = {**result, 'task_revision': runtime.task_execution_state.revision}
         if call["name"] == ACTIVATE_SKILL and result.get('code') not in {
-            'SKILL_CANDIDATE_ALREADY_REJECTED', 'SKILL_CONTENT_OBJECT_REQUIRED',
+            'SKILL_CANDIDATE_ALREADY_REJECTED',
         }:
             block = skill_step(result, skills, step_id=call["id"])
             if (not result['ok'] and isinstance(key, str) and skills is not None

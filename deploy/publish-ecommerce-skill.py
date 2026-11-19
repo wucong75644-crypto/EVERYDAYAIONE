@@ -18,9 +18,6 @@ BACKUP_ROOT = Path('/root')
 KEY = 'ecommerce-main-images'
 REVISION = 'v3'
 CONTENT_HASH = '38f0c363c1c4b93470f5c704763ce5d7a9922f044c01ba6038b0f25f7f294593'
-CHAT_KEY = 'chat-image-orchestration'
-CHAT_REVISION = 'v3'
-CHAT_CONTENT_HASH = 'ca44b28d65c752605339e46d2dabc19b4d42178b386d61a1466b82e2e75073fe'
 
 
 def install(raw, root, alias, relative):
@@ -51,10 +48,12 @@ def install(raw, root, alias, relative):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--source', required=True)
-    parser.add_argument('--chat-image-orchestration', action='store_true')
+    parser.add_argument('--chat-image-orchestration', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--apply', action='store_true')
     parser.add_argument('--lock-token')
     args = parser.parse_args()
+    if args.chat_image_orchestration:
+        parser.error('SKILL_PLATFORM_EXECUTION_RETIRED')
     os.chdir(APP / 'backend')
     sys.path.insert(0, str(APP / 'backend'))
     from core.config import get_settings
@@ -66,12 +65,8 @@ def main():
     from services.skills.resolver import SkillResolutionContext, SkillResolver
     from services.skills.storage import SkillStorage
 
-    if args.chat_image_orchestration:
-        key, revision, content_hash = CHAT_KEY, CHAT_REVISION, CHAT_CONTENT_HASH
-        source, priority = 'approved-chat-image-orchestration', 1
-    else:
-        key, revision, content_hash = KEY, REVISION, CONTENT_HASH
-        source, priority = 'approved-ecommerce-main-image-entry', 0
+    key, revision, content_hash = KEY, REVISION, CONTENT_HASH
+    source, priority = 'approved-ecommerce-main-image-entry', 0
 
     raw = Path(args.source).read_bytes()
     if hashlib.sha256(raw).hexdigest() != content_hash:
@@ -82,13 +77,8 @@ def main():
     package_input = PackageCreate(skill_key=key, source=source, scope_kind='platform')
     validated = SkillStorage.validate_bytes(package_input, publication, raw)
     settings = get_settings()
-    required = [settings.skill_catalog_enabled, settings.skill_runtime_enabled, settings.chat_image_async_enabled]
-    if args.chat_image_orchestration:
-        required.extend((settings.agent_task_execution_enabled, settings.agent_task_model_directed_enabled))
-        if validated.catalog_metadata.content_protocol != 'content-objects-v2':
-            raise ValueError('SKILL_CONTENT_PROTOCOL_MISMATCH')
-    else:
-        required.append(settings.ecom_image_planning_enabled)
+    required = [settings.skill_catalog_enabled, settings.skill_runtime_enabled,
+                settings.chat_image_async_enabled, settings.ecom_image_planning_enabled]
     if not all(required):
         raise ValueError('SKILL_REQUIRED_FEATURE_DISABLED')
     storage = SkillStorage(settings.skill_storage_root, workspace_root=settings.file_workspace_root)
@@ -166,8 +156,7 @@ def main():
                     matches = [candidate for candidate in SkillResolver().select(context, reader.catalog_candidates())
                                if candidate.skill_key == key]
                     if (len(matches) != 1 or matches[0].package_id != package.id or matches[0].revision != revision
-                            or not matches[0].catalog_metadata.model_selectable
-                            or (args.chat_image_orchestration and not matches[0].global_assignment)):
+                            or not matches[0].catalog_metadata.model_selectable):
                         raise ValueError('SKILL_PRODUCTION_DISCOVERY_FAILED')
                     resolved = reader.assigned_revision(package.id, revision)
                     if resolved.content_sha256 != content_hash:
@@ -177,13 +166,9 @@ def main():
             result = {'skill_key': key, 'revision': revision, 'published': bool(packages),
                 'available_to_all_active_contexts': available, 'registered_internal_prompts': 0,
                 'content_sha256': content_hash}
-            if args.chat_image_orchestration:
-                result.update(scope='platform', checked_contexts=len(contexts) if packages else 0,
-                              protocol=validated.catalog_metadata.content_protocol)
             if args.apply:
                 (backup / 'result.json').write_text(json.dumps(result) + '\n')
-        label = 'CHAT_IMAGE_PLATFORM_SKILL_RESULT' if args.chat_image_orchestration else 'ECOMMERCE_SKILL_RESULT'
-        print(label + ' ' + json.dumps(result))
+        print('ECOMMERCE_SKILL_RESULT ' + json.dumps(result))
     finally:
         db.close()
 

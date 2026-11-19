@@ -242,7 +242,8 @@ def test_existing_cross_conversation_quote_keeps_current_locator_and_original_ca
     assert displayed[0]['reference']=={'message_id':current['id'],'content_index':0}
     assert displayed[0]['quoted_message_id']==row['id']
     assert displayed[0]['canvas']['aspect_ratio']=='1:1'
-    assert '\"aspect_ratio\": \"1:1\"' in size_preflight_notice('参考图片写提示词',displayed)
+    assert not size_preflight_notice('参考图片写提示词',displayed)
+    assert '"aspect_ratio": "1:1"' in size_preflight_notice('保留原图比例生成图片',displayed)
     selected = resolver(cross_conversation_quote).resolve([displayed[0]['reference']|{'role':'product'}])
     args,target = resolve_size_requirement({'mode':'image_to_image','prompt':'笔记本产品比例3:4，保留原图画布',
         'aspect_ratio':'3:4','resolution':'1K'},selected,intent=user_size_intent('随机选三个提示词生成图片'))
