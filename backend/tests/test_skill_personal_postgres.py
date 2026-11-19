@@ -316,3 +316,68 @@ def test_controlled_release_updates_the_existing_personal_orchestration_skill(en
         assert repeated == {**result, 'replayed': True}
     assert authoring.repository.assigned_revision(package_id, revision.revision) == revision
     assert not environment.service(user=environment.other).repository.catalog_candidates()
+
+
+def test_official_image_orchestration_release_resolves_for_all_active_contexts(environment, tmp_path, monkeypatch, capsys):
+    import importlib.util
+    import json
+    import sys
+    from psycopg.rows import dict_row
+
+    with environment.pool.connection(privileged=True) as conn:
+        conn.execute('GRANT CREATE ON SCHEMA public TO everydayai')
+        conn.execute('ALTER TABLE skill_assignments OWNER TO everydayai')
+        conn.execute('ALTER FUNCTION skill_binding_guard() OWNER TO everydayai')
+        conn.execute((MIGRATIONS / '280_skill_platform_assignments.sql').read_text())
+    authoring = environment.service()
+    personal_id = authoring.create(CreateSkill(skill_key='chat-image-orchestration', content=DraftContent(
+        description='个人副本', body='原个人方法。')))['package_id']
+    personal = authoring.transition(personal_id, TransitionDraft(action='publish_private', expected_version=1))
+
+    root = MIGRATIONS.parents[1]
+    spec = importlib.util.spec_from_file_location('publish_platform_image_skill', root / 'deploy/publish-ecommerce-skill.py')
+    publisher = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(publisher)
+    app = tmp_path / 'application'
+    (app / 'backend').mkdir(parents=True)
+    lock = tmp_path / 'application.release-lock'
+    lock.mkdir()
+    (lock / 'owner').write_text('test-official')
+    monkeypatch.setattr(publisher, 'APP', app)
+    monkeypatch.setattr(publisher, 'BACKUP_ROOT', tmp_path)
+    monkeypatch.setattr(sys, 'path', sys.path.copy())
+
+    config = environment.config.model_copy(update={
+        'skill_runtime_enabled': True, 'chat_image_async_enabled': True,
+        'agent_task_execution_enabled': True, 'agent_task_model_directed_enabled': True,
+    })
+    monkeypatch.setattr('core.config.get_settings', lambda: config)
+
+    class ApplicationPool:
+        @contextmanager
+        def connection(self):
+            with environment.pool.connection() as conn:
+                conn.row_factory = dict_row
+                yield conn
+
+    monkeypatch.setattr('core.database.get_db', lambda: SimpleNamespace(pool=ApplicationPool(), close=lambda: None))
+
+    def install_in_test_storage(raw, root, alias, relative):
+        # The test owns a private directory rather than a pair of NAS mounts.
+        path = root / relative
+        path.parent.mkdir(parents=True)
+        path.write_bytes(raw)
+
+    monkeypatch.setattr(publisher, 'install', install_in_test_storage)
+    real_path = root / 'examples/skills/catalog/platform/chat-image-orchestration/v3/SKILL.md'
+    monkeypatch.setattr(sys, 'argv', ['publish', '--chat-image-orchestration', '--source', str(real_path),
+                                     '--apply', '--lock-token', 'test-official'])
+    monkeypatch.chdir(root)
+    publisher.main()
+    output = capsys.readouterr().out
+    result = json.loads(next(line.split(' ', 1)[1] for line in output.splitlines()
+                             if line.startswith('CHAT_IMAGE_PLATFORM_SKILL_RESULT ')))
+    assert result['available_to_all_active_contexts']
+    assert result['scope'] == 'platform' and result['protocol'] == 'content-objects-v2'
+    assert result['checked_contexts'] == 5
+    assert authoring.repository.assigned_revision(personal_id, personal['available_revision']).body_sha256

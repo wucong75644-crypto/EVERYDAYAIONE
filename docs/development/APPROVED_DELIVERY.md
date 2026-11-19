@@ -58,3 +58,7 @@ bash deploy/release.sh --accept-and-close
 用户明确授权启用新编排供验收时，在原正常发布入口追加 `--enable-agent-task-execution`。仅用于包含后端的正常发布，不允许与前端单发、回滚、锁恢复或验收关闭混用。入口沿原受控锁在依赖准备后、四服务重启前调用已有env-patch.py，原子设置`AGENT_TASK_EXECUTION_ENABLED=true`、`AGENT_TASK_MODEL_DIRECTED_ENABLED=true`和`AGENT_TASK_ERP_WRITE_ENABLED=false`；保留私有原配置备份及所有其他键。配置失败停止，不继续重启。未传此参数的发布不改这三个键，不自动关闭已经启用的入口。编排入口默认仍false；模型主导策略默认true，仅在原编排准入启用后生效。显式启用不改变既有个人会话受理边界、原任务/上下文恢复或原ERP Agent权限。
 
 启用后的检查只读核实运行配置、服务和健康状态，不自动发送模型请求。业务验收由已获授权的实际任务另行完成，付费验收仍先报价确认。
+
+### 官方聊天图片编排 Skill 发布
+
+用户明确授权面向全平台发布时，在正常发布入口追加 `--publish-chat-image-platform-skill`。该入口使用仓库中锁定哈希的 v3 原稿。后端就绪后，在同一发布锁内沿用平台 Skill 发布器登记版本并更新全局分配。发布器从活跃账号及其组织上下文核对实际解析到的官方版本、自动选择属性和内容哈希，通过后才建立可验收候选。已有个人副本和已固定的历史版本会保留。
