@@ -119,7 +119,8 @@ describe('independent chat image delivery', () => {
   beforeEach(() => vi.clearAllMocks());
   const replayDir = process.env.CHAT_EXECUTION_WS_REPLAY_DIR;
   const scenarios = ['recorded-first', 'recorded-fifth', 'text-to-image', 'image-to-image'];
-  for (const scenario of ['recorded-write-once', 'recorded-retired', 'recorded-third-output', 'new-third-output']) {
+  for (const scenario of ['recorded-write-once', 'recorded-retired', 'recorded-third-output',
+    'new-third-output', 'recorded-third-history', 'new-third-history']) {
     if (replayDir && existsSync(join(replayDir, scenario + '.json'))) scenarios.push(scenario);
   }
   it.skipIf(!replayDir).each(scenarios)('projects the actual local worker receipt for %s', scenario => {
@@ -137,7 +138,7 @@ describe('independent chat image delivery', () => {
     expect(messageId).toBe(placeholder.id);
     expect(final).toMatchObject({ status: 'completed', content: [{
       type: 'image', url: expect.stringMatching(/\/generated\/local-replay\.png$/),
-      width: 30, height: ['image-to-image', 'new-third-output'].includes(scenario) ? 40 : 30,
+      width: 30, height: ['image-to-image', 'new-third-output', 'new-third-history'].includes(scenario) ? 40 : 30,
     }] });
     vi.mocked(store.getMessage).mockReturnValue({ ...placeholder, ...final } as Message);
     handlers.message_pending(pending);

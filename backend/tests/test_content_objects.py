@@ -429,12 +429,12 @@ async def test_image_entry_follows_the_bound_workflow_before_native_dispatch(mon
     assert handler._execute_tool_calls.await_args.args[0] == [submitted]
 
 
-async def run_content_loop(r, p, h, q, stream, blocks=None):
+async def run_content_loop(r, p, h, q, stream, blocks=None, *, sink=None):
     from services.handlers.chat.execution_engine import _run_loop
     from services.handlers.chat.execution_sink import CollectingExecutionSink
     from services.handlers.chat.stream_session import StreamTotals
 
-    sink = CollectingExecutionSink()
+    sink = sink if sink is not None else CollectingExecutionSink()
     blocks = [] if blocks is None else blocks
     totals = StreamTotals()
     p.stream_kwargs = {}
@@ -487,7 +487,7 @@ async def test_authored_output_commits_before_showing_once_and_recovers_without_
     async def model(**kwargs):
         nonlocal samples
         samples += 1
-        assert co.OUTPUT_START in str(kwargs['messages'][-1]['content'])
+        assert co.OUTPUT_START not in str(kwargs['messages'][-1]['content'])
         for i in range(0, len(frame), 7):
             yield StreamChunk(content=frame[i:i + 7])
         yield StreamChunk(finish_reason='stop')
@@ -498,7 +498,8 @@ async def test_authored_output_commits_before_showing_once_and_recovers_without_
     part, = build_content_parts(blocks, fallback_text=totals.text)
     assert co.OUTPUT_START not in part.text
     if not complete:
-        assert part.text == co.SAVE_FAILED_TEXT and not co.catalog(runtime.task_execution_state)
+        assert body in part.text and part.text.count(body) == 1
+        assert not co.catalog(runtime.task_execution_state)
         return
     row, = co.catalog(runtime.task_execution_state)
     assert part.content_artifact_id == row['artifact_id']
@@ -511,93 +512,65 @@ async def test_authored_output_commits_before_showing_once_and_recovers_without_
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('repairs', [True, False])
-async def test_mixed_draft_is_not_published_or_saved(repairs):
+async def test_mixed_draft_preserves_visible_text_without_saving_second_version():
     from services.adapters.types import StreamChunk
     from services.handlers.chat.outcome_builder import build_content_parts
 
     r, p, h, q = case()
     complete = document()
     incomplete = copy.deepcopy(complete)
-    incomplete['items'][1]['body'] = '只有第二条的正向内容'
-    model_rounds = []
+    incomplete['items'][1]['body'] = '另一份草稿'
+    body = complete['items'][1]['body']
+    rounds = 0
 
     async def stream(**kwargs):
-        model_rounds.append(len(model_rounds) + 1)
-        assert co.SCHEMA in kwargs['tools']
-        if model_rounds == [1]:
-            yield StreamChunk(content=complete['items'][1]['body'])
-            yield model_save_chunk(incomplete)
-        else:
-            assert kwargs['messages'][-2]['role'] == 'tool'
-            assert json.loads(kwargs['messages'][-2]['content'])['code'] == co.DRAFT_CONFLICT
-            assert not co.catalog(r.task_execution_state)
-            assert not r.checkpoint_base['content_blocks']
-            if repairs:
-                yield model_save_chunk(complete)
-            else:
-                yield StreamChunk(content='没有保存的另一份草稿')
+        nonlocal rounds
+        rounds += 1
+        yield StreamChunk(content=body)
+        yield model_save_chunk(incomplete)
 
     sink, blocks, totals = await run_content_loop(r, p, h, q, stream)
-    assert model_rounds == [1, 2]
-    parts = build_content_parts(blocks, fallback_text=totals.text)
-    assert len(parts) == 1 and parts[0].type == 'text'
+    part, = build_content_parts(blocks, fallback_text=totals.text)
+    assert rounds == 1 and part.text == sink.text == body
+    assert not co.catalog(r.task_execution_state)
     h._execute_tool_calls.assert_not_awaited()
-    if not repairs:
-        assert not co.catalog(r.task_execution_state)
-        assert '没能保存完整原文' in parts[0].text == sink.text
-        return
-    assert not sink.text
-    assert sink.blocks == blocks and len(blocks) == 1
-    row, = co.catalog(r.task_execution_state)
-    _, doc, item = co.load(r.task_execution_state, ref(row, 2))
-    assert item.body == complete['items'][1]['body']
-    assert parts[0].text == co.render(doc)
-    assert parts[0].text.count(item.body) == 1
-    assert all(detail not in parts[0].text for detail in ('判断模式', '输出规格', '素材用途'))
-
-    # Simulate recovery after the atomic save, before the enclosing turn returned.
-    r.task_execution_state = TaskState.model_validate_json(r.task_execution_state.model_dump_json())
-    restored = copy.deepcopy(r.checkpoint_base['content_blocks'])
-    restored_sink, recovered, _ = await run_content_loop(r, p, h, q, stream, restored)
-    assert model_rounds == [1, 2]
-    assert recovered == blocks and not restored_sink.blocks
 
 
 @pytest.mark.asyncio
-async def test_unsaved_draft_stays_hidden_when_model_budget_ends():
+async def test_truncated_output_preserves_text_but_cannot_be_used_as_input():
     from services.adapters.types import StreamChunk
-    from services.agent.execution_budget import ExecutionBudget
-    from services.handlers.chat.execution_engine import _finalize_output_parts
+    from services.handlers.chat.outcome_builder import build_content_parts
 
     r, p, h, q = case()
-    p.budget = ExecutionBudget(max_turns=1, wrap_up_turns_reserved=0)
+    body = '模型已经写出的内容'
 
     async def stream(**kwargs):
-        assert p.budget.turns_used == 1
-        yield StreamChunk(content='不可作为正式交付的草稿')
-        yield model_save_chunk(document())
+        yield StreamChunk(content=body)
+        yield StreamChunk(finish_reason='length')
 
     sink, blocks, totals = await run_content_loop(r, p, h, q, stream)
-    parts = await _finalize_output_parts(handler=h, prepared=p, totals=totals, blocks=blocks, sink=sink,
-                                        cancellation_event=r.cancellation_event, runtime=r)
-    assert not co.objects(r.task_execution_state)
-    assert not sink.text and len(sink.blocks) == len(parts) == 1
-    assert parts[0].text == co.SAVE_FAILED_TEXT
+    part, = build_content_parts(blocks, fallback_text=totals.text)
+    assert sink.text == body and part.text.startswith(body)
+    assert '本轮输出未写完' in part.text and part.content_incomplete is True
+    assert not co.catalog(r.task_execution_state)
+    h._execute_tool_calls.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_plain_answer_still_delivered_when_registration_tool_is_available():
     from services.adapters.types import StreamChunk
+    from services.handlers.chat.execution_sink import CollectingExecutionSink
 
     r, p, h, q = case()
+    delivery = CollectingExecutionSink()
 
     async def stream(**kwargs):
         assert co.SCHEMA in kwargs['tools']
         yield StreamChunk(content='普通')
+        assert delivery.text == '普通'
         yield StreamChunk(content='回答')
 
-    sink, blocks, totals = await run_content_loop(r, p, h, q, stream)
+    sink, blocks, totals = await run_content_loop(r, p, h, q, stream, sink=delivery)
     assert sink.text == totals.text == '普通回答'
     assert blocks == [{'type': 'text', 'text': '普通回答'}]
     assert not co.catalog(r.task_execution_state)

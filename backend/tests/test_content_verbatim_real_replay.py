@@ -251,33 +251,29 @@ async def test_recorded_six_plan_duplicate_delivery_and_second_image(monkeypatch
             assert rounds == 1
             yield model_save_chunk(corrected)
             return
-        if rounds == 1:
-            for start in range(0, len(draft), 512):
-                yield StreamChunk(content=draft[start:start + 512])
-            yield StreamChunk(tool_calls=[
-                ToolCallDelta(index=0, id=save_call['id'], name=co.SAVE,
-                              arguments_delta=save_call['function']['arguments'])
-            ])
-        elif rounds == 2:
-            assert not co.objects(r.task_execution_state)
-            assert not r.checkpoint_base['content_blocks']
-            assert any(co.DRAFT_CONFLICT in (m.get('content') or '')
-                       for m in kwargs['messages'] if m['role'] == 'tool')
-            yield model_save_chunk(screenshot_document, call_id='screenshot-incomplete')
-        else:
-            assert rounds == 3 and not co.objects(r.task_execution_state)
-            assert any(co.PRESENTATION_INCOMPLETE in (m.get('content') or '')
-                       for m in kwargs['messages'] if m['role'] == 'tool')
-            yield model_save_chunk(corrected)
+        assert rounds == 1
+        for start in range(0, len(draft), 512):
+            yield StreamChunk(content=draft[start:start + 512])
+        yield StreamChunk(tool_calls=[
+            ToolCallDelta(index=0, id=save_call['id'], name=co.SAVE,
+                          arguments_delta=save_call['function']['arguments'])
+        ])
 
     source = copy.deepcopy(next(m for m in data['messages'] if m['role'] == 'user'))
     p.messages[-1]['content'] = source['content'][0]['text']
     sink, blocks, totals = await run_content_loop(r, p, h, q, replay_writer)
-    assert rounds == (3 if recover_incomplete else 1) and not sink.text
+    assert rounds == 1
     h._execute_tool_calls.assert_not_awaited()
     rendered_parts = serialize_content_parts(build_content_parts(blocks, fallback_text=totals.text))
     assert len(rendered_parts) == len(sink.blocks) == 1
     shown = rendered_parts[0]['text']
+    if recover_incomplete:
+        assert shown == sink.text == draft
+        assert shown.count('## 负面提示词') == 6 and not co.objects(r.task_execution_state)
+        invalid = await execute(r, p, h, q, [call(co.SAVE, {'document': screenshot_document}, 'screenshot-incomplete')])
+        assert not invalid and json.loads(p.messages[-1]['content'])['code'] == co.PRESENTATION_INCOMPLETE
+        return
+    assert not sink.text
     assert shown == sink.blocks[0]['text'] == draft.rstrip('\n')
     assert shown.count('## 负面提示词') == 6
     assert all(item['body'] in shown and shown.count(item['body']) == 1 for item in corrected['items'])

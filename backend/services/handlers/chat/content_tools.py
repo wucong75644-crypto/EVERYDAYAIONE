@@ -63,8 +63,8 @@ def schema(name, description, properties, required=()):
 SCHEMAS = (
     schema(DISCOVER, '查找当前可用业务工具。用能力名称、工具名或简短目标查询；下一轮提供真实工具定义和已保存内容的content_source用法。',
            {'query': {'type': 'string', 'minLength': 1, 'maxLength': 160}}, ('query',)),
-    schema(READ, '在当前会话已关闭的历史中读取原文。先找消息，再用 text_exact 精确选择目标片段。'
-                 'text_exact/text_exacts只读取逐字片段，不自动判断或扩展方案。执行已登记内容时选择content_source；读取历史不建立执行绑定。',
+    schema(READ, '在当前会话已关闭的历史中读取原文。指定message_id可读取单条消息并取得登记所需的行号。'
+                 'text_exact/text_exacts只读取逐字片段。执行已登记内容时选择content_source；未登记的完整原文用save_task_text的message_source登记。',
            {'message_id': {'type': 'string'}, 'text_exact': {'type': 'string', 'maxLength': 20000},
             'text_exacts': {'type': 'array', 'minItems': 1, 'maxItems': 100,
                             'items': {'type': 'string', 'minLength': 1, 'maxLength': 20000}},
@@ -205,7 +205,7 @@ def source_text(db, task_id, context, args):
     if message_id is not None:
         query = query.eq('id', str(UUID(message_id)))
     rows = query.order('context_revision', desc=True).limit(8).execute().data or []
-    if message_id is not None and not rows:
+    if message_id is not None and not rows and not args.get('_for_execution'):
         # Legacy/interrupted text uses the same frozen-history proof as native image sources.
         from services.task_execution.image_resources import native_resolver
         request = SimpleNamespace(task_id=task_id, conversation_id=context.conversation_id)
@@ -219,7 +219,8 @@ def source_text(db, task_id, context, args):
     for row in rows:
         parts = [{'type': 'text', 'content_index': index, 'text': part['text']}
                  for index, part in enumerate(content_parts(row['content']))
-                 if isinstance(part, dict) and part.get('type') == 'text' and isinstance(part.get('text'), str)]
+                 if isinstance(part, dict) and part.get('type') == 'text' and isinstance(part.get('text'), str)
+                 and not (args.get('_for_execution') and part.get('content_incomplete'))]
         messages.append({'message_id': str(row['id']), 'parts': parts})
         for part in parts:
             from services.handlers.chat_input_handoff import line_starts
@@ -250,6 +251,52 @@ def source_text(db, task_id, context, args):
         else:
             total += size
     return {'messages': history}
+
+
+def prepare_message_content(db, task_id, context, source, observed):
+    """Copy authorized completed message ranges and their authoritative original images."""
+    from types import SimpleNamespace
+    from services.handlers.chat_context.image_sources import image_sources
+    from services.handlers.chat_input_handoff import _range
+    from services.task_execution.content_objects import ContentDocument, SourceImage
+    from services.task_execution.image_resources import native_resolver
+
+    message_id = str(source.message_id)
+    query = {'message_id': message_id, '_full': True, '_for_execution': True}
+    messages = source_text(db, task_id, context, query)['messages']
+    part = next((m for m in messages if m['role'] == 'assistant' and m['content_index'] == source.content_index), None)
+    key = f'{message_id}:{source.content_index}'
+    if part is None or observed.get(key) != {k: part[k] for k in ('sha256', 'context_revision')}:
+        raise ValueError('CONTENT_MESSAGE_SOURCE_UNAVAILABLE_OR_CHANGED')
+    text = part['text']
+    items, ranges = [], []
+    for item in source.items:
+        start, end = _range(text, {'first_line': item.first_line, 'last_line': item.last_line})
+        if ranges and start < ranges[-1][1]:
+            raise ValueError('CONTENT_MESSAGE_SOURCE_OVERLAP')
+        ranges.append((start, end))
+        items.append({'title': item.title, 'body': text[start:end]})
+
+    native = native_resolver(SimpleNamespace(db=db), SimpleNamespace(task_id=task_id,
+        conversation_id=context.conversation_id), context)
+    owner = db.table('tasks').select('user_id,org_id,conversation_id,input_message_id').eq(
+        'assistant_message_id', message_id).eq('type', 'chat').eq('status', 'completed').limit(2).execute().data or []
+    owner = [row for row in owner if str(row['user_id']) == str(context.actor_user_id)
+             and row['org_id'] == context.org_id and row['conversation_id'] == context.conversation_id]
+    if len(owner) != 1 or not owner[0].get('input_message_id'):
+        raise ValueError('CONTENT_MESSAGE_SOURCE_ORIGIN_UNAVAILABLE')
+    original = native._message(str(owner[0]['input_message_id']))
+    if original['role'] != 'user':
+        raise ValueError('CONTENT_MESSAGE_SOURCE_ORIGIN_UNAVAILABLE')
+    images = tuple(SourceImage(name=image['name'], reference=image['reference'])
+                   for image in image_sources(original) if image['available'])
+    proof = {'message_id': message_id, 'content_index': source.content_index, 'ranges': ranges,
+             'sha256': part['sha256'], 'context_revision': part['context_revision']}
+    document = ContentDocument.model_validate({
+        'title': source.title, 'items': items,
+        'notes': json.dumps({'message_source': proof}, ensure_ascii=False),
+    })
+    return document, images, proof
 
 
 def inject_source_code(code, text):

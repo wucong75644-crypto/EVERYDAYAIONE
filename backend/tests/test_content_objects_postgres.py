@@ -182,8 +182,10 @@ async def test_direct_content_selection_adopts_saved_task_before_business_dispat
 @pytest.mark.parametrize('scenario', [
     'text-to-image', 'image-to-image', 'recorded-first', 'recorded-fifth', 'recorded-write-once', 'recorded-retired',
     'recorded-third-output', 'new-third-output',
+    'recorded-third-history', 'new-third-history',
 ])
 async def test_chat_executes_from_registration_to_page_receipt(content_db, monkeypatch, tmp_path, scenario):
+    import asyncio
     import base64
     import hashlib
     import json
@@ -235,8 +237,9 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
 
     with_original = scenario != 'text-to-image'
     recorded = scenario.startswith('recorded-')
-    recorded_output = scenario == 'recorded-third-output'
-    new_output = scenario == 'new-third-output'
+    history_import = scenario.endswith('-history')
+    recorded_output = scenario in {'recorded-third-output', 'recorded-third-history'}
+    new_output = scenario in {'new-third-output', 'new-third-history'}
     automatic_output = recorded_output or new_output
     followup = recorded or automatic_output
     fifth = scenario == 'recorded-fifth'
@@ -270,12 +273,23 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
         assert original_artifact['document']['items'][0]['options']['aspect_ratio'] == ratio
         assert 'CONTENT_ARGUMENT_CONFLICT' in failed['content']
         original = (capture / 'original.png').read_bytes()
+        if history_import:
+            first_output = visible
+            first_line = visible.count('\n', 0, captures[2].start(2)) + 1
+            last_line = visible.count('\n', 0, captures[2].end(2)) + 1
+            body += '\n'
     elif new_output:
         question = '参考上传图写五套产品封面提示词。每条输出比例为3:4，输出分辨率为2K。'
         later_question = '用第三条和原图生成一张图片。'
         body = '  保留纸品的标识和边缘。\n输出比例：3:4\n输出分辨率：2K\n不要添加水印。  '
         output_items = [{'title': f'封面方向{i}', 'body': body if i == 3 else f'第{i}套独立正文。'} for i in range(1, 6)]
         first_output = model_content_output('五套封面', output_items)
+        if history_import:
+            first_output = '\n\n'.join(f"### {item['title']}\n\n{item['body']}" for item in output_items)
+            start = first_output.index(body)
+            first_line = first_output.count('\n', 0, start) + 1
+            last_line = first_output.count('\n', 0, start + len(body)) + 1
+            body += '\n'
         from io import BytesIO
         fixture = BytesIO()
         Image.new('RGB', (1024, 1024), 'white').save(fixture, format='PNG')
@@ -423,7 +437,7 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
                                   if tool['function']['name'] == co.SAVE)
                 assert parameters['$defs']['ContentItem']['required'] == ['title', 'body']
             if automatic_output:
-                assert co.OUTPUT_START in str(kwargs['messages'][-1]['content'])
+                assert co.OUTPUT_START not in str(kwargs['messages'][-1]['content'])
                 assert any(part.get('type') == 'image_url' for message in kwargs['messages']
                            if message['role'] == 'user' and isinstance(message['content'], list)
                            for part in message['content'])
@@ -435,73 +449,85 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
 
         registered_sink, registered_blocks, _ = await run_content_loop(r, p, h, q, register)
         saved_block, = [block for block in registered_blocks if block['type'] == 'text']
-        assert saved_block['text'].count(body) == 1 and not registered_sink.text
-        assert saved_block['content_delivery_final'] and registration_rounds == 1
-        if automatic_output:
-            assert p.messages[-1] == {'role': 'assistant', 'content': saved_block['text']}
-        else:
-            assert json.loads(p.messages[-1]['content'])['ok'] is True
-        h._execute_tool_calls.assert_not_awaited()
-        row, = co.catalog(r.task_execution_state)
-        selection = ref(row, item_index)
-        if retired or write_once or automatic_output:
-            del selection['sha256']
-        if write_once or automatic_output:
+        if history_import:
             from services.handlers.chat.outcome_builder import build_content_parts
 
-            artifact, saved_doc, saved_item = co.load(r.task_execution_state, selection)
-            saved = co.ContentRecord.model_validate_json(artifact.inline_text)
-            assert saved_block['content_artifact_id'] == artifact.id
-            assert saved_block['text'] == co.render(saved_doc)
-            assert saved_item.body == body and all(not item.materials and not item.options for item in saved_doc.items)
-            delivered, = [part for part in build_content_parts(registered_blocks, fallback_text='') if part.type == 'text']
-            assert delivered.content_artifact_id == artifact.id and delivered.text == saved_block['text']
-            source, = saved.source_images
-            assert source.name == source_name
-            assert source.reference.model_dump(exclude_none=True) == {'message_id': original_message, 'content_index': 1}
+            assert saved_block['text'] == registered_sink.text == first_output
+            assert not co.catalog(r.task_execution_state) and registration_rounds == 1
+            h._execute_tool_calls.assert_not_awaited()
+            reply = [part.model_dump(mode='json', exclude_none=True)
+                     for part in build_content_parts(registered_blocks, fallback_text='')]
+            _old, f, history_message, _, _ = new_turn(content_db, old=f, text=later_question, reply=reply)
+            r, p, h, q = runtime_case([TextPart(text=later_question)])
+            row = selection = None
+        else:
+            assert saved_block['text'].count(body) == 1 and not registered_sink.text
+            assert saved_block['content_delivery_final'] and registration_rounds == 1
             if automatic_output:
-                assert [i.body for i in saved_doc.items] == [i['body'] for i in output_items]
-                assert all(saved_block['text'].count(i['body']) == 1 for i in output_items)
-                assert co.OUTPUT_START not in saved_block['text']
-            selection['source_image_indices'] = [1]
-        old_task_id = f['task']
-        _old, f, previous, _obs, _merged = new_turn(content_db, old=f, text=later_question)
-
-        async def transfer(source, observation, payload):
-            with connect(f) as connection:
-                return adopt(connection, f, source, observation, payload)
-
-        r, p, h, q = runtime_case([TextPart(text=later_question)])
-        r.task_followup_candidate = previous
-        r.task_followup_adopt = transfer
-
-        async def select(**kwargs):
-            tool = next(tool['function'] for tool in kwargs['tools'] if tool['function']['name'] == 'generate_image')
-            selector = tool['parameters']['properties']['content_source']
-            assert selector['required'] == ['artifact_id','item_index'] and 'sha256' not in selector['properties']
-            assert 'activate_skill' not in {tool['function']['name'] for tool in kwargs['tools']}
+                assert p.messages[-1] == {'role': 'assistant', 'content': saved_block['text']}
+            else:
+                assert json.loads(p.messages[-1]['content'])['ok'] is True
+            h._execute_tool_calls.assert_not_awaited()
+            row, = co.catalog(r.task_execution_state)
+            selection = ref(row, item_index)
+            if retired or write_once or automatic_output:
+                del selection['sha256']
             if write_once or automatic_output:
-                facts = json.loads(kwargs['messages'][-1]['content'].split('\n')[-1])
-                offered, = facts['previous_content_objects']
-                assert offered['source_images'] == [{'index': 1, 'name': source.name}]
-                assert 'source_image_indices' in selector['properties']
-            yield tool_chunk('generate_image', arguments=json.dumps({'content_source':selection}))
+                from services.handlers.chat.outcome_builder import build_content_parts
 
-        with pytest.raises(FollowupRestart):
-            await run_content_loop(r, p, h, q, select)
-        h._execute_tool_calls.assert_not_awaited()
-        with connect(f) as connection:
-            checkpoint_state = connection.execute('SELECT state FROM conversation_turn_checkpoints WHERE task_id=%s',
-                (f['task'],)).fetchone()[0]
-        r, p, h, q = runtime_case([TextPart(text=later_question)])
-        r.checkpoint_base = checkpoint_state
-        r.task_execution_state = TaskState.model_validate(checkpoint_state['_task_execution'])
-        assert str(r.task_execution_state.root_task_id) == old_task_id
-        r.committed_task_execution_revision = r.task_execution_state.revision
-        r.task_user_changes = restore_changes(checkpoint_state, root_task_id=old_task_id, owner_task_id=f['task'])
-        r._steer_messages.extend(item.message for item in r.task_user_changes.items if not item.delivered)
-        restore_plan(r, checkpoint_state)
-        p.messages = copy.deepcopy(checkpoint_state['messages'])
+                artifact, saved_doc, saved_item = co.load(r.task_execution_state, selection)
+                saved = co.ContentRecord.model_validate_json(artifact.inline_text)
+                assert saved_block['content_artifact_id'] == artifact.id
+                assert saved_block['text'] == co.render(saved_doc)
+                assert saved_item.body == body and all(not item.materials and not item.options for item in saved_doc.items)
+                delivered, = [part for part in build_content_parts(registered_blocks, fallback_text='') if part.type == 'text']
+                assert delivered.content_artifact_id == artifact.id and delivered.text == saved_block['text']
+                source, = saved.source_images
+                assert source.name == source_name
+                assert source.reference.model_dump(exclude_none=True) == {'message_id': original_message, 'content_index': 1}
+                if automatic_output:
+                    assert [i.body for i in saved_doc.items] == [i['body'] for i in output_items]
+                    assert all(saved_block['text'].count(i['body']) == 1 for i in output_items)
+                    assert co.OUTPUT_START not in saved_block['text']
+                selection['source_image_indices'] = [1]
+            old_task_id = f['task']
+            _old, f, previous, _obs, _merged = new_turn(content_db, old=f, text=later_question)
+
+            async def transfer(source, observation, payload):
+                with connect(f) as connection:
+                    return adopt(connection, f, source, observation, payload)
+
+            r, p, h, q = runtime_case([TextPart(text=later_question)])
+            r.task_followup_candidate = previous
+            r.task_followup_adopt = transfer
+
+            async def select(**kwargs):
+                tool = next(tool['function'] for tool in kwargs['tools'] if tool['function']['name'] == 'generate_image')
+                selector = tool['parameters']['properties']['content_source']
+                assert selector['required'] == ['artifact_id','item_index'] and 'sha256' not in selector['properties']
+                assert 'activate_skill' not in {tool['function']['name'] for tool in kwargs['tools']}
+                if write_once or automatic_output:
+                    facts = json.loads(kwargs['messages'][-1]['content'].split('\n')[-1])
+                    offered, = facts['previous_content_objects']
+                    assert offered['source_images'] == [{'index': 1, 'name': source.name}]
+                    assert 'source_image_indices' in selector['properties']
+                yield tool_chunk('generate_image', arguments=json.dumps({'content_source':selection}))
+
+            with pytest.raises(FollowupRestart):
+                await run_content_loop(r, p, h, q, select)
+            h._execute_tool_calls.assert_not_awaited()
+            with connect(f) as connection:
+                checkpoint_state = connection.execute('SELECT state FROM conversation_turn_checkpoints WHERE task_id=%s',
+                    (f['task'],)).fetchone()[0]
+            r, p, h, q = runtime_case([TextPart(text=later_question)])
+            r.checkpoint_base = checkpoint_state
+            r.task_execution_state = TaskState.model_validate(checkpoint_state['_task_execution'])
+            assert str(r.task_execution_state.root_task_id) == old_task_id
+            r.committed_task_execution_revision = r.task_execution_state.revision
+            r.task_user_changes = restore_changes(checkpoint_state, root_task_id=old_task_id, owner_task_id=f['task'])
+            r._steer_messages.extend(item.message for item in r.task_user_changes.items if not item.delivered)
+            restore_plan(r, checkpoint_state)
+            p.messages = copy.deepcopy(checkpoint_state['messages'])
 
     database = LocalDBClient(psycopg.conninfo.make_conninfo(content_db, user='everydayai'), min_size=1, max_size=4)
     scoped = ScopedDatabaseClient(database, DatabaseScope(f['user'], None, DatabaseAccessKind.RUNTIME))
@@ -522,7 +548,7 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
         if followup:
             saved_source = native['source_prompt']['content_object']['source']
             assert saved_source == {**selection, 'sha256': row['sha256']}
-            assert raw['id'].endswith(':continued')
+            assert raw['id'].endswith(':continued') != history_import
         parsed = ToolCall(raw['id'], raw['name'], native)
         binding = task_image_operations.bindings[raw['id']]
         result = await store.begin(r.task_execution_state, step_id=binding.step_id, effect_key=binding.effect_key,
@@ -558,11 +584,49 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
     doc = {'title':'本轮生成输入','items':[{'title':'第一个结果','body':body,'materials':materials,
            'options':{'aspect_ratio':ratio, 'resolution':'1K', 'output_format':'png'}}]}
     seen = 0
+    if not followup:
+        row = selection = None
 
     async def model(**kwargs):
-        nonlocal seen
+        nonlocal seen, row, selection
         seen += 1
-        if followup:
+        if history_import:
+            if seen == 1:
+                yield tool_chunk('read_conversation_text', arguments=json.dumps({'message_id': history_message}))
+            elif seen == 2:
+                result = json.loads(next(m['content'] for m in reversed(kwargs['messages']) if m['role'] == 'tool'))
+                original_reply, = result['messages']
+                assert original_reply['text'] == first_output
+                arguments = {'continue_execution': True, 'message_source': {
+                    'message_id': history_message, 'content_index': original_reply['content_index'],
+                    'title': '封面提示词', 'items': [
+                        {'title': '第三条', 'first_line': first_line, 'last_line': last_line},
+                    ],
+                }}
+                from services.handlers.chat.content_tools import prepare_message_content
+
+                source = co.MessageContentSource.model_validate(arguments['message_source'])
+                with pytest.raises(ValueError, match='CONTENT_MESSAGE_SOURCE_UNAVAILABLE_OR_CHANGED'):
+                    await asyncio.to_thread(prepare_message_content, scoped, q.task_id, p.execution_context,
+                        source, {f"{history_message}:{original_reply['content_index']}": {
+                            'sha256': '0' * 64, 'context_revision': original_reply['context_revision'],
+                        }})
+                yield tool_chunk(co.SAVE, arguments=json.dumps(arguments))
+            elif seen == 3:
+                row, = co.catalog(r.task_execution_state)
+                selection = {'artifact_id': row['artifact_id'], 'item_index': 1, 'source_image_indices': [1]}
+                artifact, selected_document, item = co.load(r.task_execution_state, ref(row))
+                assert item.body == body
+                record = co.ContentRecord.model_validate_json(artifact.inline_text)
+                proof = json.loads(selected_document.notes)['message_source']
+                assert proof['message_id'] == history_message
+                assert proof['sha256'] == hashlib.sha256(first_output.encode()).hexdigest()
+                assert record.source_images[0].reference.message_id == original_message
+                yield tool_chunk('generate_image', arguments=json.dumps({'content_source': selection}))
+            else:
+                assert receipts and seen == 4
+                yield StreamChunk(content='图片任务已受理。')
+        elif followup:
             assert receipts and seen == 1, 'A checked selection should resume before asking the model again'
             yield StreamChunk(content='图片任务已受理。')
         elif seen == 1:
@@ -581,7 +645,7 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
 
     try:
         sink, blocks, _ = await run_content_loop(r, p, h, q, model)
-        assert seen == (1 if followup else 3) and len(receipts) == 1, blocks
+        assert seen == (4 if history_import else 1 if followup else 3) and len(receipts) == 1, blocks
         assert body not in sink.text and not any(body in block.get('text','') for block in blocks)
         receipt = receipts[0]
         assert receipt['accepted'] is True and receipt['completed'] is False

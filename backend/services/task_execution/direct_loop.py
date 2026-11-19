@@ -213,7 +213,7 @@ def restore_plan(runtime,payload):
         runtime.task_execution_state=update_working_plan(state,runtime.task_direct_plan.model_dump(mode='json'))
 
 
-def context_message(runtime,*,state=None,content_output=False):
+def context_message(runtime,*,state=None):
     state=runtime.task_execution_state if state is None else state
     bootstrap=runtime.task_bootstrap
     plan=getattr(runtime,'task_direct_plan',None) or (state.working_plan if state else None)
@@ -225,7 +225,7 @@ def context_message(runtime,*,state=None,content_output=False):
     if source is not None and state is None:
         facts['previous_task']={k:copy.deepcopy(source['state'].get(k)) for k in ('root_task_id','original_goal','status','operations','artifacts')}
         for artifact in facts['previous_task'].get('artifacts',[]):artifact.pop('inline_text',None)
-    from .content_objects import TAG, catalog, output_instructions
+    from .content_objects import TAG, catalog
     facts['content_objects'] = catalog(state, for_model=True)
     if source is not None and state is None:
         source_state = TaskState.model_validate(source['state'])
@@ -238,8 +238,7 @@ def context_message(runtime,*,state=None,content_output=False):
     artifacts = facts['previous_task']['artifacts'] if 'previous_task' in facts else facts.get('artifacts', ())
     if isinstance(artifacts, list):
         artifacts[:] = [artifact for artifact in artifacts if TAG not in artifact.get('validations', ())]
-    output = '\n' + output_instructions(runtime) if content_output else ''
-    return {'role':'system','content':PREFIX+INSTRUCTIONS+output+'\n'+json.dumps(facts,ensure_ascii=False)}
+    return {'role':'system','content':PREFIX+INSTRUCTIONS+'\n'+json.dumps(facts,ensure_ascii=False)}
 
 
 def schemas(runtime,controller=None):

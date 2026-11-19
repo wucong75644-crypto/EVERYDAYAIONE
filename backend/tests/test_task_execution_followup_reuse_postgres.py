@@ -33,16 +33,18 @@ def followup_db(continuation_db,native_result_db):
     drain(continuation_db)
 
 
-def new_turn(dsn,old=None,text='继续原任务，保留之前的成果'):
+def new_turn(dsn,old=None,text='继续原任务，保留之前的成果', *, reply=None):
     if old is None:old,cp=prepared(dsn,binding_version=3)
     new={**old,'task':str(uuid4()),'message':str(uuid4()),'turn':str(uuid4()),'token':str(uuid4())}
     answer=str(uuid4())
     with psycopg.connect(dsn) as c:
         base=c.execute('SELECT COALESCE(max(context_revision),0)+1 FROM messages WHERE conversation_id=%s',(old['conv'],)).fetchone()[0]+1
         c.execute("UPDATE conversations SET scope_type='user',context_revision=%s WHERE id=%s",(base,old['conv']))
-        c.execute("INSERT INTO messages(id,conversation_id,role,content,status,context_revision,turn_id) VALUES(%s,%s,'assistant','[]','completed',%s,%s)",(answer,old['conv'],base-1,old['turn']))
+        c.execute("INSERT INTO messages(id,conversation_id,role,content,status,context_revision,turn_id) VALUES(%s,%s,'assistant',%s,'completed',%s,%s)",(answer,old['conv'],Jsonb(reply or []),base-1,old['turn']))
         c.execute("UPDATE tasks SET status='completed',assistant_message_id=%s WHERE id=%s",(answer,old['task']))
         c.execute("UPDATE conversation_turn_checkpoints SET status='consumed' WHERE task_id=%s",(old['task'],))
+        if reply is not None:
+            c.execute("DELETE FROM conversation_turn_checkpoints WHERE task_id=%s", (old['task'],))
         c.execute("INSERT INTO messages(id,conversation_id,role,content,status,context_revision,turn_id) VALUES(%s,%s,'user',%s,'completed',%s,%s)",
             (new['message'],old['conv'],Jsonb([{'type':'text','text':text}]),base,new['turn']))
         c.execute("""INSERT INTO tasks(id,user_id,conversation_id,type,status,input_message_id,turn_id,execution_token,lease_expires_at,
@@ -51,6 +53,8 @@ def new_turn(dsn,old=None,text='继续原任务，保留之前的成果'):
     fresh={'messages':[{'role':'user','content':text}],'opaque_current':{'keep':True}}
     with connect(new) as c:
         c.execute("SELECT save_generation_checkpoint(%s,%s,'before_model',%s)",(new['task'],new['token'],Jsonb(fresh)))
+        if reply is not None:
+            return old, new, answer, None, None
         source=c.execute('SELECT read_agent_task_followup(%s,%s)',(new['task'],new['token'])).fetchone()[0]['source']
     obs=FollowupObservation(relation='continue',evidence=['继续原任务'])
     merged=payload(source,fresh,task_id=new['task'],turn_id=new['turn'],model_round=1,usage={'prompt_tokens':4},observation=obs)

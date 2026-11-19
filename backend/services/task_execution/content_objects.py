@@ -126,25 +126,12 @@ def document_from_output(text, *, references=''):
     return ContentDocument.model_validate({**heading, 'items': items})
 
 
-def output_instructions(runtime):
-    from .direct_loop import active_image_methods
-    from .methods import REFERENCE_PROMPTS_PROFILE
-
-    instruction = (
-        '只交付新写的可复用方案、提示词、脚本等内容时，直接按以下正文格式输出。'
-        '后台自动登记并显示同一份稿件。普通回答照常写。标记各占一行，开头和结尾外不写内容，不加代码围栏。'
-        '以 <content-delivery> 开头，下一行写总标题，之后可写整份稿件的可见引言。'
-        '每条以 <content-item> 起一行，下一行写条目标题，然后可写该条仅供展示的 Markdown。'
-        '另起一行写 <content-body>，后面逐字写该条完整原文，包含最终要求和限制。'
-        '多条重复 <content-item>、标题和 <content-body>，全篇以 </content-delivery> 结束。'
-        '保留用户要求的输出规格。修订既有成果或本轮还要执行时，使用 save_task_text。'
-    )
-    if any(method[0] == REFERENCE_PROMPTS_PROFILE for method in active_image_methods(runtime).values()):
-        instruction += (
-            '保留写作方法的原版 Markdown。引言是参考图判断。每条标题之后、<content-body>之前，'
-            '放原版方案标题、方案内容、视觉设定和参考图使用方式。<content-body>之后放完整生图提示词及负面提示词两节。'
-        )
-    return instruction
+def render_unregistered_output(text):
+    """Strip recognized control lines from a legacy delivery."""
+    cleaned = OUTPUT_MARKERS.sub('', text.lstrip())
+    for marker in (OUTPUT_START, OUTPUT_END, OUTPUT_ITEM, OUTPUT_BODY):
+        cleaned = cleaned.replace(marker, '')
+    return cleaned
 
 
 class SourceImage(Fact):
@@ -178,10 +165,26 @@ class ItemUpdate(Fact):
     item_index: int = Field(strict=True, ge=1, le=100)
     item: ContentItemPatch
 
+class MessageItem(Fact):
+    title: str = Field(min_length=1, max_length=300)
+    first_line: int = Field(strict=True, ge=1)
+    last_line: int = Field(strict=True, ge=1)
+
+
+class MessageContentSource(Fact):
+    message_id: UUID
+    content_index: int = Field(strict=True, ge=0)
+    title: str = Field(min_length=1, max_length=300)
+    items: tuple[MessageItem, ...] = Field(min_length=1, max_length=100)
+
+
 class SaveContent(Fact):
-    model_config = {**Fact.model_config,'json_schema_extra':{'oneOf':[{'required':['document'],'not':{'required':['base']}},{'required':['base','updates'],'not':{'required':['document']}}]}}
+    model_config = {**Fact.model_config, 'json_schema_extra': {'oneOf': [
+        {'required': ['document']}, {'required': ['base', 'updates']}, {'required': ['message_source']},
+    ]}}
     document: ContentDocument | None = None
     base: ContentReference | None = None
+    message_source: MessageContentSource | None = None
     updates: tuple[ItemUpdate, ...] = Field(default=(), max_length=100)
     continue_execution: bool = False
     show_content: bool | None = Field(default=None, description=(
@@ -196,17 +199,19 @@ class SaveContent(Fact):
 
     @model_validator(mode='after')
     def choice(self):
-        if ((self.document is not None) == (self.base is not None)
+        if (sum(value is not None for value in (self.document, self.base, self.message_source)) != 1
                 or self.base is None and self.updates or self.base is not None and not self.updates):
             raise ValueError('CONTENT_SAVE_FORM_INVALID')
+        if self.message_source is not None and (not self.continue_execution or self.show_content):
+            raise ValueError('CONTENT_MESSAGE_SOURCE_REQUIRES_EXECUTION')
         return self
 
 def save_parameters(*, require_presentation=False):
     parameters = SaveContent.model_json_schema()
-    # Advertise the two optional selectors as actual objects when present.
-    # Omitting the other selector is already required by the top-level oneOf.
+    # Advertise each selector as an object. The oneOf controls the selector choice.
     parameters['properties']['document'] = parameters['$defs'][ContentDocument.__name__]
     parameters['properties']['base'] = selection_parameters()
+    parameters['properties']['message_source'] = parameters['$defs'][MessageContentSource.__name__]
     del parameters['$defs'][ContentReference.__name__]
     if require_presentation:
         for name in ('ContentDocument', 'ContentItem'):
@@ -227,7 +232,9 @@ def selection_parameters(model=ContentReference):
 
 
 SCHEMA = {'type': 'function', 'function': {'name': SAVE,
-    'description': '用于修订已保存内容，或在本轮执行前登记完整执行原文。只交付新写的文稿时，遵循本轮正文交付格式，后台自动保存。调用本工具时聊天正文留空。'
+    'description': '用于修订已登记内容，或在本轮执行前登记输入。只交付新写的文稿时直接写入聊天，后台保存消息。'
+        '要执行尚无成果条目的历史稿件，先用read_conversation_text按消息ID读取，再用message_source和continue_execution=true登记所选整条原文的行范围。'
+        '行号从1开始，两端均包含。原文包含限制时一并选择。已有成果时直接用对应成果ID。'
         'body包含最终要求和限制；按用户或方法要求交付的可见结构放display_prefix，内部说明放notes。仅有条目专用素材或已确定执行规格时才填materials或options。'
         '修订既有条目时，base选择成果ID和条目，updates传修订正文。后台绑定版本并保留未改条目、素材和规格。'
         '本轮实际执行时设continue_execution=true；有上传图片时每条明确登记素材及用途。还要求看文字时设show_content=true。',
@@ -346,7 +353,7 @@ def current_source_images(request):
                  for image in image_sources(row) if image['available'])
 
 
-def save(runtime, call, registry, *, has_image_attachments=False, source_images=()):
+def save(runtime, call, registry, *, has_image_attachments=False, source_images=(), checked_message=None):
     from services.tools import ToolCall
     from .model_directed import record_calls, call_binding
     from .direct_loop import active_image_methods
@@ -363,6 +370,8 @@ def save(runtime, call, registry, *, has_image_attachments=False, source_images=
     arguments = value.model_dump(mode='json')
     if value.show_content is None:
         arguments.pop('show_content')
+    if value.message_source is None:
+        arguments.pop('message_source')
     bound = next((b for b in state.call_bindings if b.call_id == call['id']),None) if state else None
     if bound:
         if bound.tool_name != SAVE or bound.arguments_sha256 != digest(arguments):
@@ -371,14 +380,22 @@ def save(runtime, call, registry, *, has_image_attachments=False, source_images=
         if artifact is None: raise TaskError('CONTENT_SAVE_UNCONFIRMED')
         return state, artifact, ContentRecord.model_validate_json(artifact.inline_text).document, value
     document = value.document
-    if (document is not None and value.continue_execution and has_image_attachments
+    message_proof = None
+    if value.message_source is not None:
+        if checked_message is None:
+            raise TaskError('CONTENT_MESSAGE_SOURCE_UNVERIFIED')
+        document, source_images, message_proof = checked_message
+    elif (document is not None and value.continue_execution and has_image_attachments
             and any(not item.materials for item in document.items)):
         raise TaskError(ATTACHMENT_USAGE_REQUIRED)
-    if value.continue_execution:
+    if value.continue_execution and value.message_source is None:
         source_images = ()
-    object_key = 'object-'+digest([str(runtime.task_id),call['id']])[:32]
+    identity = message_proof if message_proof is not None else [str(runtime.task_id), call['id']]
+    object_key = 'object-'+digest(identity)[:32]
     revision = 1
-    methods = active_image_methods(runtime)
+    # Importing a completed message supplies an execution source without
+    # claiming to have run any currently active authoring method.
+    methods = active_image_methods(runtime) if value.message_source is None else {}
     if len(methods) > 1:
         raise TaskError('CONTENT_METHOD_CONFLICT')
     presentation_profile = next((method[0] for method in methods.values()
