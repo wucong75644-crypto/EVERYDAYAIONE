@@ -396,7 +396,7 @@ class ChatImageInputResolver:
                 **{key: dimensions[key] for key in ("width", "height", "aspect_ratio")}})
         return resolved
 
-    def size_context(self):
+    def size_context(self, *, use_previous=True, infer_attachment_canvas=True):
         from services.handlers.chat_context.image_sources import content_parts
         from services.handlers.image_size_requirements import user_size_intent
         def text(row):
@@ -406,9 +406,12 @@ class ChatImageInputResolver:
         if current.get("role") != "user":
             raise PermissionError("IMAGE_SOURCE_MESSAGE_DENIED")
         intent = user_size_intent(text(current))
-        if (any(isinstance(part, dict) and part.get("type") == "image" for part in content_parts(current.get("content")))
+        if (infer_attachment_canvas
+                and any(isinstance(part, dict) and part.get("type") == "image" for part in content_parts(current.get("content")))
                 and not any(key in intent for key in ("aspect_ratio", "mode", "width", "orientation"))):
             intent["mode"] = "inherit_reference"
+        if not use_previous:
+            return intent, {}
         # Prior requirements come only from user text within the closed anchor,
         # never an assistant's visual estimate or a concurrent newer message.
         rows = self.owner.db.table("messages").select(

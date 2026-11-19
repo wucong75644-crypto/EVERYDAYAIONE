@@ -39,6 +39,7 @@ from services.skills.runtime import (ACTIVATE_SKILL, ACTIVATE_SKILL_SCHEMA, DEAC
 from services.skills.selection import SkillSelection
 from services.skills.feedback import skill_step
 from services.handlers.chat import content_tools
+from services.task_execution import content_objects
 from services.task_execution.model_directed import SAVE_IMAGE_PLAN
 
 
@@ -527,7 +528,9 @@ async def _finalize_output_parts(*, handler, prepared, totals, blocks, sink,
         await asyncio.to_thread(knowledge_run.revalidate)
     # New tasks already saved an explicit bounded partial result; do not invoke
     # an extra uncounted synthesis model after their task budget is exhausted.
-    if runtime is None or (runtime.task_execution_state is None and getattr(runtime,'task_requirement_review',None) is None):
+    if not any(block.get('content_delivery_final') is True for block in blocks) and (
+        runtime is None or (runtime.task_execution_state is None and getattr(runtime,'task_requirement_review',None) is None)
+    ):
         await _apply_budget_stop(prepared, totals, blocks, sink,
             cancellation_event=cancellation_event, runtime=runtime)
     await _consume_emit_payloads(handler, blocks, sink)
@@ -571,6 +574,8 @@ async def _run_loop(
 ) -> str | None:
     from services.task_execution.model_directed import enabled as direct_enabled
     if direct_enabled(runtime):
+        if any(block.get('content_delivery_final') is True for block in blocks):
+            return None
         stopped = content_tools.checkpoint_state(runtime).get('stop_message')
         if stopped:
             blocks.append({'type': 'text', 'text': stopped})
@@ -901,8 +906,7 @@ async def _run_loop(
             tools = [*content_tools.model_tools(tools),
                      *content_tools.SCHEMAS]
         if content_tools.enabled(runtime,prepared.execution_context):
-            from services.task_execution.content_objects import requires_reference
-            if prepared.content_controls_available and requires_reference(runtime):
+            if prepared.content_controls_available and content_objects.requires_reference(runtime):
                 import copy
                 tools = copy.deepcopy(tools)
                 for tool in tools:
@@ -924,11 +928,22 @@ async def _run_loop(
             direct_enabled(runtime) and runtime.task_user_changes is not None) else ()
         before_usage = dict(totals.usage) if correcting else {}
         try:
-            turn_text, turn_thinking, calls, previewed_call_ids = await _read_turn(
-                prepared, tools, cancellation_event, sink, totals, blocks, runtime,
-                request.thinking_effort, thinking_mode, request,
-                model_round=current_model_round,
-            )
+            restored = []
+            if prepared.content_controls_available:
+                from services.task_execution.direct_loop import restored_content_calls
+                restored = restored_content_calls(runtime, prepared.content_visible_tool_names)
+            if restored:
+                # The original model round consumed this authenticated user input.
+                # Dispatch still goes through the current scope, revision and tool gates.
+                turn_text, turn_thinking, calls, previewed_call_ids = "", "", restored, set()
+                prepared.last_provider_output = None
+                prepared.last_reasoning_content = ""
+            else:
+                turn_text, turn_thinking, calls, previewed_call_ids = await _read_turn(
+                    prepared, tools, cancellation_event, sink, totals, blocks, runtime,
+                    request.thinking_effort, thinking_mode, request,
+                    model_round=current_model_round,
+                )
         finally:
             if correcting:
                 image_arguments.record_usage(before_usage, totals.usage, _get_model_gateway(prepared))
@@ -941,6 +956,7 @@ async def _run_loop(
             raise RuntimeError('KNOWLEDGE_ANSWER_UNEXPECTED_TOOL_CALL')
         if runtime:
             await runtime.safe_point(SafePoint.AFTER_MODEL)
+        saving_content = direct_enabled(runtime) and any(c['name'] == content_objects.SAVE for c in calls)
         if prepared.defer_ecom_narrative:
             if not calls:
                 message = "主图入口已启用，但主模型没有调用策划子 Agent，已停止执行。未生成替代方案或提交图片，请重试当前主图请求。"
@@ -948,12 +964,14 @@ async def _run_loop(
                 blocks.append({"type": "text", "text": message})
                 await sink.on_block(blocks[-1])
                 return None
-            turn_text, turn_thinking = "", ""
+            turn_thinking = ""
+            if not saving_content:
+                turn_text = ""
         await _append_turn_blocks(
             blocks,
             sink,
             thinking=turn_thinking,
-            text=turn_text,
+            text="" if saving_content else turn_text,
         )
         if not calls:
             if runtime and runtime.task_execution_state is not None:
@@ -1018,7 +1036,7 @@ async def _run_loop(
                 if repeated_tool_call_action == "nudge" else None
             ),
         )
-        if getattr(handler, '_terminal_content_saved', False):
+        if blocks and blocks[-1].get('content_delivery_final') is True:
             return None
         executor = getattr(handler, "_tool_executor", None)
         image_metrics = image_arguments.summary()
@@ -1042,6 +1060,12 @@ async def _run_loop(
             return None
         if form_hint:
             return form_hint
+    if direct_enabled(runtime) and content_objects.retry_pending(prepared.messages):
+        notice = {'type': 'text', 'text': content_objects.SAVE_FAILED_TEXT, 'content_delivery_final': True}
+        blocks.append(notice)
+        totals.text += notice['text']
+        await sink.on_block(notice)
+        return None
     if runtime and runtime.task_execution_state is not None:
         from services.task_execution.model_bridge import review_model_completion
         await review_model_completion(runtime=runtime, prepared=prepared, blocks=blocks,
@@ -1079,6 +1103,12 @@ async def _read_turn(
     previewed_indices: set[int] = set()
     preview_ids: dict[int, str] = {}
     model_gateway = _get_model_gateway(prepared)
+    # A provider can stream a draft before revealing its save call. Hold body
+    # deltas only in rounds that can register the authoritative answer.
+    hold_content = not task_review and content_objects.SCHEMA in tools
+    from services.task_execution.direct_loop import followup_source
+    awaiting_content_owner = runtime is not None and runtime.task_execution_state is None and followup_source(runtime) is not None
+    defer_narrative = getattr(prepared, "defer_ecom_narrative", False)
     skills = runtime.skill_runtime if runtime and not task_review else None
     stream_kwargs = {
         "messages": skills.model_messages(prepared.messages, tools) if skills else prepared.messages,
@@ -1189,7 +1219,7 @@ async def _read_turn(
                 builtin_sources[source["url"]] = source.get("title") or source["url"]
         if chunk.thinking_content:
             turn_thinking += chunk.thinking_content
-            if not getattr(prepared, "defer_ecom_narrative", False):
+            if not defer_narrative:
                 totals.thinking += chunk.thinking_content
                 await sink.on_thinking(chunk.thinking_content)
         if chunk.content:
@@ -1197,7 +1227,7 @@ async def _read_turn(
             if model_timing.chunks == 1:
                 chat_phase('model.first_body', task_id=request.task_id if request else None, model_round=model_round)
             turn_text += chunk.content
-            if not getattr(prepared, "defer_ecom_narrative", False):
+            if not defer_narrative and not hold_content:
                 totals.text += chunk.content
                 await sink.on_text(chunk.content)
         if chunk.tool_calls:
@@ -1206,8 +1236,9 @@ async def _read_turn(
                 for index, call in calls.items():
                     if (index in previewed_indices or not call.get("name")
                             or call["name"] in SKILL_CONTROL_TOOLS
-                            or call["name"] in {SAVE_IMAGE_PLAN, "save_task_text", "get_conversation_context"}
-                            or call["name"] in content_tools.CONTROLS):
+                            or call["name"] in {SAVE_IMAGE_PLAN, content_objects.SAVE, "get_conversation_context"}
+                            or call["name"] in content_tools.CONTROLS
+                            or (awaiting_content_owner and call["name"] in content_tools.INPUT_TOOLS)):
                         continue
                     preview_id = _actor_tool_preview_id(
                         runtime.turn_id, model_round, index,
@@ -1236,10 +1267,17 @@ async def _read_turn(
         from services.handlers.chat.builtin_tools import source_text
         references = source_text(builtin_sources)
         turn_text += references
-        totals.text += references
-        await sink.on_text(references)
+        if not hold_content:
+            totals.text += references
+            await sink.on_text(references)
     ordered_indices = sorted(calls)
     ordered_calls = [calls[index] for index in ordered_indices]
+    if hold_content and not defer_narrative and not any(c['name'] == content_objects.SAVE for c in ordered_calls):
+        if not ordered_calls and content_objects.retry_pending(prepared.messages):
+            turn_text = content_objects.SAVE_FAILED_TEXT
+        if turn_text:
+            totals.text += turn_text
+            await sink.on_text(turn_text)
     previewed_call_ids: set[str] = set()
     if runtime:
         for index, call in zip(ordered_indices, ordered_calls):
@@ -1423,14 +1461,14 @@ async def _execute_tools_impl(
                 await candidate_workflow.initialize(recover_previous=False)
                 prepared.ecom_workflow = candidate_workflow
                 break
-    handler._terminal_content_saved = False
     from services.task_execution.model_directed import enabled as direct_enabled
     direct_errors={}
     direct_reused=[]
     bound_sources = {}
     if direct_enabled(runtime):
         from services.task_execution.direct_loop import (
-            retire_saved_image_method, stage_plan_calls, stage_native_calls, stage_image_plan_batch,
+            can_resume_content_calls, resume_from_model, retire_saved_image_method,
+            stage_plan_calls, stage_native_calls, stage_image_plan_batch,
         )
         assistant=_assistant_tool_message(turn_text,calls)
         if getattr(prepared,'last_provider_output',None):assistant['_dashscope_output']=prepared.last_provider_output
@@ -1481,12 +1519,15 @@ async def _execute_tools_impl(
                 if block.get('tool_call_id') in previewed_call_ids:
                     await sink.on_block_update(block)
             return None
-        if any(c['name']=='resume_task_execution' for c in calls):
-            from services.task_execution.direct_loop import resume_from_model
+        selected_content = (
+            not recovery_only and getattr(prepared, 'content_controls_available', False)
+            and content_tools.enabled(runtime, prepared.execution_context)
+            and can_resume_content_calls(runtime, calls)
+        )
+        if selected_content or any(c['name']=='resume_task_execution' for c in calls):
             await resume_from_model(runtime,prepared,blocks,calls,assistant,turn=turn,
-                model_round=next_model_round,build_checkpoint=_build_replay_context)
+                model_round=next_model_round,build_checkpoint=_build_replay_context,selected_content=selected_content)
             return None
-        from services.task_execution import content_objects
         if any(c['name'] == content_objects.SAVE for c in calls):
             from services.task_execution.model_bridge import commit_projection
             from services.tools.catalog import build_capability_catalog
@@ -1502,12 +1543,30 @@ async def _execute_tools_impl(
                             raise TaskError('CONTENT_SAVE_UNAVAILABLE')
                         if content_objects.requires_reference(runtime):
                             raise TaskError('CONTENT_CONSUMER_CANNOT_REWRITE')
-                        candidate, artifact, document, value = content_objects.save(runtime,call,build_capability_catalog())
+                        if turn_text.strip():
+                            raise TaskError(content_objects.DRAFT_CONFLICT)
+                        candidate, artifact, document, value = content_objects.save(
+                            runtime, call, build_capability_catalog(),
+                            has_image_attachments=any(part.type == 'image' for part in request.content),
+                        )
                         result = {'ok':True,'object':next(row for row in content_objects.catalog(candidate) if row['artifact_id']==artifact.id)}
-                        saved_block = {'type':'text','text':content_objects.render(document)}
+                        if not value.continue_execution or value.show_content:
+                            saved_block = {'type': 'text', 'text': content_objects.render(document),
+                                           'content_artifact_id': artifact.id, 'content_delivery_final': not value.continue_execution}
                     except (ValueError,TypeError,KeyError) as error:
-                        result = {'ok':False,'code':str(error) if isinstance(error,TaskError) else 'CONTENT_OBJECT_INVALID',
+                        result = {'ok':False,'code':str(error) if isinstance(error,TaskError) else content_objects.INVALID_OBJECT,
                                   'parameters':content_objects.SCHEMA['function']['parameters']}
+                        if result['code'] == content_objects.DRAFT_CONFLICT:
+                            result['message'] = (
+                                '上一条回复同时含聊天草稿和登记内容，尚未保存。请重新独立登记，'
+                                '把草稿中每条的完整正文与该条全部执行限制原样放进对应body，'
+                                '按原条目保留素材和规格。不要再输出聊天正文。'
+                            )
+                        if result['code'] == content_objects.ATTACHMENT_USAGE_REQUIRED:
+                            result['message'] = (
+                                '本轮有上传图片。请按实际用途给每条登记原图引用，'
+                                '执行使用填input，仅供分析填analysis。保留完整正文和规格。'
+                            )
                         if hasattr(error,'errors'):
                             result['issues']=error.errors(include_input=False,include_url=False,include_context=False)[:12]
                 prepared.messages.append({'role':'tool','tool_call_id':call['id'],'content':json.dumps(result,ensure_ascii=False)})
@@ -1521,8 +1580,8 @@ async def _execute_tools_impl(
             if runtime.skill_runtime is not original_skills:
                 _apply_skill_context(prepared,runtime.skill_runtime)
             if saved_block is not None:
+                totals.text += saved_block['text']
                 await sink.on_block(saved_block)
-                handler._terminal_content_saved = not value.continue_execution
             return None
         if (any(c['name'] == SAVE_IMAGE_PLAN for c in calls)
                 and not any(c['name'] in SKILL_CONTROL_TOOLS for c in calls)):
@@ -1586,7 +1645,6 @@ async def _execute_tools_impl(
                     projected_calls.append({**call,'arguments':json.dumps(resolved,ensure_ascii=False)})
                     continue
             try:
-                from services.task_execution import content_objects
                 if call['name']=='image_agent' and not recovery_only and content_tools.enabled(runtime,prepared.execution_context):
                     raise ValueError('CONTENT_INPUT_PATH_RETIRED')
                 if isinstance(args,dict) and 'content_source' in args:
@@ -2147,11 +2205,19 @@ async def _execute_skill_batch(**kwargs) -> None:
         raise
 
 
+def _has_content_object_for_skill(runtime):
+    from services.task_execution.direct_loop import content_followup_state
+
+    return bool(content_objects.objects(runtime.task_execution_state or content_followup_state(runtime)))
+
+
 async def _execute_skill_batch_impl(
     *, prepared, calls, runtime, blocks, sink, start_times, turn,
     next_model_round, repeated_tool_call_guard,
 ) -> None:
     """Whole model batch barrier, including invalid/disabled activations."""
+    from services.task_execution.model_directed import enabled as direct_enabled
+
     skills = runtime.skill_runtime if runtime else None
     original_skills = skills
     save_sequence = runtime.replay_save_sequence if runtime else 0
@@ -2196,6 +2262,11 @@ async def _execute_skill_batch_impl(
                     and not await workflow.allows_planning()):
                 result = control_result("SKILL_ROUTING_UNAVAILABLE" if workflow.route and workflow.route["kind"] == "unavailable" else "SKILL_NOT_APPLICABLE",
                     message="电商策划路由暂不可用。" if workflow.route and workflow.route["kind"] == "unavailable" else "当前任务不需要电商策划；已有提示词直接生图，必要时使用聊天图片编排方法。")
+            elif (direct_enabled(runtime) and isinstance(key, str) and key in skills.directory
+                  and skills.directory[key].catalog_metadata.content_protocol == content_objects.PROTOCOL
+                  and not _has_content_object_for_skill(runtime)):
+                result = control_result('SKILL_CONTENT_OBJECT_REQUIRED',
+                    message='当前没有已保存的可执行成果。先交付完整原文并保存，再选择此方法执行。')
             else:
                 from services.task_execution.methods import completed_phase_bindings
                 retired = ({b.skill_key for b in completed_phase_bindings(runtime.task_execution_state)}
@@ -2215,7 +2286,9 @@ async def _execute_skill_batch_impl(
                         runtime.task_execution_state = append_active_methods(runtime.task_execution_state, skills,
                             activated_skill_id=result['skill_id'])
                         result = {**result, 'task_revision': runtime.task_execution_state.revision}
-        if call["name"] == ACTIVATE_SKILL and result.get('code') != 'SKILL_CANDIDATE_ALREADY_REJECTED':
+        if call["name"] == ACTIVATE_SKILL and result.get('code') not in {
+            'SKILL_CANDIDATE_ALREADY_REJECTED', 'SKILL_CONTENT_OBJECT_REQUIRED',
+        }:
             block = skill_step(result, skills, step_id=call["id"])
             if (not result['ok'] and isinstance(key, str) and skills is not None
                     and key in skills.directory and key != skills.manual_skill_id and key not in skills.session_skill_ids):

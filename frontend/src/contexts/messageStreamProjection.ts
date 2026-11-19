@@ -243,7 +243,7 @@ export function createMessageStreamProjection(deps: HandlerDeps): MessageStreamP
       store.updateContentBlock(conversationId, block.tool_call_id, block);
       return;
     }
-    if (block.type === 'text') {
+    if (block.type === 'text' && !block.content_artifact_id) {
       store.replaceLastTextBlock(conversationId, block as TextPart);
       return;
     }

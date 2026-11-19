@@ -4,11 +4,15 @@ import hashlib
 import json
 from typing import Any, Literal
 from uuid import UUID
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 from .contracts import Artifact, Fact, Key, TaskError
 from .reducer import digest, register_artifacts, complete_step
 
 SAVE = 'save_task_text'
+DRAFT_CONFLICT = 'CONTENT_SAVE_DRAFT_CONFLICT'
+INVALID_OBJECT = 'CONTENT_OBJECT_INVALID'
+ATTACHMENT_USAGE_REQUIRED = 'CONTENT_ATTACHMENT_USAGE_REQUIRED'
+SAVE_FAILED_TEXT = '这次没能保存完整原文，尚未交付方案。请让我重新整理后再执行。'
 TAG = 'content.object.v2'
 PROTOCOL = 'content-objects-v2'
 
@@ -33,12 +37,12 @@ class MaterialReference(Fact):
 class Material(Fact):
     reference: MaterialReference
     role: str = Field(min_length=1, max_length=200)
-    usage: Literal['input', 'analysis']
+    usage: Literal['input', 'analysis'] = Field(description='执行时传给工具用input，仅用来理解素材用analysis。')
 
 class ContentItem(Fact):
-    title: str = Field(min_length=1, max_length=300)
+    title: str = Field(min_length=1, max_length=300, description='条目名称，由页面添加编号。')
     body: str = Field(min_length=1, max_length=20000,description='用户可见并交给目标工具的完整最终原文，包括全部执行要求、限制和禁止项；后台逐字传递，不再拼接其他文字。')
-    materials: tuple[Material, ...] = Field(max_length=16)
+    materials: tuple[Material, ...] = Field(max_length=16, description='上传原图时明确登记执行参考或仅分析；引用使用宿主提供的真实素材身份。')
     options: dict[str, Any] = Field(json_schema_extra={'propertyNames':{'not':{'enum':['prompt','references','source_prompt','content_source','plan_source','chat_input','code']}}})
 
     @model_validator(mode='after')
@@ -85,6 +89,15 @@ class SaveContent(Fact):
     base: ContentReference | None = None
     updates: tuple[ItemUpdate, ...] = Field(default=(), max_length=100)
     continue_execution: bool = False
+    show_content: bool | None = Field(default=None, description=(
+        '仅在用户同时要求交付文字且继续执行时设为true；只要求执行时省略，输入在后台登记。'))
+
+    @field_validator('document', 'base', mode='before')
+    @classmethod
+    def decode_serialized_object(cls, value):
+        if isinstance(value, str) and value.lstrip().startswith('{'):
+            return json.loads(value)
+        return value
 
     @model_validator(mode='after')
     def choice(self):
@@ -93,11 +106,22 @@ class SaveContent(Fact):
             raise ValueError('CONTENT_SAVE_FORM_INVALID')
         return self
 
+def save_parameters():
+    parameters = SaveContent.model_json_schema()
+    # Advertise the two optional selectors as actual objects when present.
+    # Omitting the other selector is already required by the top-level oneOf.
+    for field, model in (('document', ContentDocument), ('base', ContentReference)):
+        parameters['properties'][field] = parameters['$defs'][model.__name__]
+    return parameters
+
+
 SCHEMA = {'type': 'function', 'function': {'name': SAVE,
-    'description': '交付方案、提示词、脚本等可复用内容时，保存每条完整最终原文body；原文必须包含需要执行的全部要求、限制、负面描述，后台不再翻译、拼接或补写。平台从同一原文直接展示。'
+    'description': '交付方案、提示词、脚本等可复用内容时，传document对象，items为条目列表，每条的完整最终文本只写在body；原文必须包含需要执行的全部要求、限制、负面描述，后台不再翻译、拼接或补写。仅发起这一工具调用，聊天正文留空；平台保存后直接展示同一原文。'
         'materials绑定素材身份并区分执行输入与仅分析，options保存输出规格；分析说明放notes，不进入执行原文。'
-        '修订既有条目时用base+updates替换该条完整body，未改条目、素材和规格由后台保留。默认只交付文字，用户同时要求继续执行时才设continue_execution=true。',
-    'parameters': SaveContent.model_json_schema()}}
+        '修订既有条目时用base+updates替换该条完整body，未改条目、素材和规格由后台保留。'
+        '用户要求本轮实际执行时设continue_execution=true；还要求查看文字时设show_content=true。'
+        '只要求写文字时直接登记；只要求执行时后台登记后继续调用工具。',
+    'parameters': save_parameters()}}
 
 
 def objects(state):
@@ -133,27 +157,53 @@ def catalog(state):
 
 def render(document):
     parts = [f'# {document.title}']
-    if document.notes: parts.append('分析说明（不作为执行要求）\n'+document.notes)
-    for i,item in enumerate(document.items,1):
-        parts.extend([f'## 方案{i}｜{item.title}', item.body])
-        if item.options: parts.append('输出规格\n'+json.dumps(item.options,ensure_ascii=False))
-        if item.materials: parts.append('素材用途\n'+'\n'.join(f'{m.role}：'+('执行参考' if m.usage=='input' else '仅分析') for m in item.materials))
+    for i, item in enumerate(document.items, 1):
+        parts.extend([f'## {i}. {item.title}', item.body])
     return '\n\n'.join(parts)
 
 
-def save(runtime, call, registry):
+def retry_pending(messages):
+    """Recognize a failed draft registration in the current user turn."""
+    tool_results = {}
+    for message in reversed(messages):
+        role = message.get('role')
+        if role == 'user':
+            break
+        if role == 'tool':
+            tool_results[message.get('tool_call_id')] = message.get('content')
+        if role == 'assistant':
+            for call in message.get('tool_calls') or ():
+                if call.get('function', {}).get('name') == SAVE and call['id'] in tool_results:
+                    try:
+                        result = json.loads(tool_results[call['id']])
+                    except (TypeError, ValueError):
+                        continue
+                    if isinstance(result, dict):
+                        if result.get('ok') is True:
+                            return False
+                        if result.get('code') in {DRAFT_CONFLICT, INVALID_OBJECT, ATTACHMENT_USAGE_REQUIRED}:
+                            return True
+    return False
+
+
+def save(runtime, call, registry, *, has_image_attachments=False):
     from services.tools import ToolCall
     from .model_directed import record_calls, call_binding
     value = SaveContent.model_validate_json(call['arguments'])
+    arguments = value.model_dump(mode='json')
+    if value.show_content is None:
+        arguments.pop('show_content')
     state = runtime.task_execution_state
     bound = next((b for b in state.call_bindings if b.call_id == call['id']),None) if state else None
     if bound:
-        if bound.tool_name != SAVE or bound.arguments_sha256 != digest(value.model_dump(mode='json')):
+        if bound.tool_name != SAVE or bound.arguments_sha256 != digest(arguments):
             raise TaskError('CONTENT_SAVE_CALL_CHANGED')
         artifact = next((a for a in objects(state) if a.source_call_id == call['id']),None)
         if artifact is None: raise TaskError('CONTENT_SAVE_UNCONFIRMED')
         return state, artifact, ContentRecord.model_validate_json(artifact.inline_text).document, value
     document = value.document
+    if document is not None and has_image_attachments and any(not item.materials for item in document.items):
+        raise TaskError(ATTACHMENT_USAGE_REQUIRED)
     object_key = 'object-'+digest([str(runtime.task_id),call['id']])[:32]
     revision = 1
     if value.base:
@@ -173,7 +223,7 @@ def save(runtime, call, registry):
     checksum = hashlib.sha256(body.encode()).hexdigest()
     for artifact in objects(runtime.task_execution_state):
         if artifact.sha256 == checksum: return runtime.task_execution_state, artifact, document, value
-    parsed = ToolCall(call['id'], SAVE, value.model_dump(mode='json'))
+    parsed = ToolCall(call['id'], SAVE, arguments)
     state = record_calls(runtime.task_execution_state, runtime.task_bootstrap, [parsed], registry)
     step, requirement = call_binding(state, parsed)
     from .direct_loop import active_image_methods

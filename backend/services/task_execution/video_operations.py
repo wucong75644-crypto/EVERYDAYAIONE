@@ -34,7 +34,7 @@ def frozen_request(owner,args,parent):
     if set(args)!={'prompt'} or not isinstance(args.get('prompt'),str) or not args['prompt'].strip():raise VideoNotAccepted('VIDEO_PROMPT_REQUIRED')
     if state.execution_identity.context_scope!='user' or state.execution_identity.workspace_owner_id!=str(state.actor_user_id):
         raise VideoNotAccepted('VIDEO_CONTEXT_NOT_ADAPTED')
-    prompt=args['prompt'].strip()
+    prompt=args['prompt']
     if len(prompt)>10000:raise VideoNotAccepted('VIDEO_PROMPT_TOO_LONG')
     try:cost=calculate_video_cost(model_name=DEFAULT_VIDEO_MODEL_ID,duration_seconds=10)
     except ValueError as error:raise VideoNotAccepted('VIDEO_DEFAULT_MODEL_UNAVAILABLE') from error

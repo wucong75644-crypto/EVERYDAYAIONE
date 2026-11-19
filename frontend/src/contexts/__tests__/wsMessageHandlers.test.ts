@@ -16,8 +16,12 @@
  * 9. 边界情况
  */
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createWSMessageHandlers, flushChunkBuffer, type HandlerDeps, type MessageStoreActions } from '../wsMessageHandlers';
+import type { Message } from '../../types/message';
+import type { WSIncomingMessage } from '../wsMessageHandlerShared';
 import { scheduledTaskForm } from '../../test/fixtures/scheduledTaskForm';
 
 const scheduledStore = vi.hoisted(() => ({ optimisticUpdate: vi.fn(), fetchRuns: vi.fn(), fetchTasks: vi.fn() }));
@@ -113,6 +117,31 @@ function createMockDeps(store: MessageStoreActions): HandlerDeps {
 
 describe('independent chat image delivery', () => {
   beforeEach(() => vi.clearAllMocks());
+  it.skipIf(!process.env.CHAT_EXECUTION_WS_REPLAY_DIR).each([
+    'recorded-first', 'recorded-fifth', 'text-to-image', 'image-to-image',
+  ])('projects the actual local worker receipt for %s', scenario => {
+    const dir = process.env.CHAT_EXECUTION_WS_REPLAY_DIR!;
+    const [pending, done] = JSON.parse(readFileSync(join(dir, scenario + '.json'), 'utf8')) as WSIncomingMessage[];
+    const store = createMockStore();
+    const handlers = createWSMessageHandlers(createMockDeps(store));
+    handlers.message_pending(pending);
+    const placeholder = vi.mocked(store.addMessage).mock.calls[0][1];
+    expect(placeholder.status).toBe('pending');
+    expect(placeholder.content[0]).toMatchObject({ type: 'image', url: null });
+    vi.mocked(store.getMessage).mockReturnValue(placeholder);
+    handlers.message_done(done);
+    const [messageId, final] = vi.mocked(store.updateMessage).mock.calls.at(-1)!;
+    expect(messageId).toBe(placeholder.id);
+    expect(final).toMatchObject({ status: 'completed', content: [{
+      type: 'image', url: expect.stringMatching(/\/generated\/local-replay\.png$/),
+      width: 30, height: scenario === 'image-to-image' ? 40 : 30,
+    }] });
+    vi.mocked(store.getMessage).mockReturnValue({ ...placeholder, ...final } as Message);
+    handlers.message_pending(pending);
+    expect(store.updateMessage).toHaveBeenCalledOnce();
+    expect(store.completeStreaming).not.toHaveBeenCalled();
+  });
+
   it('accepts a placeholder without registering parent streaming or sending state', () => {
     const store = createMockStore(); const deps = createMockDeps(store);
     const handlers = createWSMessageHandlers(deps);

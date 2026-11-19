@@ -617,17 +617,86 @@ async def reuse_images(runtime,calls):
     return state,results,parts,errors
 
 
-async def resume_from_model(runtime,prepared,blocks,calls,assistant,*,turn,model_round,build_checkpoint):
+def content_followup_state(runtime):
+    source = followup_source(runtime)
+    if runtime.task_execution_state is None and source is not None:
+        return TaskState.model_validate(source['state'])
+    return None
+
+
+def can_resume_content_calls(runtime, calls):
+    from services.handlers.chat.content_tools import INPUT_TOOLS
+    from .content_objects import compile_input
+
+    if not calls or any(call['name'] not in INPUT_TOOLS for call in calls):
+        return False
+    state = content_followup_state(runtime)
+    if state is None:
+        return False
+    try:
+        for call in calls:
+            args = json.loads(call['arguments'])
+            if not isinstance(args, dict) or 'content_source' not in args:
+                return False
+            reference = args.pop('content_source')
+            compile_input(state, call['name'], args, reference)
+    except (ValueError, TypeError, KeyError):
+        return False
+    return True
+
+
+def restored_content_calls(runtime, visible_tools):
+    """Reuse the selection already made for the authenticated followup input."""
+    checkpoint = runtime.checkpoint_base
+    followup = checkpoint.get('_task_followup')
+    initial = checkpoint.get('_task_followup_input_checkpoint')
+    state = runtime.task_execution_state
+    if not followup or not initial or state is None or runtime.task_user_changes is None:
+        return []
+    if followup.get('source_root_task_id') != str(state.root_task_id):
+        return []
+    changes = [item for item in runtime.task_user_changes.items
+               if str(item.event_id) not in runtime.task_direct_seen]
+    if (len(changes) != 1 or not changes[0].delivered
+            or str(changes[0].owner_task_id) != runtime.task_id
+            or changes[0].message_sha256 != followup.get('input_sha256')):
+        return []
+
+    messages = initial.get('messages', ())
+    selected = set()
+    for message in reversed(messages):
+        if message.get('role') == 'tool':
+            try:
+                result = json.loads(message.get('content', ''))
+            except (TypeError, ValueError):
+                return []
+            if (isinstance(result, dict) and result.get('content_followup') is True
+                    and result.get('status') == 'resuming' and result.get('accepted') is False):
+                selected.add(message.get('tool_call_id'))
+            continue
+        if message.get('role') == 'system':
+            continue
+        original = message.get('tool_calls') or ()
+        if message.get('role') != 'assistant' or not original or selected != {c['id'] for c in original}:
+            return []
+        if any(c['function']['name'] not in visible_tools for c in original):
+            return []
+        return [{**c['function'], 'id': c['id'] + ':continued'} for c in original]
+    return []
+
+
+async def resume_from_model(runtime,prepared,blocks,calls,assistant,*,turn,model_round,build_checkpoint,
+                            selected_content=False):
     """The main model chooses affiliation; the original fenced transfer commits it."""
     from .followup import FollowupObservation,apply
     source=followup_source(runtime)
-    chosen=[c for c in calls if c['name']=='resume_task_execution']
+    chosen = calls if selected_content else [c for c in calls if c['name'] == 'resume_task_execution']
     observation=None;error_code=None
     try:
         if source is None or runtime.task_execution_state is not None:raise TaskError('TASK_FOLLOWUP_SOURCE_CHANGED')
-        if len(chosen) != 1:
+        if not selected_content and len(chosen) != 1:
             raise TaskError('TASK_FOLLOWUP_INPUT_INVALID')
-        selection = json.loads(chosen[0]['arguments'])
+        selection = {'relation': 'continue'} if selected_content else json.loads(chosen[0]['arguments'])
         if not isinstance(selection, dict) or selection.get('relation') not in ('continue', 'amend'):
             raise TaskError('TASK_FOLLOWUP_INPUT_INVALID')
         user_message = source.get('message')
@@ -642,9 +711,13 @@ async def resume_from_model(runtime,prepared,blocks,calls,assistant,*,turn,model
         error_code=str(error) if isinstance(error,TaskError) else 'TASK_FOLLOWUP_INPUT_INVALID'
     prepared.messages.append(copy.deepcopy(assistant))
     for call in calls:
-        selected=observation is not None and call['id']==chosen[0]['id']
-        result={'ok':selected,'status':'resuming' if selected else 'not_executed',
-            'instruction':'先接回真实历史任务，再根据恢复上下文决定业务调用；本批未派发任何业务操作。'}
+        selected = observation is not None and (selected_content or call['id'] == chosen[0]['id'])
+        result = {'ok': selected and not selected_content, 'status': 'resuming' if selected else 'not_executed',
+            'instruction': '先接回真实历史任务，再根据恢复上下文决定业务调用；本批未派发任何业务操作。'}
+        if selected and selected_content:
+            result.update(accepted=False, content_followup=True, instruction=(
+                '指定成果属于正在接回的原任务。本次尚未派发。恢复后对原条目使用相同content_source与原参数提交。'
+            ))
         if error_code:result['code']=error_code
         prepared.messages.append({'role':'tool','tool_call_id':call['id'],'content':json.dumps(result,ensure_ascii=False)})
         if error_code:

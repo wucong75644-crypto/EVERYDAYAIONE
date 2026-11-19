@@ -58,6 +58,22 @@ vi.mock('../SkillChatProposalCard', () => ({
   ),
 }));
 
+it.each([true, false])('renders the entire saved body alongside an image call when streaming=%s', isStreaming => {
+  const savedBody = '改换封面。\n\n说明：保留装订孔和原有材质。';
+  const message = normalizeMessage({
+    id: 'saved-image-plan', conversation_id: 'c1', role: 'assistant', status: 'completed',
+    content: JSON.stringify([
+      { type: 'tool_step', tool_name: 'generate_image', tool_call_id: 'image', status: 'completed' },
+      { type: 'text', text: savedBody, content_artifact_id: 'content-1' },
+    ]),
+  });
+  render(<MessageContentBlocks message={message} imageAssets={[]} fileBlocks={[]}
+    isStreaming={isStreaming} isRegenerating={false} textContent="" onImageClick={vi.fn()} />);
+  const savedBlocks = screen.getAllByText(/说明：保留装订孔和原有材质。/);
+  expect(savedBlocks).toHaveLength(1);
+  expect(savedBlocks[0].textContent).toBe(savedBody);
+});
+
 describe('MessageContentBlocks Skill proposals', () => {
   it('renders a proposal reference from persisted message JSON', () => {
     const message = normalizeMessage({

@@ -10,6 +10,7 @@ class TextPart(BaseModel):
 
     type: Literal["text"] = "text"
     text: str
+    content_artifact_id: Optional[str] = None
 
 
 class ImagePart(BaseModel):

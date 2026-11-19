@@ -80,7 +80,7 @@ def _build_part(block: dict[str, Any]) -> ContentPart | None:
             duration_ms=block.get("duration_ms"),
         )
     if block_type == "text":
-        return TextPart(text=block["text"])
+        return TextPart(text=block["text"], content_artifact_id=block.get("content_artifact_id"))
     if block_type == "task_progress":
         from schemas.message import TaskProgressPart
         return TaskProgressPart(**block)

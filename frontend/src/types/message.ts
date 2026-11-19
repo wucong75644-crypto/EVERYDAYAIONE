@@ -32,6 +32,7 @@ export type ContentPart =
 export interface TextPart {
   type: 'text';
   text: string;
+  content_artifact_id?: string;
 }
 
 export interface TaskProgressPart {

@@ -67,6 +67,8 @@ export default function MessageContentBlocks({
       .form_type.startsWith('scheduled_task_')
   ));
   const displayText = (rawText: string, index: number) => {
+    const part = message.content[index];
+    if (part?.type === 'text' && part.content_artifact_id) return rawText;
     const text = hasImageTool ? imagePlanText(rawText) : rawText;
     // Retain the existing filter for legacy text following scheduled-task forms.
     return index > firstScheduledTaskFormIndex
@@ -74,7 +76,7 @@ export default function MessageContentBlocks({
   };
   const lastIndex = message.content.length - 1;
   const lastPart = message.content[lastIndex];
-  const liveTextIndex = isStreaming && lastPart?.type === 'text' ? lastIndex : -1;
+  const liveTextIndex = isStreaming && lastPart?.type === 'text' && !lastPart.content_artifact_id ? lastIndex : -1;
   const liveText = liveTextIndex >= 0 ? displayText((lastPart as { text: string }).text, liveTextIndex) : '';
   const restored = streamingTextDisplayBaseline(message.content, liveTextIndex);
   const liveBaseline = restored ? { ...restored, text: displayText(restored.text, liveTextIndex) } : undefined;

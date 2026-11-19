@@ -33,6 +33,20 @@ describe('streamingSlice - thinking methods', () => {
     expect(store.getState().optimisticMessages.get('conv_1')?.[0].content).toEqual([{ type: 'text', text: '' }, block]);
   });
 
+  it('keeps saved content separate from later progress and deduplicates replay', () => {
+    const state = store.getState();
+    state.startStreaming('conv_1', 'msg_1');
+    const saved = { type: 'text' as const, content_artifact_id: 'content-1', text: '完整原文' };
+    state.appendContentBlock('conv_1', saved);
+    state.appendContentBlock('conv_1', saved);
+    state.appendStreamingContent('conv_1', '已受理');
+    state.replaceLastTextBlock('conv_1', { type: 'text', text: '已受理。' });
+    const messages = store.getState().optimisticMessages.get('conv_1');
+    expect(messages?.[0].content.filter(part => part.type === 'text' && part.text)).toEqual([
+      saved, { type: 'text', text: '已受理。' },
+    ]);
+  });
+
   describe('appendStreamingThinking', () => {
     it('should append chunk to empty thinking', () => {
       store.getState().appendStreamingThinking('conv_1', '思考');

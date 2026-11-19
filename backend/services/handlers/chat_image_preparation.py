@@ -63,7 +63,6 @@ def prepare_input(resolver,args,*,scoped,workflow,settings,composition=None,entr
         if 'content_object' in normalized['source_prompt']:
             from services.handlers.chat_input_handoff import digest
             proof=normalized['source_prompt']['content_object']
-            resolver.verify_content_object(proof)
             if digest({k:v for k,v in normalized.items() if k!='source_prompt'}) != proof['arguments_sha256']:
                 raise ValueError('CONTENT_ARGUMENT_CHANGED')
         if 'handoff' in normalized['source_prompt']:
@@ -91,9 +90,16 @@ def prepare_input(resolver,args,*,scoped,workflow,settings,composition=None,entr
                     or expected["workspace_path"]!=reference["workspace_path"]):
                 raise ValueError("ECOM_PLAN_REFERENCE_CHANGED")
     from services.handlers.image_size_requirements import resolve_size_requirement, selected_source_size
-    intent, previous = resolver.size_context()
     size_fields = {'aspect_ratio', 'mode', 'width', 'height', 'orientation'}
     source = normalized.get('source_prompt')
+    bound_specs = {}
+    if source and 'content_object' in source:
+        bound_specs = {key: normalized[key] for key in ('aspect_ratio', 'resolution', 'output_format')
+                       if key in normalized}
+        intent, previous = resolver.size_context(
+            use_previous=False, infer_attachment_canvas='aspect_ratio' not in bound_specs)
+    else:
+        intent, previous = resolver.size_context()
     if source and not size_fields.intersection(intent) and not size_fields.intersection(previous):
         selected_size = selected_source_size(normalized['prompt'])
         if selected_size:
@@ -118,7 +124,13 @@ def prepare_input(resolver,args,*,scoped,workflow,settings,composition=None,entr
             normalized, refs, intent={}, previous=locked_size)
         target_size = locked_size
     else:
+        previous.update({key: bound_specs[key] for key in ('aspect_ratio', 'resolution')
+                         if key in bound_specs})
+        if 'aspect_ratio' in bound_specs:
+            previous['mode'] = 'auto' if bound_specs['aspect_ratio'] == 'auto' else 'explicit'
         normalized, target_size = resolve_size_requirement(normalized, refs, intent=intent, previous=previous)
+        if any(normalized.get(key) != value for key, value in bound_specs.items()):
+            raise ChatImageNotAcceptedError('IMAGE_SIZE_CONFLICT', '当前规格与已保存方案不同，请先更新方案再执行。')
     if "source_task_id" in normalized:
         resolver.validate_source_task(normalized["source_task_id"])
     return normalized,refs,target_size,plan_proof
