@@ -1,8 +1,4 @@
-"""Model-proposed input mapping, host-verified sources and lossless assembly.
-
-No headings, field labels or scene classifiers determine content purpose here.
-Coverage proves accounting, not correctness of the model's semantic decisions.
-"""
+"""Decode and revalidate historical input mappings and their frozen evidence."""
 from copy import deepcopy
 import hashlib
 import json
@@ -23,62 +19,6 @@ def line_starts(text):
         offsets.append(position)
         position += len(line)
     return offsets
-
-
-def mapping_view(part):
-    """Display source coordinates once; line numbers never decide purpose."""
-    text = part['text']
-    return {**{key: value for key, value in part.items() if key not in {'text', 'line_starts'}},
-            'numbered_text': ''.join(f'{i}|{line}' for i, line in enumerate(text.splitlines(keepends=True), 1)),
-            'line_count': len(text.splitlines(keepends=True))}
-
-
-def model_schema(parameters, *, file_input=False, reserved=()):
-    targets = [name for name in parameters.get('properties', {})
-               if name not in {'chat_input', 'chat_text_source', *reserved}]
-    if file_input:
-        targets.append('chat_source_text')
-    return {'type': 'object', 'additionalProperties': False, 'required': ['sources', 'parts'],
-        'description': ('引用聊天内容执行任务时提交输入映射。sources引用完整原文part；parts逐段说明进入哪个真实参数、'
-                        '排除原因或被哪条修订覆盖，须覆盖全部原文（含空白）。每个part都必须带原文区间，包括value/exclude。'
-                        'mode、references、aspect_ratio等既有工具参数保留在chat_input外的原工具参数里；不得把无原文区间的默认参数塞进parts。'
-                        '正文用位置或行号引用，勿重抄；'
-                        'for_mapping返回numbered_text供定位，行号不是原文，first_line/last_line为1起且含首尾行。'
-                        '同一来源/版本复用已读取位置，不重复读整份方案。分析说明是否进入输入取决于本次任务，不取决于标题。'
-                        '模型负责用途判断，后台只核验来源、覆盖和参数。'
-                        '文件正文映射到chat_source_text，在code中读取；materials登记素材参数，原生工具仍核验权限和文件。'),
-        'properties': {
-            'mode': {'type': 'string', 'enum': ['exact', 'adapted'],
-                     'description': '默认exact逐字交付；仅用户要求总结、翻译、改编等转换时用adapted并说明reason'},
-            'reason': {'type': 'string', 'minLength': 1, 'maxLength': 1000},
-            'sources': {'type': 'array', 'minItems': 1, 'maxItems': 8, 'items': {
-                'type': 'object', 'additionalProperties': False,
-                'required': ['message_id', 'content_index'], 'properties': {
-                    'message_id': {'type': 'string'}, 'content_index': {'type': 'integer', 'minimum': 0},
-                    'sha256': {'type': 'string'},
-                    'context_revision': {'type': ['integer', 'null'], 'description': '读取结果的原版本；省略时由后台绑定'},
-                }}},
-            'parts': {'type': 'array', 'minItems': 1, 'maxItems': 256, 'items': {
-                'type': 'object', 'additionalProperties': False, 'required': ['source', 'action'],
-                'oneOf': [{'required': ['start', 'end']}, {'required': ['first_line', 'last_line']}, {'required': ['text_exact']}],
-                'properties': {
-                    'source': {'type': 'integer', 'minimum': 0},
-                    'start': {'type': 'integer', 'minimum': 0, 'description': '原文字符起点，0起；与end组成左闭右开区间'},
-                    'end': {'type': 'integer', 'minimum': 1},
-                    'first_line': {'type': 'integer', 'minimum': 1}, 'last_line': {'type': 'integer', 'minimum': 1},
-                    'text_exact': {'type': 'string'},
-                    'action': {'type': 'string', 'enum': ['text', 'value', 'exclude', 'superseded']},
-                    'target': {'type': 'string', 'enum': targets},
-                    'value': {}, 'reason': {'type': 'string', 'minLength': 1, 'maxLength': 1000},
-                    'separator': {'type': 'string', 'enum': ['', '\n', '\n\n'],
-                                  'description': '同一参数多段text间的连接符，默认两个换行；保留代码/原格式时可用空串'},
-                    'superseded_by': {'type': 'integer', 'minimum': 0},
-                }}},
-            'materials': {'type': 'array', 'maxItems': 32, 'items': {
-                'type': 'object', 'additionalProperties': False, 'required': ['target', 'value', 'reason'],
-                'properties': {'target': {'type': 'string', 'enum': targets}, 'value': {},
-                               'reason': {'type': 'string', 'minLength': 1, 'maxLength': 1000}}}},
-        }}
 
 
 def _range(text, part):
@@ -266,3 +206,67 @@ def legacy_mapping(source, document, *, mode='exact', target='prompt', instructi
             from services.handlers.chat_content_bundle import adapted_input
             part.update(action='value', value=adapted_input(text, instruction), reason=mapping['reason'])
     return mapping
+
+
+def rebind_call(db, task_id, context, name, arguments, source):
+    """Revalidate an existing checkpoint only; no new model locator conversion."""
+    if source.get('kind') == 'input_mapping':
+        return rebind_mapping(db,task_id,context,name,arguments,source['mapping'])[0]
+    document=_read_checkpoint_document(db,task_id,context,source)
+    original=dict(arguments)
+    instruction=original.pop('prompt',None) if name!='code_execute' else None
+    mapping=legacy_mapping(source,document,mode=source.get('mode','exact'),
+        target='chat_source_text' if name=='code_execute' else 'prompt',instruction=instruction)
+    return rebind_mapping(db,task_id,context,name,original,mapping)[0]
+
+
+def _read_checkpoint_document(db, task_id, context, source):
+    from services.handlers.chat.content_tools import source_text
+
+    history = source_text(db, task_id, context, {'message_id': source['message_id'], '_full': True})
+    row = next((item for item in history['messages'] if item['content_index'] == source['content_index']), None)
+    if row is None or row.get('requires_explicit_read'):
+        raise ValueError('CHAT_INPUT_SOURCE_UNAVAILABLE')
+    return row
+
+
+def rebind_mapping(db, task_id, context, name, arguments, mapping):
+    from services.handlers.chat.content_tools import inject_source_code
+    from services.tools.catalog import build_tool_catalog
+    from services.tools.spec import Exposure
+    from services.tools.argument_validation import _issues
+    spec = build_tool_catalog().require(name)
+    schema = spec.to_schema()
+    if spec.exposure is not Exposure.PUBLIC or not schema:
+        raise ValueError('CHAT_INPUT_TOOL_UNAVAILABLE')
+    parameters = schema['function']['parameters']
+    outputs, proof = assemble(mapping, lambda source: _read_checkpoint_document(db, task_id, context, source),
+                              parameters, file_input=name == 'code_execute',
+                              reserved=('source_prompt', 'plan_source') if name == 'generate_image' else ())
+    reserved = {'chat_input', 'chat_text_source'} | ({'source_prompt', 'plan_source'} if name == 'generate_image' else set())
+    if reserved.intersection(arguments):
+        raise ValueError('CHAT_INPUT_SOURCE_CONFLICT')
+    result = dict(arguments)
+    document_text = outputs.pop('chat_source_text', None)
+    for target, value in outputs.items():
+        if target in result and digest(result[target]) != digest(value):
+            raise ValueError('CHAT_INPUT_TARGET_CONFLICT')
+        result[target] = value
+    if document_text is not None:
+        if name != 'code_execute' or not isinstance(result.get('code'), str):
+            raise ValueError('CHAT_INPUT_FILE_CODE_REQUIRED')
+        # Reuse the same literal injection as legacy source binding. The
+        # mapped text is data, never substituted into model-authored code.
+        result['code'] = inject_source_code(result['code'], document_text)
+    issues = _issues(result, parameters)
+    if issues:
+        raise ValueError('CHAT_INPUT_ARGUMENTS_INVALID:' + json.dumps(issues, ensure_ascii=False))
+    proof = {**proof, 'tool': name}
+    if name == 'generate_image':
+        result['source_prompt'] = {'handoff': proof}
+    bound_text = document_text if document_text is not None else outputs.get('prompt', '')
+    bound_text = bound_text if isinstance(bound_text, str) else ''
+    source = {'kind': 'input_mapping', 'mapping': proof['mapping'], 'proof': proof,
+              'input_arguments': deepcopy(arguments),
+              'mode': proof['mapping']['mode'], 'text': bound_text, 'sha256': text_hash(bound_text)}
+    return result, source

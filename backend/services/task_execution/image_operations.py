@@ -46,8 +46,8 @@ class ImageOperations:
         if not hasattr(runtime, 'task_operation_lock'):
             runtime.task_operation_lock = asyncio.Lock()
 
-    def lifecycle(self, handler, context, call_id):
-        return ImageOperationLifecycle(handler, context, self, self.bindings[call_id])
+    def lifecycle(self, handler, context, call_id, *, recovery_only=False):
+        return ImageOperationLifecycle(handler, context, self, self.bindings[call_id], recovery_only=recovery_only)
 
     def adopt(self, write):
         if write.state != self.runtime.task_execution_state:
@@ -57,8 +57,8 @@ class ImageOperations:
 
 
 class ImageOperationLifecycle(ActorToolLifecycle):
-    def __init__(self, handler, context, coordinator, binding):
-        super().__init__(handler, context)
+    def __init__(self, handler, context, coordinator, binding, *, recovery_only=False):
+        super().__init__(handler, context, recovery_only=recovery_only)
         self.coordinator, self.binding = coordinator, binding
         self.operation_id = None
 
@@ -110,7 +110,7 @@ class ImageOperationLifecycle(ActorToolLifecycle):
             identity = digest([str(runtime.task_execution_state.root_task_id), binding.effect_key, binding.effect_version])
             existing = next((op for op in runtime.task_execution_state.operations if op.id == identity), None)
             if existing is None or existing.status == 'failed_before_dispatch':
-                if (existing is not None and str(existing.owner_task_id) == str(self.context.task_id)
+                if self.recovery_only or (existing is not None and str(existing.owner_task_id) == str(self.context.task_id)
                         and existing.invocation_id == call.call_id):
                     return await super().replay(call, context, decision)
                 return None  # Fresh/repaired calls still need current approval.

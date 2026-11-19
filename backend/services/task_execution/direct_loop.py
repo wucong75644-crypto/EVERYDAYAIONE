@@ -47,15 +47,6 @@ class SaveImagePlan(Fact):
     document: ImageMethodDocument
 
 
-IMAGE_PLAN_SCHEMA = {'type': 'function', 'function': {
-    'name': SAVE_IMAGE_PLAN,
-    'description': '保存当前方法编写的完整逐图方案。image_count 是用户要求的张数。'
-        '只保存分析和提示词，不提交图片。根据用户要求交付文字，或在下一轮用已保存的提示词及比例提交图片。'
-        '续做时先读取原方案，只执行所需序号。不要为同一请求重复规划。',
-    'parameters': SaveImagePlan.model_json_schema(),
-}}
-
-
 def active_image_methods(runtime):
     skills = getattr(runtime, 'skill_runtime', None)
     if skills is None:
@@ -116,9 +107,10 @@ def save_image_plan(runtime, call, registry):
     return complete_step(state, step.id, [artifact.id], owner_task_id=owner), artifact
 
 
-def stage_image_plan_batch(runtime, prepared, blocks, calls, assistant, registry):
-    """Local text save is a barrier before any image submission."""
-    prepared.messages.append(copy.deepcopy(assistant))
+def stage_image_plan_batch(runtime, prepared, blocks, calls, assistant, registry, *, assistant_already_present=False):
+    """Close a pending historical plan save without replaying the assistant message."""
+    if not assistant_already_present:
+        prepared.messages.append(copy.deepcopy(assistant))
     candidate = runtime.task_execution_state
     for call in calls:
         result = {'ok': False, 'code': 'TASK_IMAGE_PLAN_SAVE_BARRIER'}
@@ -166,7 +158,7 @@ def existing_image_source_schema(tool):
     return tool
 
 
-def image_plan_item(state, skills_profiles, arguments, *, artifact_id=None):
+def image_plan_item(state, skills_profiles, arguments, *, artifact_id=None, server_image_plan=False):
     plans = saved_image_plans(state)
     source=arguments.get('source_prompt',{})
     if isinstance(source,dict) and 'content_object' in source:
@@ -176,6 +168,8 @@ def image_plan_item(state, skills_profiles, arguments, *, artifact_id=None):
         if artifact_id is not None and artifact.id!=artifact_id:raise TaskError('TASK_IMAGE_ARGUMENTS_NOT_PLANNED')
         if arguments.get('prompt')!=item.body:raise TaskError('CONTENT_ARGUMENT_CHANGED')
         return {'artifact_id':artifact.id,'image_item_index':reference.item_index} if artifact.image_method else None
+    if artifact_id is None and server_image_plan and arguments.get('plan_source'):
+        return None  # The native server workflow verifies its separate plan and receipt.
     if artifact_id is None and (not plans and not skills_profiles
             or not plans and (arguments.get('plan_source') or arguments.get('source_prompt'))):
         # These references are verified independently by native image preparation.
@@ -219,7 +213,7 @@ def restore_plan(runtime,payload):
         runtime.task_execution_state=update_working_plan(state,runtime.task_direct_plan.model_dump(mode='json'))
 
 
-def context_message(runtime,*,state=None):
+def context_message(runtime,*,state=None,content_output=False):
     state=runtime.task_execution_state if state is None else state
     bootstrap=runtime.task_bootstrap
     plan=getattr(runtime,'task_direct_plan',None) or (state.working_plan if state else None)
@@ -231,23 +225,21 @@ def context_message(runtime,*,state=None):
     if source is not None and state is None:
         facts['previous_task']={k:copy.deepcopy(source['state'].get(k)) for k in ('root_task_id','original_goal','status','operations','artifacts')}
         for artifact in facts['previous_task'].get('artifacts',[]):artifact.pop('inline_text',None)
-    if active_image_profiles(runtime):
-        facts['image_method_instruction']='按原方法完成创作；每条保存一份包含全部要求和限制的完整最终原文body，使用save_task_text，素材与规格单独绑定。执行时只选择content_source，不再使用save_task_image_plan或拼接提示词。'
-    from .content_objects import TAG, catalog
-    facts['content_objects'] = catalog(state, include_digests=False)
+    from .content_objects import TAG, catalog, output_instructions
+    facts['content_objects'] = catalog(state, for_model=True)
     if source is not None and state is None:
         source_state = TaskState.model_validate(source['state'])
-        facts['previous_content_objects'] = catalog(source_state, include_digests=False)
+        facts['previous_content_objects'] = catalog(source_state, for_model=True)
     if state is not None:
         facts.update(revision=state.revision,status=state.status,
             operations=[v.model_dump(mode='json') for v in state.operations],
             artifacts=[v.model_dump(mode='json',exclude={'inline_text'}) for v in state.artifacts],
             completed_call_steps=[v.step_id for v in state.results])
     artifacts = facts['previous_task']['artifacts'] if 'previous_task' in facts else facts.get('artifacts', ())
-    for artifact in artifacts:
-        if TAG in artifact.get('validations', ()):
-            artifact.pop('sha256', None)
-    return {'role':'system','content':PREFIX+INSTRUCTIONS+'\n'+json.dumps(facts,ensure_ascii=False)}
+    if isinstance(artifacts, list):
+        artifacts[:] = [artifact for artifact in artifacts if TAG not in artifact.get('validations', ())]
+    output = '\n' + output_instructions(runtime) if content_output else ''
+    return {'role':'system','content':PREFIX+INSTRUCTIONS+output+'\n'+json.dumps(facts,ensure_ascii=False)}
 
 
 def schemas(runtime,controller=None):
@@ -327,13 +319,11 @@ def stage_plan_calls(runtime,prepared,blocks,calls,assistant):
     return [c for c in calls if c['name']!='update_task_plan'],True
 
 
-def stage_native_calls(runtime,prepared,calls,registry):
+def stage_native_calls(runtime,prepared,calls,registry,*,server_image_plan=False):
     candidate=runtime.task_execution_state
     errors={}
     for call in calls:
-        from services.handlers.chat.content_tools import enabled as content_enabled
-        if call['name'] == 'image_agent' and (content_enabled(runtime,prepared.execution_context)
-                or active_image_profiles(runtime) or saved_image_plans(candidate)):
+        if call['name'] == 'image_agent' and (active_image_profiles(runtime) or saved_image_plans(candidate)):
             errors[call['id']] = ('CONTENT_INPUT_PATH_RETIRED', '旧图片编排入口已停用；请保存完整原文并使用generate_image的content_source提交。')
             continue
         if call['name'] not in NATIVE_TOOLS:continue
@@ -344,7 +334,7 @@ def stage_native_calls(runtime,prepared,calls,registry):
                 from services.tools.argument_validation import validate_model_image_arguments
                 validate_model_image_arguments(registry.require(call['name']),args)
                 try:
-                    image_plan_item(candidate, active_image_profiles(runtime), args)
+                    image_plan_item(candidate, active_image_profiles(runtime), args, server_image_plan=server_image_plan)
                 except TaskError as error:
                     errors[call['id']] = (str(error), '请先保存或读取实际逐图方案，再使用其中的提示词和比例。')
                     continue
@@ -500,7 +490,7 @@ async def verify_image_method(runtime, state, artifact_id):
         raise TaskError('TASK_IMAGE_METHOD_UNAVAILABLE') from None
 
 
-async def bind_image_recipes(runtime,calls,registry):
+async def bind_image_recipes(runtime,calls,registry,*,server_image_plan=False):
     """Freeze actual resolved inputs, without interpreting or approving prose."""
     state=runtime.task_execution_state
     if state is None:return state,{}
@@ -521,7 +511,7 @@ async def bind_image_recipes(runtime,calls,registry):
             binding=bind_image_call(state,ToolCall(raw['id'],'generate_image',args),registry)
             existing = next((a for a in state.artifacts if a.id == binding.planning_artifact_id), None)
             handoff = (json.loads(existing.inline_text).get('method_handoff') if existing
-                       else image_plan_item(state, active_image_profiles(runtime), args))
+                       else image_plan_item(state, active_image_profiles(runtime), args, server_image_plan=server_image_plan))
             if handoff and handoff['artifact_id'] not in verified:
                 await verify_image_method(runtime, state, handoff['artifact_id'])
                 verified.add(handoff['artifact_id'])
@@ -627,8 +617,8 @@ def content_followup_state(runtime):
     return None
 
 
-def can_resume_content_calls(runtime, calls):
-    from services.handlers.chat.content_tools import INPUT_TOOLS
+def can_resume_content_calls(runtime, calls, *, server_image_plan=False):
+    from services.handlers.chat.content_tools import INPUT_TOOLS, validate_model_input
     from .content_objects import SAVE, SaveContent, compile_input, is_current, load
 
     revision = len(calls) == 1 and calls[0]['name'] == SAVE
@@ -647,6 +637,7 @@ def can_resume_content_calls(runtime, calls):
             return len(indices) == len(draft.updates) and max(indices) <= len(document.items)
         for call in calls:
             args = json.loads(call['arguments'])
+            validate_model_input(call['name'], args, server_image_plan=server_image_plan)
             if not isinstance(args, dict) or 'content_source' not in args:
                 return False
             reference = args.pop('content_source')

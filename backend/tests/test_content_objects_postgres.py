@@ -181,12 +181,14 @@ async def test_direct_content_selection_adopts_saved_task_before_business_dispat
 @pytest.mark.asyncio
 @pytest.mark.parametrize('scenario', [
     'text-to-image', 'image-to-image', 'recorded-first', 'recorded-fifth', 'recorded-write-once', 'recorded-retired',
+    'recorded-third-output', 'new-third-output',
 ])
 async def test_chat_executes_from_registration_to_page_receipt(content_db, monkeypatch, tmp_path, scenario):
     import base64
     import hashlib
     import json
     import os
+    import re
     from pathlib import Path
     from types import SimpleNamespace
     from unittest.mock import AsyncMock, Mock
@@ -215,7 +217,7 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
     from services.tools.catalog import build_tool_catalog
     from services.tools.dispatcher import _dispatch_call_id
     from services.tools.policy import ToolPolicy
-    from tests.test_content_objects import run_content_loop
+    from tests.test_content_objects import model_content_output, run_content_loop
     from tests.test_task_execution_operations_postgres import typed_store
 
     f = seed(content_db)
@@ -233,16 +235,52 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
 
     with_original = scenario != 'text-to-image'
     recorded = scenario.startswith('recorded-')
+    recorded_output = scenario == 'recorded-third-output'
+    new_output = scenario == 'new-third-output'
+    automatic_output = recorded_output or new_output
+    followup = recorded or automatic_output
     fifth = scenario == 'recorded-fifth'
     write_once = scenario == 'recorded-write-once'
     retired = scenario == 'recorded-retired'
-    item_index = 2 if write_once else 5 if fifth else 1
+    item_index = 3 if automatic_output else 2 if write_once else 5 if fifth else 1
     body = '  纸品封面，保留细纹理。\n避免改变装订孔及商标。  '
-    ratio = '3:4' if scenario == 'image-to-image' else '1:1'
+    ratio = '3:4' if scenario == 'image-to-image' or new_output else '1:1'
+    resolution = '2K' if new_output else '1K'
     question = '参考这张原图修改封面，只生成一张' if with_original else '帮我直接生成一张纸品封面图'
     first_document = None
     first_arguments = None
-    if write_once:
+    if recorded_output:
+        evidence = os.getenv('CHAT_THIRD_PLAN_RECORD')
+        if not evidence:
+            pytest.skip('Private third-plan conversation and original image required')
+        capture = Path(evidence)
+        source_message, displayed, followup_message, failed = json.loads((capture / 'record.json').read_text())['messages']
+        question = json.loads(source_message['content'])[0]['text']
+        later_question = json.loads(followup_message['content'])[0]['text']
+        visible = next(p['text'] for p in json.loads(displayed['content']) if p['type'] == 'text')
+        # Fixture only: feed the old prose using the new explicit output boundaries.
+        captures = list(re.finditer(r'^\*\*(新品 \d+[^\n]+)\*\*\n+\x60\x60\x60text\n(.*?)\n\x60\x60\x60', visible, re.S | re.M))
+        assert len(captures) == 5
+        output_items = [{'title': match[1], 'display_prefix': f'**{match[1]}**', 'body': match[2]} for match in captures]
+        first_output = model_content_output('新品提示词', output_items, introduction=visible[:captures[0].start()].rstrip())
+        body = output_items[2]['body']
+        checkpoint = json.loads((capture / 'state.json').read_text())['checkpoints'][1]['state']
+        original_artifact = json.loads(checkpoint['_task_execution']['artifacts'][0]['inline_text'])
+        assert body == original_artifact['document']['items'][0]['body']
+        assert original_artifact['document']['items'][0]['options']['aspect_ratio'] == ratio
+        assert 'CONTENT_ARGUMENT_CONFLICT' in failed['content']
+        original = (capture / 'original.png').read_bytes()
+    elif new_output:
+        question = '参考上传图写五套产品封面提示词。每条输出比例为3:4，输出分辨率为2K。'
+        later_question = '用第三条和原图生成一张图片。'
+        body = '  保留纸品的标识和边缘。\n输出比例：3:4\n输出分辨率：2K\n不要添加水印。  '
+        output_items = [{'title': f'封面方向{i}', 'body': body if i == 3 else f'第{i}套独立正文。'} for i in range(1, 6)]
+        first_output = model_content_output('五套封面', output_items)
+        from io import BytesIO
+        fixture = BytesIO()
+        Image.new('RGB', (1024, 1024), 'white').save(fixture, format='PNG')
+        original = fixture.getvalue()
+    elif write_once:
         evidence = os.getenv('CHAT_CONTENT_ONE_SAVE_DIR')
         if not evidence:
             pytest.skip('Private latest prompt request required')
@@ -301,15 +339,18 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
     input_sha = None
     file_path = 'original/product.png'
     if with_original:
-        evidence = os.getenv('REAL_INPUT_RETEST_DIR') if fifth or write_once else os.getenv('CHAT_CONTENT_DUPLICATE_RECORD')
-        if not evidence:
-            pytest.skip('Original image for private replay is unavailable')
-        if fifth or write_once:
-            originals = json.loads((Path(evidence) / 'live-originals.json').read_text())['originals']
-            source = next(asset for asset in originals if 'IMG_20261110_131009_f527d6_001.png' in asset['workspace_path'])
-        else:
-            source = json.loads(Path(evidence).read_text())['original']
-        original = base64.b64decode(source['raw_b64'])
+        source_name = 'product.png'
+        if not automatic_output:
+            evidence = os.getenv('REAL_INPUT_RETEST_DIR') if fifth or write_once else os.getenv('CHAT_CONTENT_DUPLICATE_RECORD')
+            if not evidence:
+                pytest.skip('Original image for private replay is unavailable')
+            if fifth or write_once:
+                originals = json.loads((Path(evidence) / 'live-originals.json').read_text())['originals']
+                source = next(asset for asset in originals if 'IMG_20261110_131009_f527d6_001.png' in asset['workspace_path'])
+            else:
+                source = json.loads(Path(evidence).read_text())['original']
+            original = base64.b64decode(source['raw_b64'])
+            source_name = Path(source.get('workspace_path', file_path)).name
         input_sha = hashlib.sha256(original).hexdigest()
         if write_once:
             assert source['workspace_path'] == record['attachment']['workspace_path']
@@ -317,8 +358,7 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
         original_path = FileExecutor(str(tmp_path), f['user'], None).resolve_safe_path(file_path)
         original_path.parent.mkdir(parents=True)
         original_path.write_bytes(original)
-        parts.append(ImagePart(url='https://local.invalid/'+file_path, workspace_path=file_path,
-                               name=Path(source.get('workspace_path', file_path)).name))
+        parts.append(ImagePart(url='https://local.invalid/'+file_path, workspace_path=file_path, name=source_name))
         materials.append({'usage':'input', 'role':'原图', 'reference':{'message_id':f['message'], 'content_index':1}})
     original_message = f['message']
     with psycopg.connect(content_db) as connection:
@@ -351,18 +391,18 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
     def tool_chunk(name, *, arguments):
         return StreamChunk(tool_calls=[ToolCallDelta(index=0,id=name,name=name,arguments_delta=arguments)])
 
-    if recorded:
-        if write_once:
+    if followup:
+        if write_once or automatic_output:
             from services.prompt_builder.layers.user_layer import UserLayer, UserMessageInput
             from services.handlers.chat_context.image_sources import image_sources
 
             discovered, = image_sources({'id': original_message, 'role': 'user',
                                          'content': [part.model_dump(mode='json') for part in parts]},
                                         visible_indices=[1])
-            discovered['canvas'] = {'width': 1024, 'height': 1024, 'aspect_ratio': ratio}
+            discovered['canvas'] = {'width': 1024, 'height': 1024, 'aspect_ratio': '1:1'}
             p.messages = [UserLayer.render(UserMessageInput(
                 question, image_sources=[discovered], image_urls=[parts[1].url])).user_message]
-        else:
+        elif not automatic_output:
             for item in first_document['items']:
                 if fifth:
                     item['materials'] = materials
@@ -382,19 +422,31 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
                 parameters = next(tool['function']['parameters'] for tool in kwargs['tools']
                                   if tool['function']['name'] == co.SAVE)
                 assert parameters['$defs']['ContentItem']['required'] == ['title', 'body']
-            yield tool_chunk(co.SAVE, arguments=first_arguments)
+            if automatic_output:
+                assert co.OUTPUT_START in str(kwargs['messages'][-1]['content'])
+                assert any(part.get('type') == 'image_url' for message in kwargs['messages']
+                           if message['role'] == 'user' and isinstance(message['content'], list)
+                           for part in message['content'])
+                for index in range(0, len(first_output), 101):
+                    yield StreamChunk(content=first_output[index:index + 101])
+                yield StreamChunk(finish_reason='stop')
+            else:
+                yield tool_chunk(co.SAVE, arguments=first_arguments)
 
         registered_sink, registered_blocks, _ = await run_content_loop(r, p, h, q, register)
         saved_block, = [block for block in registered_blocks if block['type'] == 'text']
         assert saved_block['text'].count(body) == 1 and not registered_sink.text
         assert saved_block['content_delivery_final'] and registration_rounds == 1
-        assert json.loads(p.messages[-1]['content'])['ok'] is True
+        if automatic_output:
+            assert p.messages[-1] == {'role': 'assistant', 'content': saved_block['text']}
+        else:
+            assert json.loads(p.messages[-1]['content'])['ok'] is True
         h._execute_tool_calls.assert_not_awaited()
         row, = co.catalog(r.task_execution_state)
         selection = ref(row, item_index)
-        if retired or write_once:
+        if retired or write_once or automatic_output:
             del selection['sha256']
-        if write_once:
+        if write_once or automatic_output:
             from services.handlers.chat.outcome_builder import build_content_parts
 
             artifact, saved_doc, saved_item = co.load(r.task_execution_state, selection)
@@ -405,8 +457,12 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
             delivered, = [part for part in build_content_parts(registered_blocks, fallback_text='') if part.type == 'text']
             assert delivered.content_artifact_id == artifact.id and delivered.text == saved_block['text']
             source, = saved.source_images
-            assert source.name == record['attachment']['name']
+            assert source.name == source_name
             assert source.reference.model_dump(exclude_none=True) == {'message_id': original_message, 'content_index': 1}
+            if automatic_output:
+                assert [i.body for i in saved_doc.items] == [i['body'] for i in output_items]
+                assert all(saved_block['text'].count(i['body']) == 1 for i in output_items)
+                assert co.OUTPUT_START not in saved_block['text']
             selection['source_image_indices'] = [1]
         old_task_id = f['task']
         _old, f, previous, _obs, _merged = new_turn(content_db, old=f, text=later_question)
@@ -424,7 +480,7 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
             selector = tool['parameters']['properties']['content_source']
             assert selector['required'] == ['artifact_id','item_index'] and 'sha256' not in selector['properties']
             assert 'activate_skill' not in {tool['function']['name'] for tool in kwargs['tools']}
-            if write_once:
+            if write_once or automatic_output:
                 facts = json.loads(kwargs['messages'][-1]['content'].split('\n')[-1])
                 offered, = facts['previous_content_objects']
                 assert offered['source_images'] == [{'index': 1, 'name': source.name}]
@@ -463,7 +519,7 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
         assert native['prompt'] == body
         if 'aspect_ratio' in native:
             assert native['aspect_ratio'] == ratio
-        if recorded:
+        if followup:
             saved_source = native['source_prompt']['content_object']['source']
             assert saved_source == {**selection, 'sha256': row['sha256']}
             assert raw['id'].endswith(':continued')
@@ -506,7 +562,7 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
     async def model(**kwargs):
         nonlocal seen
         seen += 1
-        if recorded:
+        if followup:
             assert receipts and seen == 1, 'A checked selection should resume before asking the model again'
             yield StreamChunk(content='图片任务已受理。')
         elif seen == 1:
@@ -525,7 +581,7 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
 
     try:
         sink, blocks, _ = await run_content_loop(r, p, h, q, model)
-        assert seen == (1 if recorded else 3) and len(receipts) == 1
+        assert seen == (1 if followup else 3) and len(receipts) == 1, blocks
         assert body not in sink.text and not any(body in block.get('text','') for block in blocks)
         receipt = receipts[0]
         assert receipt['accepted'] is True and receipt['completed'] is False
@@ -538,10 +594,10 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
         assert snapshot['prompt_sha256'] == hashlib.sha256(body.encode()).hexdigest()
         assert [(x['workspace_path'],x['content_sha256']) for x in snapshot['references']] == (
             [(file_path, input_sha)] if with_original else [])
-        assert (snapshot['aspect_ratio'],snapshot['resolution'],snapshot['output_format']) == (ratio,'1K','png')
+        assert (snapshot['aspect_ratio'],snapshot['resolution'],snapshot['output_format']) == (ratio,resolution,'png')
         assert snapshot['origin']['input_message_id'] == f['message']
         if with_original:
-            assert snapshot['references'][0]['width'] == snapshot['references'][0]['height'] == (1024 if fifth or write_once else 1254)
+            assert snapshot['references'][0]['width'] == snapshot['references'][0]['height'] == (1024 if fifth or write_once or automatic_output else 1254)
 
         requests = []
         external_id = 'local-' + str(uuid4())
@@ -551,6 +607,8 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
             serialized = json.loads(request.content)['input']
             assert serialized['prompt'] == body
             assert serialized.get('aspect_ratio', serialized.get('image_size')) == ratio
+            if automatic_output:
+                assert serialized['resolution'] == resolution
             assert (['https://local.invalid/'+file_path] in serialized.values()) == with_original
             requests.append(serialized)
             return httpx.Response(200, json={'code':200, 'msg':'success', 'data':{'taskId':external_id}})

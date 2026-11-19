@@ -12,9 +12,10 @@ async def test_input_mapping_preserves_native_file_resolution_and_confirmation(f
     target = create('mapped.csv')
     original = {'files': 'mapped.csv'}
     executor._chat_source_bindings = {'mapped-file': (original, {'kind': 'input_mapping'}, original)}
+    executor._task_recovery_only = True
     # Source mapping is validated by its own loop tests; this boundary verifies
     # cooperation with native filename -> canonical path conversion.
-    monkeypatch.setattr('services.handlers.chat.content_tools.bind_call',
+    monkeypatch.setattr('services.handlers.chat_input_handoff.rebind_call',
                         lambda *_: {'files': 'different.csv'} if changed else dict(original))
     result = await executor.tool_runtime.execute('file_delete', original, call_id='mapped-file')
     if changed:

@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import pytest
 
-from services.handlers.chat_input_handoff import assemble, check_outputs, digest, line_starts
+from services.handlers.chat_input_handoff import assemble, check_outputs, digest, line_starts, rebind_call
 from services.handlers.chat import content_tools
 from services.handlers.chat_content_bundle import bundle, verify
 from services.handlers.chat_image_request import freeze_image_request, verify_frozen_request
@@ -202,7 +202,7 @@ async def test_fresh_legacy_mapping_is_rejected_before_dispatch(monkeypatch, moc
                 assert args[target] == '正文及约束\n'
             assert 'chat_input' not in args
             original_args, source, expected = kwargs['chat_source_bindings'][raw['id']]
-            assert content_tools.bind_call(mock_db, request.task_id, prepared.execution_context, tool, original_args, source) == expected
+            assert rebind_call(mock_db, request.task_id, prepared.execution_context, tool, original_args, source) == expected
             result.append((raw, AgentResult('本地替身，无供应商调用'), False, '本地替身'))
         return result
     handler._execute_tool_calls.side_effect = accept
@@ -235,11 +235,27 @@ def test_actual_model_schema_exposes_one_content_reference_path():
         properties=schema['function']['parameters']['properties']
         assert not {'chat_input','chat_text_source','source_prompt'}.intersection(properties)
         assert ('content_source' in properties)==(name in content_tools.INPUT_TOOLS)
+        if name in ('generate_image', 'generate_video'):
+            description = schema['function']['description']
+            assert 'content_source' in description
+            assert all(field not in description for field in ('prompt', 'references', 'get_conversation_context'))
+            assert 'plan_source' not in properties and 'plan_source' not in description
         if name=='generate_video':
             assert not validate_tool_args(name,{'content_source':{'artifact_id':'saved','sha256':'a'*64,'item_index':2}},[schema])[1]
     web=content_tools.model_tools([build_capability_catalog().require('web_search').to_schema()])
     assert validate_tool_args('web_search',{},web)[1]
     assert not validate_tool_args('web_search',{'query':'普通新查询'},web)[1]
+
+
+def test_server_planner_schema_exposes_only_its_bound_plan_step():
+    from services.tools.catalog import build_capability_catalog
+
+    native = build_capability_catalog().require('generate_image').to_schema()
+    server, = content_tools.model_tools([native], server_image_plan=True, selectable_source_images=True)
+    parameters = server['function']['parameters']
+    assert set(parameters['properties']) == {'plan_source'} and parameters['required'] == ['plan_source']
+    assert 'content_source' not in server['function']['description']
+    assert {'mode', 'prompt', 'plan_source'} <= set(native['function']['parameters']['properties'])
 
 
 def test_coverage_validation_checks_items_after_the_seventeenth():
@@ -257,10 +273,9 @@ def test_legacy_whole_part_uses_common_mapping_without_losing_original(monkeypat
     source = {'message_id': str(uuid4()), 'content_index': 0, 'text': text, 'mode': mode, 'bundle': proof}
     document = {'text': text, 'context_revision': 1, 'content_index': 0}
     monkeypatch.setattr(content_tools, 'source_text', lambda *_: {'messages': [document]})
-    monkeypatch.setattr(content_tools, 'read_document', lambda *_: document)
     args = {'code': 'body = chat_source_text', 'description': '本地文件'} if tool == 'code_execute' else {'prompt': '改成春天风格'}
     if tool == 'generate_image': args['mode'] = 'text_to_image'
-    result = content_tools.bind_call(None, None, None, tool, args, source)
+    result = rebind_call(None, None, None, tool, args, source)
     if tool == 'code_execute':
         namespace = {}; exec(result['code'], namespace)
         assert namespace['body'] == text

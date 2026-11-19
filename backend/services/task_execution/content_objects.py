@@ -2,6 +2,7 @@
 from __future__ import annotations
 import hashlib
 import json
+import re
 from typing import Annotated, Any, Literal
 from uuid import UUID
 from pydantic import Field, field_validator, model_serializer, model_validator
@@ -16,6 +17,13 @@ PRESENTATION_INCOMPLETE = 'CONTENT_PRESENTATION_INCOMPLETE'
 SAVE_FAILED_TEXT = '这次没能保存完整原文，尚未交付方案。请让我重新整理后再执行。'
 TAG = 'content.object.v2'
 PROTOCOL = 'content-objects-v2'
+OUTPUT_START = '<content-delivery>'
+OUTPUT_END = '</content-delivery>'
+OUTPUT_ITEM = '<content-item>'
+OUTPUT_BODY = '<content-body>'
+OUTPUT_MARKERS = re.compile(
+    rf'(?m)^({OUTPUT_START}|{OUTPUT_END}|{OUTPUT_ITEM}|{OUTPUT_BODY})[ \t]*(?:\r?\n|\Z)'
+)
 
 class ContentReference(Fact):
     artifact_id: Key
@@ -81,6 +89,63 @@ class ContentDocument(Presentation):
     title: str = Field(min_length=1, max_length=300)
     notes: str = Field(default='', max_length=8000)
     items: tuple[ContentItem, ...] = Field(min_length=1, max_length=100)
+
+
+def is_content_output(text):
+    return text.lstrip().startswith(OUTPUT_START)
+
+
+def _without_boundary_newline(text):
+    return text.removesuffix('\r\n') if text.endswith('\r\n') else text.removesuffix('\n')
+
+
+def _output_heading(text):
+    title, _, prefix = _without_boundary_newline(text).partition('\n')
+    return {'title': title.strip(), **({'display_prefix': prefix} if prefix.strip() else {})}
+
+
+def document_from_output(text, *, references=''):
+    """Use only the author's explicit boundaries, preserving the body verbatim."""
+    parts = OUTPUT_MARKERS.split(text.lstrip())
+    if (len(parts) < 9 or parts[:2] != ['', OUTPUT_START] or parts[-2] != OUTPUT_END
+            or parts[-1].strip() or (len(parts) - 5) % 4):
+        raise TaskError(INVALID_OBJECT)
+    items = []
+    for i in range(3, len(parts) - 2, 4):
+        item, header, body_marker, body = parts[i:i + 4]
+        if item != OUTPUT_ITEM or body_marker != OUTPUT_BODY:
+            raise TaskError(INVALID_OBJECT)
+        items.append({**_output_heading(header), 'body': _without_boundary_newline(body)})
+    heading = _output_heading(parts[2])
+    if references:
+        prefix = heading.get('display_prefix') or f"# {heading['title']}"
+        combined = prefix + references
+        # The existing activity block also carries every source URL.
+        if len(combined) <= 12000:
+            heading['display_prefix'] = combined
+    return ContentDocument.model_validate({**heading, 'items': items})
+
+
+def output_instructions(runtime):
+    from .direct_loop import active_image_methods
+    from .methods import REFERENCE_PROMPTS_PROFILE
+
+    instruction = (
+        '只交付新写的可复用方案、提示词、脚本等内容时，直接按以下正文格式输出。'
+        '后台自动登记并显示同一份稿件。普通回答照常写。标记各占一行，开头和结尾外不写内容，不加代码围栏。'
+        '以 <content-delivery> 开头，下一行写总标题，之后可写整份稿件的可见引言。'
+        '每条以 <content-item> 起一行，下一行写条目标题，然后可写该条仅供展示的 Markdown。'
+        '另起一行写 <content-body>，后面逐字写该条完整原文，包含最终要求和限制。'
+        '多条重复 <content-item>、标题和 <content-body>，全篇以 </content-delivery> 结束。'
+        '保留用户要求的输出规格。修订既有成果或本轮还要执行时，使用 save_task_text。'
+    )
+    if any(method[0] == REFERENCE_PROMPTS_PROFILE for method in active_image_methods(runtime).values()):
+        instruction += (
+            '保留写作方法的原版 Markdown。引言是参考图判断。每条标题之后、<content-body>之前，'
+            '放原版方案标题、方案内容、视觉设定和参考图使用方式。<content-body>之后放完整生图提示词及负面提示词两节。'
+        )
+    return instruction
+
 
 class SourceImage(Fact):
     name: str
@@ -162,7 +227,7 @@ def selection_parameters(model=ContentReference):
 
 
 SCHEMA = {'type': 'function', 'function': {'name': SAVE,
-    'description': '只写可复用方案、提示词、脚本时，提交document.title和各条items的title、完整body，聊天正文留空。后台补默认字段、登记本轮原图来源并直接展示正文。'
+    'description': '用于修订已保存内容，或在本轮执行前登记完整执行原文。只交付新写的文稿时，遵循本轮正文交付格式，后台自动保存。调用本工具时聊天正文留空。'
         'body包含最终要求和限制；按用户或方法要求交付的可见结构放display_prefix，内部说明放notes。仅有条目专用素材或已确定执行规格时才填materials或options。'
         '修订既有条目时，base选择成果ID和条目，updates传修订正文。后台绑定版本并保留未改条目、素材和规格。'
         '本轮实际执行时设continue_execution=true；有上传图片时每条明确登记素材及用途。还要求看文字时设show_content=true。',
@@ -203,27 +268,40 @@ def load(state, reference):
     return artifact, record.document, item
 
 
-def catalog(state, *, include_digests=True):
+def catalog(state, *, for_model=False):
     latest = {}
     for artifact in objects(state):
         record = ContentRecord.model_validate_json(artifact.inline_text)
         previous = latest.get(record.object_key)
         if previous is None or record.revision > previous[1].revision:
             latest[record.object_key] = (artifact,record)
-    return [{'artifact_id': artifact.id, 'object_key': record.object_key,
-             **({'sha256': artifact.sha256} if include_digests else {}),
-             'revision': record.revision, 'title': record.document.title,
-             **({'source_images': [{'index': index, 'name': image.name}
-                                   for index, image in enumerate(record.source_images, 1)]}
-                if record.source_images else {}),
-             'items': [{'item_index': i, 'title': item.title,
-                        **({'body_sha256': hashlib.sha256(item.body.encode()).hexdigest()} if include_digests else {}),
-                        'materials': [m.model_dump(mode='json', exclude_none=True) for m in item.materials],
-                        'options': item.options} for i, item in enumerate(record.document.items, 1)]}
-            for artifact,record in latest.values()]
+    rows = []
+    for artifact, record in latest.values():
+        items = []
+        for index, item in enumerate(record.document.items, 1):
+            entry = {'item_index': index, 'title': item.title, 'options': item.options}
+            if for_model:
+                entry['has_bound_inputs'] = any(material.usage == 'input' for material in item.materials)
+            else:
+                entry['body_sha256'] = hashlib.sha256(item.body.encode()).hexdigest()
+                entry['materials'] = [material.model_dump(mode='json', exclude_none=True) for material in item.materials]
+            items.append(entry)
+        row = {'artifact_id': artifact.id, 'object_key': record.object_key,
+               'revision': record.revision, 'title': record.document.title, 'items': items}
+        if not for_model:
+            row['sha256'] = artifact.sha256
+        if record.source_images and (not for_model or any(not item['has_bound_inputs'] for item in items)):
+            row['source_images'] = [{'index': index, 'name': image.name}
+                                    for index, image in enumerate(record.source_images, 1)]
+        rows.append(row)
+    return rows
 
 def is_current(state, artifact_id):
-    return any(row['artifact_id'] == artifact_id for row in catalog(state, include_digests=False))
+    return any(row['artifact_id'] == artifact_id for row in catalog(state, for_model=True))
+
+
+def has_selectable_source_images(state):
+    return any(row.get('source_images') for row in catalog(state, for_model=True))
 
 
 def render(document):
@@ -349,6 +427,25 @@ def save(runtime, call, registry, *, has_image_attachments=False, source_images=
     return complete_step(state,step.id,[artifact.id],owner_task_id=runtime.task_id), artifact, document, value
 
 
+def _selected_image_inputs(record, indices, inputs):
+    if not record.source_images:
+        # A single registered execution image already answers the only possible
+        # selection. Indices cannot select a subset of multiple bound images.
+        if indices == (1,) and len(inputs) == 1:
+            return inputs
+        raise TaskError('CONTENT_SOURCE_IMAGE_UNAVAILABLE')
+    if len(set(indices)) != len(indices) or any(index > len(record.source_images) for index in indices):
+        raise TaskError('CONTENT_SOURCE_IMAGE_UNAVAILABLE')
+    selected = [record.source_images[index - 1].reference.model_dump(mode='json', exclude_none=True)
+                for index in indices]
+    if inputs:
+        registered = [{key: value for key, value in image.items() if key != 'role'} for image in inputs]
+        if selected != registered:
+            raise TaskError('CONTENT_ARGUMENT_CONFLICT')
+        return inputs
+    return [{**reference, 'role': '原图参考'} for reference in selected]
+
+
 def compile_input(state, name, arguments, reference, *, allow_old=False):
     """Copy the one saved execution text; adapters only translate parameter names."""
     from services.tools.catalog import build_tool_catalog
@@ -363,15 +460,10 @@ def compile_input(state, name, arguments, reference, *, allow_old=False):
     result = dict(item.options)
     if name == 'generate_image':
         if indices := selection.source_image_indices:
+            selected = _selected_image_inputs(record, indices, inputs)
             if inputs:
-                raise TaskError('CONTENT_ARGUMENT_CONFLICT')
-            if len(set(indices)) != len(indices) or any(index > len(record.source_images) for index in indices):
-                raise TaskError('CONTENT_SOURCE_IMAGE_UNAVAILABLE')
-            inputs = [
-                {**record.source_images[index - 1].reference.model_dump(mode='json', exclude_none=True),
-                 'role': '原图参考'}
-                for index in indices
-            ]
+                selection = selection.model_copy(update={'source_image_indices': None})
+            inputs = selected
         mode='image_to_image' if inputs else 'text_to_image'
         if result.get('mode',mode)!=mode: raise TaskError('CONTENT_ARGUMENT_CONFLICT')
         result.update(prompt=text,references=inputs,mode=mode)

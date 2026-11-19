@@ -78,6 +78,7 @@ async def test_writing_records_one_shared_origin_and_only_explicit_execution_sel
     assert saved['content_delivery_final'] and saved['text'].count('正文二。') == 1
     row, = co.catalog(r.task_execution_state)
     assert row['source_images'] == [{'index': 1, 'name': '原图.png'}]
+    assert co.has_selectable_source_images(r.task_execution_state)
     reference = ref(row, 2)
     artifact, _, item = co.load(r.task_execution_state, reference)
     assert not item.materials and not item.options
@@ -104,6 +105,44 @@ async def test_writing_records_one_shared_origin_and_only_explicit_execution_sel
     assert co.ContentRecord.model_validate_json(version.inline_text).source_images == (original,)
     h._execute_tool_calls.assert_not_awaited()
 
+
+@pytest.mark.asyncio
+async def test_registered_reference_is_canonical_and_a_different_selection_is_rejected():
+    from services.handlers.chat.content_tools import model_tools
+    from services.tools.catalog import build_tool_catalog
+
+    r, _, _, _, row = await registered()
+    state = r.task_execution_state
+    assert not co.has_selectable_source_images(state)
+    image = build_tool_catalog().require('generate_image').to_schema()
+    tool, = model_tools([image], selectable_source_images=co.has_selectable_source_images(state))
+    selector = tool['function']['parameters']['properties']['content_source']['properties']
+    assert 'source_image_indices' not in selector
+
+    reference = ref(row, 3)
+    canonical = co.compile_input(state, 'generate_image', {}, reference)
+    assert co.compile_input(state, 'generate_image', {}, {**reference, 'source_image_indices': [1]}) == canonical
+    with pytest.raises(TaskError, match='CONTENT_SOURCE_IMAGE_UNAVAILABLE'):
+        co.compile_input(state, 'generate_image', {}, {**reference, 'source_image_indices': [2]})
+
+    from dataclasses import replace
+    from schemas.message import ImagePart, TextPart
+
+    r, p, h, q = case()
+    q = replace(q, content=[TextPart(text='分别用这两张图写方案'),
+                           ImagePart(name='A.png', workspace_path='A.png'),
+                           ImagePart(name='B.png', workspace_path='B.png')],
+                context_anchor=SimpleNamespace(input_message_id=str(r.task_bootstrap.input_message_id)))
+    draft = document()
+    draft['items'][0]['materials'][0]['reference'] = {'message_id': str(r.task_bootstrap.input_message_id), 'content_index': 1}
+    await execute(r, p, h, q, [call(co.SAVE, {'document': draft}, 'write')])
+    saved, = co.catalog(r.task_execution_state)
+    reference = ref(saved)
+    canonical = co.compile_input(r.task_execution_state, 'generate_image', {}, reference)
+    assert co.compile_input(r.task_execution_state, 'generate_image', {}, {**reference, 'source_image_indices': [1]}) == canonical
+    with pytest.raises(TaskError, match='CONTENT_ARGUMENT_CONFLICT'):
+        co.compile_input(r.task_execution_state, 'generate_image', {}, {**reference, 'source_image_indices': [2]})
+
 @pytest.mark.asyncio
 async def test_registration_renders_same_source_and_roundtrips_checkpoint():
     r,p,h,q,row=await registered()
@@ -113,10 +152,12 @@ async def test_registration_renders_same_source_and_roundtrips_checkpoint():
     assert doc.model_dump(mode='json')==co.ContentDocument.model_validate(document()).model_dump(mode='json')
     assert hashlib.sha256(a.inline_text.encode()).hexdigest()==a.sha256
     facts=json.loads(context_message(r)['content'].split('\n')[-1])
-    assert facts['content_objects'] == co.catalog(state, include_digests=False)
+    assert facts['content_objects'] == co.catalog(state, for_model=True)
     assert 'sha256' not in facts['content_objects'][0] and 'body_sha256' not in facts['content_objects'][0]['items'][0]
     # The model receives an index, not every full plan for each execution.
     assert '完整正文' not in str(facts['content_objects'])
+    assert row['artifact_id'] not in {artifact['id'] for artifact in facts['artifacts']}
+    assert all(item['has_bound_inputs'] and 'materials' not in item for item in facts['content_objects'][0]['items'])
 
 @pytest.mark.asyncio
 async def test_patch_only_second_preserves_other_items_and_all_shared_fields():
@@ -351,6 +392,43 @@ async def test_no_parallel_fresh_generation_path_can_bypass_saved_text(name,monk
     assert expected in str(p.messages[-1])
 
 
+@pytest.mark.asyncio
+async def test_image_entry_follows_the_bound_workflow_before_native_dispatch(monkeypatch):
+    from unittest.mock import AsyncMock
+    from uuid import uuid4
+    from services.agent.agent_result import AgentResult
+
+    runtime, prepared, handler, request, row = await registered()
+    monkeypatch.setattr('services.handlers.chat.execution_engine.compact_tool_context', AsyncMock())
+    plan_source = {'plan_id': str(uuid4()), 'revision': 1, 'item_id': str(uuid4())}
+    selection = ref(row, 2)
+    state = runtime.task_execution_state
+    await execute(runtime, prepared, handler, request,
+                  [call('generate_image', {'plan_source': plan_source}, 'ordinary-plan')])
+    assert 'CONTENT_INPUT_PATH_RETIRED' in str(prepared.messages[-1])
+    await execute(runtime, prepared, handler, request,
+                  [call('generate_image', {'content_source': selection, 'mode': 'image_to_image'}, 'mixed-fields')])
+    assert 'CONTENT_ARGUMENT_CONFLICT' in str(prepared.messages[-1])
+
+    prepared.ecom_workflow = SimpleNamespace(value=SimpleNamespace(kind='main_images'),
+        server_selected=lambda: True, barrier=AsyncMock(return_value=None))
+    await execute(runtime, prepared, handler, request,
+                  [call('generate_image', {'content_source': selection}, 'server-content')])
+    assert 'ECOM_PLAN_SOURCE_REQUIRED' in str(prepared.messages[-1])
+    assert runtime.task_execution_state == state
+    handler._execute_tool_calls.assert_not_awaited()
+
+    prepare = AsyncMock(return_value=({'mode': 'image_to_image', 'prompt': '服务器策划原文'}, [], plan_source))
+    runtime.task_image_resource_resolver = SimpleNamespace(prepare_request=prepare)
+    runtime.task_operation_store = SimpleNamespace(registry=build_capability_catalog())
+    submitted = call('generate_image', {'plan_source': plan_source}, 'server-plan')
+    handler._execute_tool_calls.return_value = [(submitted, AgentResult('本地替身'), False, '本地替身')]
+    await execute(runtime, prepared, handler, request, [submitted])
+    prepare.assert_awaited_once()
+    handler._execute_tool_calls.assert_awaited_once()
+    assert handler._execute_tool_calls.await_args.args[0] == [submitted]
+
+
 async def run_content_loop(r, p, h, q, stream, blocks=None):
     from services.handlers.chat.execution_engine import _run_loop
     from services.handlers.chat.execution_sink import CollectingExecutionSink
@@ -373,6 +451,63 @@ def model_save_chunk(doc, *, call_id='provider-save'):
         ToolCallDelta(index=0, id=call_id, name=co.SAVE,
                       arguments_delta=json.dumps({'document': doc}, ensure_ascii=False))
     ])
+
+
+def model_content_output(title, items, *, introduction=''):
+    lines = [co.OUTPUT_START, title]
+    if introduction:
+        lines.append(introduction)
+    for item in items:
+        lines.extend((co.OUTPUT_ITEM, item['title']))
+        if item.get('display_prefix'):
+            lines.append(item['display_prefix'])
+        lines.extend((co.OUTPUT_BODY, item['body']))
+    return '\n'.join([*lines, co.OUTPUT_END])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('complete', [True, False])
+async def test_authored_output_commits_before_showing_once_and_recovers_without_sampling(complete):
+    from services.adapters.types import StreamChunk
+    from services.handlers.chat.outcome_builder import build_content_parts
+
+    saved = []
+
+    async def checkpoint(point, payload):
+        saved.append(copy.deepcopy(payload))
+        return {'outcome': 'saved'}
+
+    runtime, prepared, handler, request = case(checkpoint)
+    body = '  保留首尾空白和内部行尾。\r\n最后一句。\n  '
+    frame = model_content_output('手稿', [{'title': '第一条', 'body': body, 'display_prefix': '### 一、成品'}])
+    if not complete:
+        frame = frame.removesuffix(co.OUTPUT_END)
+    samples = 0
+
+    async def model(**kwargs):
+        nonlocal samples
+        samples += 1
+        assert co.OUTPUT_START in str(kwargs['messages'][-1]['content'])
+        for i in range(0, len(frame), 7):
+            yield StreamChunk(content=frame[i:i + 7])
+        yield StreamChunk(finish_reason='stop')
+
+    sink, blocks, totals = await run_content_loop(runtime, prepared, handler, request, model)
+    assert samples == 1 and not sink.text and len(blocks) == 1
+    handler._execute_tool_calls.assert_not_awaited()
+    part, = build_content_parts(blocks, fallback_text=totals.text)
+    assert co.OUTPUT_START not in part.text
+    if not complete:
+        assert part.text == co.SAVE_FAILED_TEXT and not co.catalog(runtime.task_execution_state)
+        return
+    row, = co.catalog(runtime.task_execution_state)
+    assert part.content_artifact_id == row['artifact_id']
+    assert part.text.count(body) == 1 and part.text.count('### 一、成品') == 1
+    assert co.load(runtime.task_execution_state, ref(row))[2].body.encode() == body.encode()
+    persisted = saved[-1]['content_blocks']
+    assert persisted == blocks == sink.blocks
+    await run_content_loop(runtime, prepared, handler, request, model, blocks=persisted)
+    assert samples == 1 and len(co.objects(runtime.task_execution_state)) == 1
 
 
 @pytest.mark.asyncio

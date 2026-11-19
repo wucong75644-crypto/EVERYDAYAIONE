@@ -270,12 +270,14 @@ class ChatToolMixin(ChatToolResultMixin):
                 raise ValueError("工具参数必须是 JSON 对象")
             result_ctx = replace(result_ctx, args=args)
             runtime = executor.tool_runtime
-            lifecycle = (executor._task_image_operations.lifecycle(self, runtime.context(tc['id']), tc['id'])
+            recovery_only = getattr(executor, '_task_recovery_only', False)
+            lifecycle = (executor._task_image_operations.lifecycle(self, runtime.context(tc['id']), tc['id'],
+                    recovery_only=recovery_only)
                 if getattr(executor, '_task_image_operations', None) is not None
                 and tc['id'] in executor._task_image_operations.bindings
                 else lifecycle_for(
                     self,runtime.context(tc['id']),runtime.registry,tc['name'],
-                    recovery_only=getattr(executor, '_task_recovery_only', False)))
+                    recovery_only=recovery_only))
             envelope = await runtime.execute(
                 tc["name"], args, call_id=tc["id"],
                 lifecycle=lifecycle,

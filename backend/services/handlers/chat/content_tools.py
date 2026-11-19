@@ -15,6 +15,7 @@ DISCOVER = 'find_available_tools'
 READ = 'read_conversation_text'
 CONTROLS = frozenset({DISCOVER, READ})
 INPUT_TOOLS = frozenset({'generate_video', 'generate_image', 'code_execute'})
+MEDIA_TOOLS = frozenset({'generate_video', 'generate_image'})
 STATE = '_chat_content_tools'
 
 
@@ -27,6 +28,30 @@ def enabled(runtime, context):
     from services.task_execution.model_directed import enabled as model_directed
     return bool(model_directed(runtime) and context.execution_mode == 'interactive'
                 and context.context_scope == 'user' and context.personal_context_allowed)
+
+
+def uses_server_image_plan(prepared):
+    workflow = getattr(prepared, 'ecom_workflow', None)
+    return (workflow is not None and workflow.value is not None
+            and workflow.value.kind == 'main_images' and workflow.server_selected())
+
+
+def validate_model_input(name, arguments, *, server_image_plan=False):
+    legacy_fields = {'chat_input', 'chat_text_source', 'source_prompt'}
+    if name == 'image_agent' or (isinstance(arguments, dict) and legacy_fields.intersection(arguments)):
+        raise ValueError('CONTENT_INPUT_PATH_RETIRED')
+    if name not in MEDIA_TOOLS:
+        return
+    if name == 'generate_image' and server_image_plan:
+        if not isinstance(arguments, dict) or set(arguments) != {'plan_source'}:
+            raise ValueError('ECOM_PLAN_SOURCE_REQUIRED')
+        return
+    if isinstance(arguments, dict) and 'plan_source' in arguments:
+        raise ValueError('CONTENT_INPUT_PATH_RETIRED')
+    if not isinstance(arguments, dict) or 'content_source' not in arguments:
+        raise ValueError('CONTENT_SOURCE_REQUIRED')
+    if set(arguments) != {'content_source'}:
+        raise ValueError('CONTENT_ARGUMENT_CONFLICT')
 
 
 def schema(name, description, properties, required=()):
@@ -47,8 +72,8 @@ SCHEMAS = (
 )
 
 
-def model_tools(tools):
-    """Expose one content reference path, alongside native direct requests."""
+def model_tools(tools, *, selectable_source_images=False, server_image_plan=False):
+    """Project the one entry contract selected by the current workflow."""
     from services.task_execution.content_objects import ContentReference, ImageContentReference, selection_parameters
     result=[]
     for original in tools:
@@ -57,17 +82,34 @@ def model_tools(tools):
         if name not in INPUT_TOOLS:
             result.append(original);continue
         tool=copy.deepcopy(original);parameters=tool['function']['parameters']
-        source = ImageContentReference if name == 'generate_image' else ContentReference
+        if name == 'generate_image' and server_image_plan:
+            plan = parameters['properties'].get('plan_source')
+            if plan is not None:
+                tool['function']['parameters'] = {'type': 'object', 'additionalProperties': False,
+                    'properties': {'plan_source': plan}, 'required': ['plan_source']}
+                tool['function']['description'] = (
+                    '使用已保存的服务器主图策划的 plan_source 异步生成一张图片。'
+                    '受理后由页面展示进度和结果。'
+                )
+                result.append(tool)
+            continue
+        source = ImageContentReference if name == 'generate_image' and selectable_source_images else ContentReference
         parameters.setdefault('properties',{})['content_source']=selection_parameters(source)
         # Old source locators are read-only recovery proofs, never a new model input.
         parameters['properties'].pop('source_prompt',None)
         constraints={key:parameters.pop(key) for key in ('required','anyOf','oneOf','allOf','not','dependentRequired') if key in parameters}
-        if name in {'generate_image','generate_video'}:
-            properties=parameters['properties']
-            parameters['properties']={key:properties[key] for key in ('content_source','plan_source') if key in properties}
-            parameters['oneOf']=[{'required':['content_source']},*([{'required':['plan_source']}] if name=='generate_image' else [])]
-        elif constraints:parameters['anyOf']=[constraints,{'required':['content_source',*[key for key in constraints.get('required',[]) if key!='prompt']]}]
-        tool['function']['description']+=' 执行已保存内容只传content_source；后台将该条完整原文逐字传入，绑定原素材和规格。改编或修订先保存新版本。code_execute仍需code并使用chat_source_text，不另抄正文。'
+        if name in MEDIA_TOOLS:
+            tool['function']['parameters'] = {'type': 'object', 'additionalProperties': False,
+                'properties': {'content_source': parameters['properties']['content_source']}, 'required': ['content_source']}
+            media = '一张图片' if name == 'generate_image' else '一段短视频'
+            tool['function']['description'] = (
+                f'用 content_source 选择一个已保存条目，异步生成{media}。'
+                '后台读取完整原文、素材与规格，受理后由页面展示进度和结果。'
+            )
+        else:
+            if constraints:
+                parameters['anyOf']=[constraints,{'required':['content_source',*[key for key in constraints.get('required',[]) if key!='prompt']]}]
+            tool['function']['description'] += '使用已保存正文时传 content_source，并在代码中读取 chat_source_text。'
         result.append(tool)
     return result
 
@@ -208,67 +250,6 @@ def source_text(db, task_id, context, args):
         else:
             total += size
     return {'messages': history}
-
-
-def bind_call(db, task_id, context, name, arguments, source):
-    """Revalidate an existing checkpoint only; no new model locator conversion."""
-    if source.get('kind') == 'input_mapping':
-        return bind_mapping(db,task_id,context,name,arguments,source['mapping'])[0]
-    from services.handlers.chat_input_handoff import legacy_mapping
-    document=read_document(db,task_id,context,source)
-    original=dict(arguments)
-    instruction=original.pop('prompt',None) if name!='code_execute' else None
-    mapping=legacy_mapping(source,document,mode=source.get('mode','exact'),
-        target='chat_source_text' if name=='code_execute' else 'prompt',instruction=instruction)
-    return bind_mapping(db,task_id,context,name,original,mapping)[0]
-
-
-def read_document(db, task_id, context, source):
-    history = source_text(db, task_id, context, {'message_id': source['message_id'], '_full': True})
-    row = next((item for item in history['messages'] if item['content_index'] == source['content_index']), None)
-    if row is None or row.get('requires_explicit_read'):
-        raise ValueError('CHAT_INPUT_SOURCE_UNAVAILABLE')
-    return row
-
-
-def bind_mapping(db, task_id, context, name, arguments, mapping):
-    from services.handlers.chat_input_handoff import assemble, digest, text_hash
-    from services.tools.argument_validation import _issues
-    spec = build_tool_catalog().require(name)
-    schema = spec.to_schema()
-    if spec.exposure is not Exposure.PUBLIC or not schema:
-        raise ValueError('CHAT_INPUT_TOOL_UNAVAILABLE')
-    parameters = schema['function']['parameters']
-    outputs, proof = assemble(mapping, lambda source: read_document(db, task_id, context, source),
-                              parameters, file_input=name == 'code_execute',
-                              reserved=('source_prompt', 'plan_source') if name == 'generate_image' else ())
-    reserved = {'chat_input', 'chat_text_source'} | ({'source_prompt', 'plan_source'} if name == 'generate_image' else set())
-    if reserved.intersection(arguments):
-        raise ValueError('CHAT_INPUT_SOURCE_CONFLICT')
-    result = dict(arguments)
-    document_text = outputs.pop('chat_source_text', None)
-    for target, value in outputs.items():
-        if target in result and digest(result[target]) != digest(value):
-            raise ValueError('CHAT_INPUT_TARGET_CONFLICT')
-        result[target] = value
-    if document_text is not None:
-        if name != 'code_execute' or not isinstance(result.get('code'), str):
-            raise ValueError('CHAT_INPUT_FILE_CODE_REQUIRED')
-        # Reuse the same literal injection as legacy source binding. The
-        # mapped text is data, never substituted into model-authored code.
-        result['code'] = inject_source_code(result['code'], document_text)
-    issues = _issues(result, parameters)
-    if issues:
-        raise ValueError('CHAT_INPUT_ARGUMENTS_INVALID:' + json.dumps(issues, ensure_ascii=False))
-    proof = {**proof, 'tool': name}
-    if name == 'generate_image':
-        result['source_prompt'] = {'handoff': proof}
-    bound_text = document_text if document_text is not None else outputs.get('prompt', '')
-    bound_text = bound_text if isinstance(bound_text, str) else ''
-    source = {'kind': 'input_mapping', 'mapping': proof['mapping'], 'proof': proof,
-              'input_arguments': copy.deepcopy(arguments),
-              'mode': proof['mapping']['mode'], 'text': bound_text, 'sha256': text_hash(bound_text)}
-    return result, source
 
 
 def inject_source_code(code, text):

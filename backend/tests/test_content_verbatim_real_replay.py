@@ -16,6 +16,86 @@ from tests.test_model_directed_loop import case,execute
 from tests.test_task_execution_model_bridge import call
 from tests.test_content_objects import ref
 
+
+@pytest.mark.asyncio
+async def test_recorded_third_plan_reuses_the_bound_original(monkeypatch, mock_db, tmp_path):
+    folder = os.getenv('CHAT_THIRD_PLAN_RECORD')
+    if not folder:
+        pytest.skip('Private third-plan conversation, checkpoint and original image required')
+    evidence = Path(folder)
+    record = json.loads((evidence / 'record.json').read_text())
+    checkpoint = json.loads((evidence / 'state.json').read_text())['checkpoints'][1]['state']
+    calls = [entry['function'] for message in checkpoint['messages'] for entry in message.get('tool_calls', [])]
+    assert [entry['name'] for entry in calls] == [co.SAVE, co.SAVE, co.SAVE, 'generate_image']
+
+    from core.config import get_settings
+    monkeypatch.setattr(get_settings(), 'file_workspace_root', str(tmp_path))
+    monkeypatch.setattr(get_settings(), 'chat_image_async_enabled', True)
+    monkeypatch.setattr('services.handlers.chat.execution_engine.compact_tool_context', AsyncMock())
+    runtime, prepared, handler, request = case()
+    prepared.content_controls_available = True
+    context = prepared.execution_context
+    source, displayed, selection, _ = record['messages']
+    upload = json.loads(source['content'])[1]
+    raw = (evidence / 'original.png').read_bytes()
+    assert len(raw) == upload['size']
+    files = FileExecutor(str(tmp_path), context.actor_user_id, None)
+    image = files.resolve_safe_path(upload['workspace_path'])
+    image.parent.mkdir(parents=True, exist_ok=True)
+    image.write_bytes(raw)
+    mock_db.set_table_data('messages', [
+        {**message, 'conversation_id': runtime.conversation_id, 'org_id': None}
+        for message in (source, selection)
+    ])
+    mock_db.set_table_data('conversations', [{'id': runtime.conversation_id, 'user_id': context.actor_user_id,
+                                           'org_id': None, 'source': 'web'}])
+    mock_db.set_table_data('tasks', [{'id': runtime.task_id, 'user_id': context.actor_user_id, 'org_id': None,
+                                    'conversation_id': runtime.conversation_id, 'input_message_id': selection['id'],
+                                    'base_context_revision': 1, 'request_params': {}}])
+    handler.db = mock_db
+    handler._actor_runtime = runtime
+    runtime.task_image_resource_resolver = create_resolver(handler, request, context)
+    runtime.task_operation_store = SimpleNamespace(registry=build_capability_catalog())
+
+    for i, raw_call in enumerate(calls[:2]):
+        await execute(runtime, prepared, handler, request, [{**raw_call, 'id': f'invalid-{i}'}])
+        error = json.loads(prepared.messages[-1]['content'])
+        assert error['code'] == co.INVALID_OBJECT and error['issues'] and 'parameters' not in error
+    assert not co.objects(runtime.task_execution_state)
+    await execute(runtime, prepared, handler, request, [{**calls[2], 'id': 'original-save'}])
+    handler._execute_tool_calls.assert_not_awaited()
+    artifact, = co.objects(runtime.task_execution_state)
+    selected = json.loads(calls[3]['arguments'])['content_source']
+    from services.task_execution.contracts import TaskState
+    recorded_state = TaskState.model_validate(checkpoint['_task_execution'])
+    original_execution, _ = co.compile_input(recorded_state, 'generate_image', {}, selected)
+    assert selected['item_index'] == 1 and selected['source_image_indices'] == [1]
+    selected['artifact_id'] = artifact.id  # The isolated task allocates its own artifact ID.
+    _, _, item = co.load(runtime.task_execution_state, {'artifact_id': artifact.id, 'item_index': selected['item_index']})
+    previous_text = next(p['text'] for p in json.loads(displayed['content']) if p['type'] == 'text')
+    assert previous_text.count(item.body) == 1
+
+    snapshots = []
+
+    async def submit(batch, *args, **kwargs):
+        raw_call, = batch
+        request_arguments = json.loads(raw_call['arguments'])
+        recipe, = [json.loads(a.inline_text) for a in runtime.task_execution_state.artifacts
+                   if 'image.direct.recipe' in a.validations]
+        snapshot = freeze_image_request(recipe['normalized'], recipe['resolved'], origin={}, max_requests=1, max_credits=300)
+        verify_frozen_request(snapshot)
+        assert request_arguments['prompt'] == snapshot['prompt'] == item.body == original_execution['prompt']
+        assert request_arguments['references'] == original_execution['references']
+        assert snapshot['mode'] == 'image_to_image' and snapshot['aspect_ratio'] == '1:1'
+        assert snapshot['references'][0]['content_sha256'] == hashlib.sha256(raw).hexdigest()
+        snapshots.append(snapshot)
+        return [(raw_call, AgentResult('本地替身，未生图'), False, '本地替身')]
+
+    handler._execute_tool_calls.side_effect = submit
+    await execute(runtime, prepared, handler, request, [call('generate_image', {'content_source': selected}, 'original-image')])
+    assert len(snapshots) == 1
+
+
 @pytest.mark.asyncio
 async def test_real_five_final_originals_single_all_and_revision_are_verbatim(monkeypatch,mock_db,tmp_path):
     folder=os.getenv('CONTENT_VERBATIM_RECORDS')
@@ -282,7 +362,7 @@ async def test_recorded_six_plan_duplicate_delivery_and_second_image(monkeypatch
         if not selected:
             selected = True
             facts = json.loads(context_message(r)['content'].split('\n')[-1])
-            assert facts['content_objects'] == co.catalog(r.task_execution_state, include_digests=False)
+            assert facts['content_objects'] == co.catalog(r.task_execution_state, for_model=True)
             tool = next(t['function'] for t in kwargs['tools'] if t['function']['name'] == 'generate_image')
             assert 'content_source' in tool['parameters']['properties']
             yield StreamChunk(tool_calls=[ToolCallDelta(
