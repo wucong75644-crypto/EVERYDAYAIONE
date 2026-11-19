@@ -167,7 +167,8 @@ class Artifact(Fact):
         if self.image_reuse is not None and (self.kind!='image' or not self.reference.startswith('task-image:')):
             raise TaskError('TASK_REUSED_IMAGE_INVALID')
         if self.image_method is not None and (self.kind != 'text' or self.inline_text is None
-                or not {'image.direct.plan', self.image_method.profile_id} <= set(self.validations)):
+                or not ('content.object.v2' in self.validations
+                    or {'image.direct.plan',self.image_method.profile_id} <= set(self.validations))):
             raise TaskError('TASK_IMAGE_PLAN_EVIDENCE_INVALID')
         if self.inline_text is not None and (self.kind != 'text' or
                 hashlib.sha256(self.inline_text.encode()).hexdigest() != self.sha256):

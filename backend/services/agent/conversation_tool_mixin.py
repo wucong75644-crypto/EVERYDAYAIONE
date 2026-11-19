@@ -58,14 +58,11 @@ class ConversationToolMixin:
     def _exact_image_history(self, args: dict) -> str:
         from services.handlers.chat_image_request import ChatImageInputResolver, REQUEST_KEY
         from services.handlers.chat_input_handoff import line_starts
-        if (set(args) - {"limit", "message_ids", "task_id", "text_exact", "text_exacts", "selection_scope", "for_mapping"} or self.context_scope != "user"
+        if (set(args) - {"limit", "message_ids", "task_id", "text_exact", "text_exacts", "selection_scope"} or self.context_scope != "user"
                 or self.workspace_user_id != self.user_id or not self.personal_context_allowed
                 or not self.task_id):
             raise PermissionError("IMAGE_HISTORY_SCOPE_DENIED")
         limit=args.get("limit",10)
-        if (type(args.get('for_mapping', False)) is not bool
-                or args.get('for_mapping') and {'text_exact', 'text_exacts', 'task_id'}.intersection(args)):
-            raise ValueError('CHAT_INPUT_READ_ARGUMENTS_INVALID')
         ids=args.get("message_ids",[])
         if type(limit) is not int or not 1<=limit<=20 or not isinstance(ids,list) or len(ids)>8:
             raise ValueError("IMAGE_HISTORY_LIMIT_INVALID")
@@ -108,16 +105,15 @@ class ConversationToolMixin:
                 elif part.get("type")=="image":
                     source = next(item for item in discovered_image_sources(row, self.db, org_id=self.org_id,
                         owner_id=self.workspace_user_id, scope=self.context_scope) if item["content_index"] == index)
+                    # Quoted provenance is host verification data, not a second
+                    # model-selectable message in another conversation.
+                    source = {key: value for key, value in source.items()
+                              if key not in {'quoted_message_id', 'quoted_content_index', 'quoted_task_id'}}
                     parts.append({"type":"image", **source,
                         **{key:part[key] for key in ("url","failed","error") if key in part}})
             messages.append({"message_id":message_id,"status":row.get("status"),"role":row.get('role'),
                              "context_revision":row.get('context_revision'),"parts":parts})
         output={"messages":messages}
-        if args.get('for_mapping'):
-            from services.handlers.chat_input_handoff import mapping_view
-            output['messages'] = [{**message, 'parts': [mapping_view(part) if part['type'] == 'text' else part
-                                                      for part in message['parts']]} for message in messages]
-            output['mapping_sources'] = True
         reason = ((parent.get("request_params") or {}).get("_image_sources_v1") or {}).get("unavailable_reason")
         if reason:
             output["image_sources_unavailable_reason"] = reason
@@ -151,7 +147,7 @@ class ConversationToolMixin:
             else:
                 output['selected_prompt'] = prompts[0]
         result=json.dumps(output,ensure_ascii=False)
-        if 'text_exact' in args or 'text_exacts' in args or args.get('for_mapping'):
+        if 'text_exact' in args or 'text_exacts' in args:
             from services.agent.tool_result_envelope import SOURCE_SELECTION_BUDGET
             if len(result) > SOURCE_SELECTION_BUDGET:
                 raise ValueError('IMAGE_HISTORY_SELECTION_TOO_LARGE_SELECT_FEWER_FRAGMENTS')

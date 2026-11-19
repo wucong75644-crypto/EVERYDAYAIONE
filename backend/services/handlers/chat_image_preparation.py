@@ -60,6 +60,12 @@ def prepare_input(resolver,args,*,scoped,workflow,settings,composition=None,entr
     if 'source_prompt' in normalized:
         normalized['prompt'], normalized['source_prompt'] = resolver.complete_source_prompt(
             normalized['source_prompt'], normalized['prompt'])
+        if 'content_object' in normalized['source_prompt']:
+            from services.handlers.chat_input_handoff import digest
+            proof=normalized['source_prompt']['content_object']
+            resolver.verify_content_object(proof)
+            if digest({k:v for k,v in normalized.items() if k!='source_prompt'}) != proof['arguments_sha256']:
+                raise ValueError('CONTENT_ARGUMENT_CHANGED')
         if 'handoff' in normalized['source_prompt']:
             from services.handlers.chat_input_handoff import check_outputs
             check_outputs(resolver.verify_handoff(normalized['source_prompt']['handoff']), normalized)

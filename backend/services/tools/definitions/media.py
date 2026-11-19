@@ -63,8 +63,9 @@ def _schema_generate_image_async():
                     "source_task_id":{"type":"string"},
                     "source_prompt":{"type":"object","additionalProperties":False,
                         "description":"提示词原文的消息或历史图片任务定位。后台核对原文并计算sha256，可省略sha256；不要自行编造校验值。",
-                        "oneOf":[{"required":["message_id","content_index"]},{"required":["task_id"]},{"required":["handoff"]}],"properties":{
+                        "oneOf":[{"required":["message_id","content_index"]},{"required":["task_id"]},{"required":["handoff"]},{"required":["content_object"]}],"properties":{
                             "handoff":{"type":"object","description":"后台核验后的输入映射凭据，不能自行构造或修改"},
+                            "content_object":{"type":"object","description":"宿主从已登记对象组装的完整执行凭据，模型不能自行构造"},
                             "task_id":{"type":"string"},
                             "message_id":{"type":"string"},"content_index":{"type":"integer","minimum":0},
                             "sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"},

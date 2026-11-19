@@ -147,8 +147,9 @@ def retire_saved_image_method(runtime, candidate):
     skills = runtime.skill_runtime
     if skills is None or candidate is runtime.task_execution_state:
         return skills
-    previous = {a.id for a in saved_image_plans(runtime.task_execution_state)}
-    retiring = [a.image_method for a in saved_image_plans(candidate) if a.id not in previous
+    previous = {a.id for a in runtime.task_execution_state.artifacts} if runtime.task_execution_state else set()
+    committed={key for result in candidate.results for key in result.artifact_ids} if candidate else set()
+    retiring = [a.image_method for a in candidate.artifacts if a.id not in previous and a.id in committed
                 and a.image_method is not None and a.image_method.retire_on_complete]
     return retire_bound_methods(skills, candidate, retiring)
 
@@ -167,6 +168,14 @@ def existing_image_source_schema(tool):
 
 def image_plan_item(state, skills_profiles, arguments, *, artifact_id=None):
     plans = saved_image_plans(state)
+    source=arguments.get('source_prompt',{})
+    if isinstance(source,dict) and 'content_object' in source:
+        from .content_objects import load
+        reference=source['content_object']['source']
+        artifact,_document,item=load(state,reference)
+        if artifact_id is not None and artifact.id!=artifact_id:raise TaskError('TASK_IMAGE_ARGUMENTS_NOT_PLANNED')
+        if arguments.get('prompt')!=item.body:raise TaskError('CONTENT_ARGUMENT_CHANGED')
+        return {'artifact_id':artifact.id,'image_item_index':reference['item_index']} if artifact.image_method else None
     if artifact_id is None and (not plans and not skills_profiles
             or not plans and (arguments.get('plan_source') or arguments.get('source_prompt'))):
         # These references are verified independently by native image preparation.
@@ -223,9 +232,12 @@ def context_message(runtime,*,state=None):
         facts['previous_task']={k:copy.deepcopy(source['state'].get(k)) for k in ('root_task_id','original_goal','status','operations','artifacts')}
         for artifact in facts['previous_task'].get('artifacts',[]):artifact.pop('inline_text',None)
     if active_image_profiles(runtime):
-        facts['image_method_instruction'] = (
-            '逐图方案必须先用save_task_image_plan保存。只要提示词时交付文字。要求出图时使用保存的逐图prompt原文、'
-            '两个换行、负面提示词：、一个换行和negative_prompt原文，比例使用原值。已有方案时用read_task_text读取，勿重新策划。')
+        facts['image_method_instruction']='按原方法完成创作；每条保存一份包含全部要求和限制的完整最终原文body，使用save_task_text，素材与规格单独绑定。执行时只选择content_source，不再使用save_task_image_plan或拼接提示词。'
+    from .content_objects import catalog
+    facts['content_objects'] = catalog(state)
+    if source is not None and state is None:
+        source_state = TaskState.model_validate(source['state'])
+        facts['previous_content_objects'] = catalog(source_state)
     if state is not None:
         facts.update(revision=state.revision,status=state.status,
             operations=[v.model_dump(mode='json') for v in state.operations],
@@ -235,10 +247,9 @@ def context_message(runtime,*,state=None):
 
 
 def schemas(runtime,controller=None):
+    from .content_objects import SCHEMA as CONTENT_SCHEMA, requires_reference
     result=[PLAN_SCHEMA]
-    if active_image_profiles(runtime) and not any(
-            str(plan.delivery_task_id) == str(runtime.task_id) for plan in saved_image_plans(runtime.task_execution_state)):
-        result.append(IMAGE_PLAN_SCHEMA)
+    if not requires_reference(runtime):result.append(CONTENT_SCHEMA)
     if runtime.task_execution_state is None and followup_source(runtime):result.append(RESUME_SCHEMA)
     if controller is not None:
         for schema in controller.schemas():
@@ -317,9 +328,10 @@ def stage_native_calls(runtime,prepared,calls,registry):
     candidate=runtime.task_execution_state
     errors={}
     for call in calls:
-        if (call['name'] == 'image_agent'
-                and (active_image_profiles(runtime) or saved_image_plans(candidate))):
-            errors[call['id']] = ('TASK_IMAGE_ARGUMENTS_NOT_PLANNED', '请使用已保存逐图方案，通过 generate_image 提交。')
+        from services.handlers.chat.content_tools import enabled as content_enabled
+        if call['name'] == 'image_agent' and (content_enabled(runtime,prepared.execution_context)
+                or active_image_profiles(runtime) or saved_image_plans(candidate)):
+            errors[call['id']] = ('CONTENT_INPUT_PATH_RETIRED', '旧图片编排入口已停用；请保存完整原文并使用generate_image的content_source提交。')
             continue
         if call['name'] not in NATIVE_TOOLS:continue
         try:
@@ -467,7 +479,8 @@ async def advance_results(runtime,prepared,*,reconcile_pending=False):
 async def verify_image_method(runtime, state, artifact_id):
     from .methods import binding_profile
     from services.skills.contracts import SkillError
-    artifact = next((a for a in saved_image_plans(state) if a.id == artifact_id), None)
+    committed={key for result in state.results for key in result.artifact_ids}
+    artifact = next((a for a in state.artifacts if a.id == artifact_id and a.id in committed), None)
     proof = artifact.image_method if artifact else None
     skills = runtime.skill_runtime
     candidate = skills.directory.get(proof.skill_key) if proof and skills else None
@@ -534,7 +547,7 @@ async def bind_image_recipes(runtime,calls,registry):
 
 def duplicate_image_plan_items(state, calls):
     """A reused result or an earlier accepted item cannot be submitted again."""
-    if not saved_image_plans(state):
+    if state is None or not saved_image_plans(state) and not any(a.image_method for a in state.artifacts):
         return {}
     held = {operation.step_id for operation in state.operations if operation.status != 'failed_before_dispatch'}
     held.update(result.step_id for result in state.results)

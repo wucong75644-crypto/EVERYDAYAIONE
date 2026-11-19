@@ -129,8 +129,12 @@ class ToolRuntime:
                     return
                 from services.handlers.chat.content_tools import bind_call
                 original, source, expected = binding
-                current = await asyncio.to_thread(bind_call, self.executor.db, context.task_id,
-                    context, call.name, original, source)
+                if source.get('kind')=='content_object':
+                    from services.task_execution.content_objects import compile_input
+                    current,_=compile_input(self.executor._task_execution_state,call.name,original,source['reference'],allow_old=source.get('allow_old',False))
+                else:
+                    current = await asyncio.to_thread(bind_call, self.executor.db, context.task_id,
+                        context, call.name, original, source)
                 # File target resolution has its own policy/version proof and
                 # durable canonical binding. Check the proposed source mapping
                 # against its original arguments, before that native conversion.

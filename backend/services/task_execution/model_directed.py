@@ -42,11 +42,12 @@ INSTRUCTIONS = ('自主理解完整用户目标，选择所需Skill、工具或A
     '独立任务按新计划登记，不能凭标题相似合并。'
     '用户手选方法优先完成其适用阶段，不因关键词换掉；用户要求分析和完整提示词时必须交付。'
     '已有完整提示词、原图或成图先读取复用，不凭摘要重写，不重复生成。'
-    '引用聊天内容交给工具时，复用已读取且版本一致的完整来源；缺少全文/位置才用for_mapping读取一次，'
-    '相同来源不按条目或工具重复读取。按本次意图和真实工具定义提交chat_input：'
-    '逐段声明输入参数、排除原因及修订覆盖；不要按标题猜用途，也不要把分析说明默认当执行要求。'
-    '默认exact原样交付；用户明确要求总结、翻译或改编时才声明adapted及原因。'
-    '工具尚未显示chat_input时按工具名find_available_tools，下一轮取得完整映射用法；不重抄整份原文。'
+    '新写方案、提示词、脚本等可复用内容必须通过save_task_text登记结构化对象；界面直接展示对象内容，不再另写一份。'
+    '修改第二条等用base+updates，未改项由宿主沿用。按content_objects目录的artifact_id、sha256、item_index选择。'
+    '执行已登记对象时使用目标工具的content_source，不抄写prompt、不拆分或排除内容。默认先写内容不执行，只有用户要求才执行。'
+    '每条body是用户可见并执行的完整最终原文，包含全部执行要求和限制；执行阶段后台逐字复制，不再拼接。'
+    '改编、翻译或修订先写好完整新原文并保存新版本，再选择对象执行；不在工具调用时分段映射或覆盖原文。'
+    '找工具用find_available_tools获取实际用法；历史读取只供理解和定位，不再使用chat_input、chat_text_source或旧消息绑定执行。'
     '宿主自动登记已核实的原生工具成果，不需手动导入或标记步骤完成。'
     '程序记录执行事实，不替你判断全部自然语言目标或内容质量；对照原目标检查遗漏并如实交付。'
     '权限、确认、预算和操作回执不能自行豁免。已受理或结果不明先核实，不能换ID重发。'
@@ -142,8 +143,8 @@ def record_calls(state, bootstrap, calls, registry,*,input_sha256=None):
     input_sha256=input_sha256 or digest([])
     for call in calls:
         spec = registry.get(call.name)
-        if call.name == SAVE_IMAGE_PLAN:
-            capability = 'task.image_plan.save'
+        if call.name in {SAVE_IMAGE_PLAN, 'save_task_text'}:
+            capability = 'task.image_plan.save' if call.name == SAVE_IMAGE_PLAN else 'task.text.save'
         elif spec is not None and spec.capability:
             capability = spec.capability
         else:
@@ -177,7 +178,7 @@ def record_calls(state, bootstrap, calls, registry,*,input_sha256=None):
             suffix = digest([call.call_id, call.name])[:32]
             rid, step_id = 'host.result.' + suffix, 'host.call.' + suffix
             kind = ('image' if call.name == 'generate_image' else
-                    'text' if call.name == SAVE_IMAGE_PLAN else 'receipt')
+                    'text' if call.name in {SAVE_IMAGE_PLAN, 'save_task_text'} else 'receipt')
             requirements.append(Requirement(id=rid,
                 source_message_id=state.source_message_ids[0] if state else bootstrap.input_message_id,
                 description='本次工具调用的真实执行结果：' + call.name,

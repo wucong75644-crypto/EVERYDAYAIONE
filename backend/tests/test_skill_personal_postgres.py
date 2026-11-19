@@ -277,3 +277,42 @@ def test_chat_confirm_validates_workflow_capability_before_enabling_auto_selecti
     package = next(c for c in service.repository.catalog_candidates() if str(c.package_id) == result['package_id'])
     assert package.catalog_metadata.model_selectable is True
     assert package.catalog_metadata.task_stage.output_profile == 'reference-prompts-v1'
+
+
+def test_controlled_release_updates_the_existing_personal_orchestration_skill(environment):
+    import importlib.util
+    from psycopg.rows import dict_row
+
+    root = MIGRATIONS.parents[1]
+    spec = importlib.util.spec_from_file_location('publish_chat_image_skill', root / 'deploy/publish-chat-image-skill.py')
+    publisher = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(publisher)
+    raw = (root / 'examples/skills/catalog/platform/chat-image-orchestration/v3/SKILL.md').read_bytes()
+    authoring = environment.service()
+    package_id = authoring.create(CreateSkill(skill_key=publisher.KEY, content=DraftContent(
+        description='旧方法', body='旧版个人编排。')))['package_id']
+    original = authoring.transition(package_id, TransitionDraft(expected_version=1, action='publish_private'))
+    revision = authoring.repository.assigned_revision(package_id, original['available_revision'])
+    target = {
+        'expected_revision': revision.revision,
+        'expected_body_sha256': revision.body_sha256,
+        'expected_draft_version': original['draft']['version'],
+    }
+    config = environment.config.model_copy(update={
+        'skill_runtime_enabled': True, 'chat_image_async_enabled': True,
+        'agent_task_execution_enabled': True, 'agent_task_model_directed_enabled': True,
+    })
+    with environment.pool.connection() as conn:
+        conn.row_factory = dict_row
+        with pytest.raises(ValueError, match='SKILL_RELEASE_BASE_CHANGED'), conn.transaction():
+            publisher.publish(conn, environment.actor, package_id,
+                              {**target, 'expected_draft_version': 0}, raw, 'test', config)
+        result = publisher.publish(conn, environment.actor, package_id, target, raw, 'test', config)
+        assert result['protocol'] == 'content-objects-v2' and result['revision'] != revision.revision
+        assert not result['replayed']
+    with environment.pool.connection() as conn:
+        conn.row_factory = dict_row
+        repeated = publisher.publish(conn, environment.actor, package_id, target, raw, 'test', config)
+        assert repeated == {**result, 'replayed': True}
+    assert authoring.repository.assigned_revision(package_id, revision.revision) == revision
+    assert not environment.service(user=environment.other).repository.catalog_candidates()

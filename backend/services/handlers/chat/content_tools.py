@@ -1,4 +1,4 @@
-"""Private model controls for finding tools and binding closed chat text."""
+"""Private discovery and read-only history; existing checkpoint verification."""
 import copy
 import hashlib
 import json
@@ -36,60 +36,37 @@ def schema(name, description, properties, required=()):
 
 
 SCHEMAS = (
-    schema(DISCOVER, '查找当前可用业务工具。用能力名称、工具名或简短目标查询；下一轮提供真实工具定义及chat_input输入映射用法。',
+    schema(DISCOVER, '查找当前可用业务工具。用能力名称、工具名或简短目标查询；下一轮提供真实工具定义和已保存内容的content_source用法。',
            {'query': {'type': 'string', 'minLength': 1, 'maxLength': 160}}, ('query',)),
     schema(READ, '在当前会话已关闭的历史中读取原文。先找消息，再用 text_exact 精确选择目标片段。'
-                 'text_exact/text_exacts只读取逐字片段，不自动判断或扩展方案。引用内容执行时通过目标工具的chat_input提交用途映射；'
-                 'for_mapping返回带行号原文供定位，便于按行引用，不重抄正文。',
+                 'text_exact/text_exacts只读取逐字片段，不自动判断或扩展方案。执行已登记内容时选择content_source；读取历史不建立执行绑定。',
            {'message_id': {'type': 'string'}, 'text_exact': {'type': 'string', 'maxLength': 20000},
             'text_exacts': {'type': 'array', 'minItems': 1, 'maxItems': 100,
                             'items': {'type': 'string', 'minLength': 1, 'maxLength': 20000}},
-            'selection_scope': {'type': 'string', 'enum': ['item', 'fragment']},
-            'for_mapping': {'type': 'boolean', 'description': '建立chat_input前获取带行起点的完整来源，指定message_id；超限请减少消息数'}}),
+}),
 )
 
 
-def model_tools(tools, mapping_names=None):
-    result = []
-    for tool in tools:
-        name = tool.get('function', {}).get('name')
-        if name in INPUT_TOOLS:
-            tool = copy.deepcopy(tool)
-            params = tool['function']['parameters']
-            params['properties']['chat_text_source'] = {
-                'type': 'object', 'additionalProperties': False,
-                'required': ['message_id', 'content_index', 'mode'],
-                'properties': {
-                    'message_id': {'type': 'string'}, 'content_index': {'type': 'integer', 'minimum': 0},
-                    'sha256': {'type': 'string'}, 'text': {'type': 'string', 'maxLength': 20000},
-                    'mode': {'enum': ['exact', 'adapted']},
-                    'bundle': {'type': 'object', 'description': '原样使用读取结果中的完整性凭据，不能修改'},
-                },
-                'description': ('选择已读取的来源；多条同消息片段用返回的sha256区分，后台取回原文。也可提供text由后台核验。exact 沿用原文，adapted 表示用户要求改编。'
-                                'code_execute 中用 chat_source_text 读取后台注入的正文，调用 emit_file 交付文件。'),
-            }
-            if name == 'generate_image':
-                params['oneOf'] = [*params['oneOf'], {
-                    'required': ['mode', 'chat_text_source'], 'not': {'required': ['prompt']},
-                }]
-            elif name == 'generate_video':
-                params['required'] = [key for key in params.get('required', []) if key != 'prompt']
-                params['anyOf'] = [{'required': ['prompt']}, {'required': ['chat_text_source']}]
-        parameters = tool.get('function', {}).get('parameters')
-        if (isinstance(parameters, dict) and parameters.get('type') == 'object'
-                and (mapping_names is None or name in INPUT_TOOLS or name in mapping_names)):
-            from services.handlers.chat_input_handoff import model_schema
-            tool = copy.deepcopy(tool)
-            parameters = tool['function']['parameters']
-            parameters.setdefault('properties', {})['chat_input'] = model_schema(
-                parameters, file_input=name == 'code_execute',
-                reserved=('source_prompt', 'plan_source') if name == 'generate_image' else ())
-            constraints = {key: parameters.pop(key) for key in
-                           ('required', 'anyOf', 'oneOf', 'allOf', 'not', 'dependentRequired') if key in parameters}
-            if constraints:
-                parameters['anyOf'] = [constraints, {'required': ['chat_input']}]
-            tool['function']['description'] += (' 引用聊天方案执行时使用chat_input按完整原文提出输入映射；'
-                '不得省略限制，也不要把分析说明自动塞进执行正文。先按实际工具定义选择参数与素材。')
+def model_tools(tools):
+    """Expose one content reference path, alongside native direct requests."""
+    from services.task_execution.content_objects import ContentReference
+    result=[]
+    for original in tools:
+        name=original.get('function',{}).get('name')
+        if name=='image_agent':continue
+        if name not in INPUT_TOOLS:
+            result.append(original);continue
+        tool=copy.deepcopy(original);parameters=tool['function']['parameters']
+        parameters.setdefault('properties',{})['content_source']=ContentReference.model_json_schema()
+        # Old source locators are read-only recovery proofs, never a new model input.
+        parameters['properties'].pop('source_prompt',None)
+        constraints={key:parameters.pop(key) for key in ('required','anyOf','oneOf','allOf','not','dependentRequired') if key in parameters}
+        if name in {'generate_image','generate_video'}:
+            properties=parameters['properties']
+            parameters['properties']={key:properties[key] for key in ('content_source','plan_source') if key in properties}
+            parameters['oneOf']=[{'required':['content_source']},*([{'required':['plan_source']}] if name=='generate_image' else [])]
+        elif constraints:parameters['anyOf']=[constraints,{'required':['content_source',*[key for key in constraints.get('required',[]) if key!='prompt']]}]
+        tool['function']['description']+=' 执行已保存内容只传content_source；后台将该条完整原文逐字传入，绑定原素材和规格。改编或修订先保存新版本。code_execute仍需code并使用chat_source_text，不另抄正文。'
         result.append(tool)
     return result
 
@@ -107,7 +84,7 @@ def discover(context, query, blocked=()):
     for spec in registry.specs():
         # Existing domain-specific entrypoints retain their own routing prerequisites.
         if (spec.exposure is not Exposure.PUBLIC or spec.name in blocked
-                or spec.name in {'plan_ecommerce_images', 'get_conversation_context'}
+                or spec.name in {'plan_ecommerce_images', 'get_conversation_context', 'image_agent'}
                 or not registry.check_access(spec.name, context, policy=policy).allowed):
             continue
         description = spec.to_schema()['function'].get('description') or spec.name
@@ -124,7 +101,7 @@ def discover(context, query, blocked=()):
 
 
 def select_text_fragments(messages, arguments):
-    """Quotes locate complete execution units; explicit fragments stay available."""
+    """Read literal quotes; a history read never creates an execution binding."""
     from services.handlers.chat_content_bundle import bundle
     if 'text_exact' in arguments and 'text_exacts' in arguments:
         raise ValueError('CHAT_SOURCE_SELECTION_CONFLICT')
@@ -147,11 +124,13 @@ def select_text_fragments(messages, arguments):
                 if (part['text'].count(text) != 1
                         or arguments.get('content_index', part['content_index']) != part['content_index']):
                     continue
-                assembled, proof = bundle(part['text'], text, scope=arguments.get('selection_scope', 'item'))
+                assembled, proof = bundle(part['text'], text, scope='fragment')
                 matches.append({'message_id': str(message['message_id']),
                                 'content_index': part['content_index'],
                                 'sha256': hashlib.sha256(assembled.encode()).hexdigest(), 'text': assembled,
                                 'bundle': proof})
+        if not matches and arguments.get('_optional') is True:
+            continue
         if len(matches) != 1:
             raise ValueError('CHAT_SOURCE_UNAVAILABLE_OR_AMBIGUOUS')
         if any((s['message_id'], s['content_index'], s['sha256']) ==
@@ -161,67 +140,8 @@ def select_text_fragments(messages, arguments):
     return selected
 
 
-def remember_selection(state, result, *, append=False):
-    if result.get('mapping_sources') is True:
-        updated = {**state, 'source_selection_failed': False}
-        updated.pop('stop_message', None)
-        return updated
-    sources = result.get('sources') or ([result['source']] if 'source' in result else [])
-    if not sources:
-        prompts = result.get('selected_prompts') or ([result['selected_prompt']] if 'selected_prompt' in result else [])
-        sources = [{**item['source_prompt'], 'text': item['prompt']} for item in prompts]
-    if not sources:
-        return state
-    existing = state.get('selected_sources', []) if append else []
-    selected = {(source['message_id'], source['content_index'], source['sha256']): source
-                for source in [*existing, *sources]}
-    sources = list(selected.values())
-    if len(sources) > 100 or sum(len(source['text'].encode()) for source in sources) > 100000:
-        raise ValueError('CHAT_SOURCE_TOO_LARGE_SELECT_FEWER_FRAGMENTS')
-    updated = {**state, 'source_selection_failed': False,
-               'selected_sources': [{**source, 'mode': 'exact'} for source in sources]}
-    updated.pop('selected_source', None)
-    updated.pop('stop_message', None)
-    return updated
-
-
-def selected_source(state, arguments):
-    sources = state.get('selected_sources') or ([state['selected_source']] if state.get('selected_source') else [])
-    explicit = arguments.get('chat_text_source')
-    if explicit is not None:
-        if not isinstance(explicit, dict):
-            raise ValueError('CHAT_SOURCE_INVALID')
-        if (not {'message_id', 'content_index', 'mode'} <= set(explicit)
-                or set(explicit) - {'message_id', 'content_index', 'mode', 'text', 'sha256', 'bundle'}
-                or type(explicit['content_index']) is not int or explicit['content_index'] < 0):
-            raise ValueError('CHAT_SOURCE_INVALID')
-        if 'text' in explicit:
-            return explicit
-        matches = [source for source in sources if all((source.get(key) == value
-                   or key == 'sha256' and source.get('bundle', {}).get('selection', {}).get('sha256') == value)
-                   for key, value in explicit.items() if key != 'mode')]
-        if len(matches) != 1:
-            raise ValueError('CHAT_SOURCE_SELECTION_REQUIRED')
-        return {**matches[0], 'mode': explicit.get('mode', 'exact')}
-    if not sources:
-        return None
-    prompt = arguments.get('prompt')
-    matches = [source for source in sources if source['text'] == prompt or isinstance(prompt, str)
-               and source.get('bundle', {}).get('selection', {}).get('sha256') == hashlib.sha256(prompt.encode()).hexdigest()]
-    if len(matches) == 1:
-        return matches[0]
-    if len(sources) == 1:
-        return sources[0]
-    raise ValueError('CHAT_SOURCE_SELECTION_REQUIRED')
-
-
 def source_text(db, task_id, context, args):
     from types import SimpleNamespace
-    mapping_read = args.get('for_mapping', False)
-    if type(mapping_read) is not bool or mapping_read and {'text_exact', 'text_exacts'}.intersection(args):
-        raise ValueError('CHAT_INPUT_READ_ARGUMENTS_INVALID')
-    if mapping_read:
-        args = {**args, '_full': True}
     if (context.context_scope != 'user' or not context.personal_context_allowed
             or str(context.workspace_owner_id) != str(context.actor_user_id)):
         raise PermissionError('CHAT_SOURCE_DENIED')
@@ -272,13 +192,6 @@ def source_text(db, task_id, context, args):
                 item.update(requires_explicit_read=True, total_chars=len(part['text']), truncated=True)
             history.append(item)
     selected = select_text_fragments(messages, args)
-    if mapping_read:
-        from services.agent.tool_result_envelope import SOURCE_SELECTION_BUDGET
-        from services.handlers.chat_input_handoff import mapping_view
-        result = {'mapping_sources': True, 'messages': [mapping_view(part) for part in history]}
-        if len(json.dumps(result, ensure_ascii=False)) > SOURCE_SELECTION_BUDGET:
-            raise ValueError('CHAT_INPUT_TOO_LARGE_READ_FEWER_MESSAGES')
-        return result
     if selected:
         from services.agent.tool_result_envelope import SOURCE_SELECTION_BUDGET
         result = {'sources': selected} if 'text_exacts' in args else {'source': selected[0]}
@@ -297,45 +210,16 @@ def source_text(db, task_id, context, args):
 
 
 def bind_call(db, task_id, context, name, arguments, source):
-    if isinstance(source, dict) and source.get('kind') == 'input_mapping':
-        return bind_mapping(db, task_id, context, name, arguments, source['mapping'])[0]
-    from services.handlers.chat_content_bundle import verify
-    if (name not in INPUT_TOOLS or not isinstance(source, dict)
-            or not {'message_id', 'content_index', 'text', 'mode'} <= set(source)
-            or set(source) - {'message_id', 'content_index', 'sha256', 'text', 'mode', 'bundle'}
-            or type(source['content_index']) is not int or source['content_index'] < 0
-            or source['mode'] not in ('exact', 'adapted')):
-        raise ValueError('CHAT_SOURCE_INVALID')
-    if 'bundle' in source:
-        # Fetch through the existing scoped/frozen-history reader. Do not trust
-        # checkpoint or model supplied offsets, spans or completeness claims.
-        history = source_text(db, task_id, context, {'message_id': source['message_id']})
-        part = next((item for item in history['messages'] if item['content_index'] == source['content_index']), None)
-        if part is None or part.get('truncated'):
-            raise ValueError('CHAT_SOURCE_UNAVAILABLE')
-        verify(part['text'], source['text'], source['bundle'])
-        verified = {key: value for key, value in source.items() if key != 'mode'}
-        if verified.get('sha256', hashlib.sha256(verified['text'].encode()).hexdigest()) != hashlib.sha256(verified['text'].encode()).hexdigest():
-            raise ValueError('CHAT_SOURCE_CHANGED')
-    else:
-        verified = source_text(db, task_id, context, {'message_id': source['message_id'],
-            'content_index': source['content_index'], 'text_exact': source['text']})['source']
-        if 'sha256' in source and hashlib.sha256(source['text'].encode()).hexdigest() != source['sha256']:
-            raise ValueError('CHAT_SOURCE_CHANGED')
-    document = read_document(db, task_id, context, verified)
-    if document['text'] != verified['text']:
-        raise ValueError('CHAT_INPUT_MAPPING_REQUIRED')
+    """Revalidate an existing checkpoint only; no new model locator conversion."""
+    if source.get('kind') == 'input_mapping':
+        return bind_mapping(db,task_id,context,name,arguments,source['mapping'])[0]
     from services.handlers.chat_input_handoff import legacy_mapping
-    result = dict(arguments)
-    if name == 'generate_image' and {'source_prompt', 'plan_source'}.intersection(result):
-        raise ValueError('CHAT_SOURCE_IMAGE_REFERENCE_CONFLICT')
-    instruction = result.pop('prompt', None) if name != 'code_execute' else None
-    mapping = legacy_mapping(verified, document, mode=source['mode'],
-                             target='chat_source_text' if name == 'code_execute' else 'prompt',
-                             instruction=instruction)
-    return bind_mapping(db, task_id, context, name, result, mapping)[0]
-
-
+    document=read_document(db,task_id,context,source)
+    original=dict(arguments)
+    instruction=original.pop('prompt',None) if name!='code_execute' else None
+    mapping=legacy_mapping(source,document,mode=source.get('mode','exact'),
+        target='chat_source_text' if name=='code_execute' else 'prompt',instruction=instruction)
+    return bind_mapping(db,task_id,context,name,original,mapping)[0]
 
 
 def read_document(db, task_id, context, source):

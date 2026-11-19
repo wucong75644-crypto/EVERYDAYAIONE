@@ -112,6 +112,7 @@ def native_resolver(handler,request,context):
         or parent['conversation_id']!=request.conversation_id):raise PermissionError('TASK_IMAGE_RESOURCE_SCOPE_DENIED')
     owner=SimpleNamespace(db=handler.db,user_id=context.actor_user_id,workspace_user_id=context.workspace_owner_id,
         org_id=context.org_id,conversation_id=request.conversation_id,context_scope=context.context_scope,
+        personal_context_allowed=context.personal_context_allowed,
         task_id=request.task_id,execution_mode=context.execution_mode,
         resource_manifest=getattr(handler,'_resource_manifest',None),
         resource_access_boundary=getattr(handler,'_resource_access_boundary',None),

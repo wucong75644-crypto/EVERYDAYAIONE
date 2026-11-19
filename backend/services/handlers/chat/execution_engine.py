@@ -898,8 +898,20 @@ async def _run_loop(
             and not fast_knowledge and not coverage_blocked(runtime)
             and not (runtime.task_execution_state is not None and revision_blocked(runtime)))
         if prepared.content_controls_available:
-            tools = [*content_tools.model_tools(tools, mapping_names=content_tools.checkpoint_state(runtime).get('names', ())),
+            tools = [*content_tools.model_tools(tools),
                      *content_tools.SCHEMAS]
+        if content_tools.enabled(runtime,prepared.execution_context):
+            from services.task_execution.content_objects import requires_reference
+            if prepared.content_controls_available and requires_reference(runtime):
+                import copy
+                tools = copy.deepcopy(tools)
+                for tool in tools:
+                    if tool.get('function',{}).get('name')=='generate_image':
+                        parameters=tool['function']['parameters']
+                        parameters['properties']={'content_source':parameters['properties']['content_source']}
+                        for key in ('oneOf','anyOf','allOf','not'): parameters.pop(key,None)
+                        parameters['required']=['content_source']
+                        tool['function']['description']='执行已登记方案对象的一项；只传content_source，后台逐字传递保存的完整原文，绑定原图和规格，不拼接、改写或摘录提示词。'+tool['function']['description']
         prepared.content_visible_tool_names = {tool['function']['name'] for tool in tools if 'function' in tool}
         current_model_round = model_round
         if direct_enabled(runtime):
@@ -1006,6 +1018,8 @@ async def _run_loop(
                 if repeated_tool_call_action == "nudge" else None
             ),
         )
+        if getattr(handler, '_terminal_content_saved', False):
+            return None
         executor = getattr(handler, "_tool_executor", None)
         image_metrics = image_arguments.summary()
         if image_metrics is not None:
@@ -1192,7 +1206,7 @@ async def _read_turn(
                 for index, call in calls.items():
                     if (index in previewed_indices or not call.get("name")
                             or call["name"] in SKILL_CONTROL_TOOLS
-                            or call["name"] in {SAVE_IMAGE_PLAN, "get_conversation_context"}
+                            or call["name"] in {SAVE_IMAGE_PLAN, "save_task_text", "get_conversation_context"}
                             or call["name"] in content_tools.CONTROLS):
                         continue
                     preview_id = _actor_tool_preview_id(
@@ -1409,6 +1423,7 @@ async def _execute_tools_impl(
                 await candidate_workflow.initialize(recover_previous=False)
                 prepared.ecom_workflow = candidate_workflow
                 break
+    handler._terminal_content_saved = False
     from services.task_execution.model_directed import enabled as direct_enabled
     direct_errors={}
     direct_reused=[]
@@ -1426,9 +1441,6 @@ async def _execute_tools_impl(
             state = content_tools.checkpoint_state(runtime)
             names = set(state.get('names', ()))
             context = prepared.execution_context
-            selected_in_batch = False
-            source_read_failed = False
-            source_read_message = '无法核实所选原文，本轮已停止提交，请明确要使用的内容后继续。'
             for call in calls:
                 result = {'ok': False, 'code': 'CHAT_CONTENT_CONTROL_BARRIER'}
                 if call['name'] in content_tools.CONTROLS:
@@ -1448,32 +1460,19 @@ async def _execute_tools_impl(
                             candidates = content_tools.discover(context, args['query'], blocked)
                             names.update(item['name'] for item in candidates)
                             result = {'ok': True, 'tools': candidates}
-                        elif call['name'] == content_tools.READ and set(args) <= {'message_id', 'text_exact', 'text_exacts', 'selection_scope', 'for_mapping'}:
+                        elif call['name'] == content_tools.READ and set(args) <= {'message_id', 'text_exact', 'text_exacts'}:
                             result = {'ok': True, **await asyncio.to_thread(content_tools.source_text,
                                 handler.db, request.task_id, context, args)}
-                            sources = result.get('sources') or ([result['source']] if 'source' in result else [])
-                            if sources:
-                                state = content_tools.remember_selection(state, result, append=selected_in_batch)
-                                selected_in_batch = True
                         else:
                             raise ValueError('CHAT_CONTENT_ARGUMENTS_INVALID')
                     except (ValueError, TypeError, PermissionError, KeyError) as error:
                         code = str(error)
-                        if call['name'] == content_tools.READ:
-                            source_read_failed = True
-                            if 'TOO_LARGE' in code:
-                                source_read_message = '所选内容超出单次读取上限，本轮已停止提交，请分批选择。'
-                            state = {**state, 'source_selection_failed': True}
                         result = {'ok': False, 'code': code if code.startswith('CHAT_') else 'CHAT_CONTENT_UNAVAILABLE'}
                 output = json.dumps(result, ensure_ascii=False)
                 prepared.messages.append({'role': 'tool', 'tool_call_id': call['id'], 'content': output})
                 for block in blocks:
                     if block.get('tool_call_id') == call['id']:
                         block.update(status='error', output=output)
-            if source_read_failed:
-                message = source_read_message
-                state = {**state, 'source_selection_failed': True, 'stop_message': message}
-                handler._tool_result_stop_reason = message
             runtime.checkpoint_base[content_tools.STATE] = {**state, 'names': sorted(names)}
             await runtime.safe_point(SafePoint.AFTER_TOOL, replay_payload=_build_replay_context(
                 prepared.messages, blocks, turn, next_model_round=next_model_round,
@@ -1487,10 +1486,54 @@ async def _execute_tools_impl(
             await resume_from_model(runtime,prepared,blocks,calls,assistant,turn=turn,
                 model_round=next_model_round,build_checkpoint=_build_replay_context)
             return None
+        from services.task_execution import content_objects
+        if any(c['name'] == content_objects.SAVE for c in calls):
+            from services.task_execution.model_bridge import commit_projection
+            from services.tools.catalog import build_capability_catalog
+            from services.task_execution.contracts import TaskError
+            candidate = runtime.task_execution_state
+            prepared.messages.append(assistant)
+            saved_block = None
+            for call in calls:
+                result = {'ok':False,'code':'CONTENT_SAVE_BATCH_BARRIER'}
+                if call['name'] == content_objects.SAVE and len(calls) == 1:
+                    try:
+                        if recovery_only or not content_tools.enabled(runtime,prepared.execution_context):
+                            raise TaskError('CONTENT_SAVE_UNAVAILABLE')
+                        if content_objects.requires_reference(runtime):
+                            raise TaskError('CONTENT_CONSUMER_CANNOT_REWRITE')
+                        candidate, artifact, document, value = content_objects.save(runtime,call,build_capability_catalog())
+                        result = {'ok':True,'object':next(row for row in content_objects.catalog(candidate) if row['artifact_id']==artifact.id)}
+                        saved_block = {'type':'text','text':content_objects.render(document)}
+                    except (ValueError,TypeError,KeyError) as error:
+                        result = {'ok':False,'code':str(error) if isinstance(error,TaskError) else 'CONTENT_OBJECT_INVALID',
+                                  'parameters':content_objects.SCHEMA['function']['parameters']}
+                        if hasattr(error,'errors'):
+                            result['issues']=error.errors(include_input=False,include_url=False,include_context=False)[:12]
+                prepared.messages.append({'role':'tool','tool_call_id':call['id'],'content':json.dumps(result,ensure_ascii=False)})
+                blocks[:] = [b for b in blocks if b.get('tool_call_id') != call['id']]
+            if saved_block is not None: blocks.append(saved_block)
+            original_skills=runtime.skill_runtime
+            runtime.skill_runtime=retire_saved_image_method(runtime,candidate)
+            await commit_projection(runtime=runtime,candidate=candidate,prepared=prepared,blocks=blocks,
+                point=SafePoint.AFTER_TOOL,build_checkpoint=_build_replay_context,turn=turn,
+                next_model_round=next_model_round,repeated_tool_call_guard=repeated_tool_call_guard)
+            if runtime.skill_runtime is not original_skills:
+                _apply_skill_context(prepared,runtime.skill_runtime)
+            if saved_block is not None:
+                await sink.on_block(saved_block)
+                handler._terminal_content_saved = not value.continue_execution
+            return None
         if (any(c['name'] == SAVE_IMAGE_PLAN for c in calls)
                 and not any(c['name'] in SKILL_CONTROL_TOOLS for c in calls)):
             from services.task_execution.model_bridge import commit_projection
             from services.tools.catalog import build_capability_catalog
+            if not recovery_only:
+                prepared.messages.append(assistant)
+                for call in calls:
+                    prepared.messages.append({'role':'tool','tool_call_id':call['id'],'content':json.dumps({'ok':False,'code':'CONTENT_SAVE_PATH_RETIRED','parameters':content_objects.SCHEMA['function']['parameters']},ensure_ascii=False)})
+                await runtime.safe_point(SafePoint.AFTER_TOOL,replay_payload=_build_replay_context(prepared.messages,blocks,turn,next_model_round=next_model_round))
+                return None
             candidate = stage_image_plan_batch(runtime, prepared, blocks, calls, assistant, build_capability_catalog())
             original_skills = runtime.skill_runtime
             runtime.skill_runtime = retire_saved_image_method(runtime, candidate)
@@ -1528,70 +1571,48 @@ async def _execute_tools_impl(
                 args = None
             content_state = content_tools.checkpoint_state(runtime)
             saved_binding = content_state.get('bindings', {}).get(call['id'], {})
-            if (isinstance(args, dict) and 'chat_input' not in args
-                    and saved_binding.get('kind') == 'input_mapping'
-                    and isinstance(saved_binding.get('input_arguments'), dict)
-                    and saved_binding.get('proof', {}).get('tool') == call['name']):
+            if isinstance(args,dict) and saved_binding.get('kind') == 'content_object' and 'content_source' not in args:
                 from services.task_execution.reducer import digest
                 if digest(args) == saved_binding.get('arguments_sha256'):
-                    # A checkpoint may contain either the model's proposal or
-                    # its already assembled call. Rebuild from pinned sources
-                    # and original code, never inject a file body a second time.
-                    import copy
-                    args = {**copy.deepcopy(saved_binding['input_arguments']),
-                            'chat_input': copy.deepcopy(saved_binding['mapping'])}
-            if (call['name'] in content_tools.INPUT_TOOLS or isinstance(args, dict) and 'chat_input' in args) and content_state.get('source_selection_failed'):
-                direct_errors[call['id']] = ('CHAT_SOURCE_UNAVAILABLE',
-                    '引用尚未核实，请先重新定位需要执行的原文。')
-                projected_calls.append(call)
-                continue
-            automatically_selected = False
-            if isinstance(args, dict) and 'chat_input' in args:
-                mapping = args.pop('chat_input')
-                try:
-                    if (not content_tools.enabled(runtime, prepared.execution_context)
-                            or not recovery_only and not getattr(prepared, 'content_controls_available', False)):
-                        raise PermissionError('CHAT_INPUT_MAPPING_UNAVAILABLE')
-                    resolved, source = await asyncio.to_thread(content_tools.bind_mapping, handler.db,
-                        request.task_id, prepared.execution_context, call['name'], args, mapping)
-                    bound_sources[call['id']] = (args, source, resolved)
-                    projected_calls.append({**call, 'arguments': json.dumps(resolved, ensure_ascii=False)})
-                except (ValueError, TypeError, PermissionError, KeyError) as error:
-                    code = str(error)
-                    code = code if code.startswith(('CHAT_INPUT_', 'CHAT_SOURCE_')) else 'CHAT_INPUT_MAPPING_INVALID'
-                    direct_errors[call['id']] = (code, '本次未派发，输入映射核验失败：' + code)
-                    projected_calls.append(call)
-                continue
+                    args = {**saved_binding['input_arguments'], 'content_source':saved_binding['reference']}
+            if (recovery_only and saved_binding.get('kind')=='input_mapping'
+                    and isinstance(args,dict)):
+                from services.task_execution.reducer import digest
+                if digest(args)==saved_binding.get('arguments_sha256'):
+                    original=saved_binding['input_arguments']
+                    resolved,source=await asyncio.to_thread(content_tools.bind_mapping,handler.db,
+                        request.task_id,prepared.execution_context,call['name'],original,saved_binding['mapping'])
+                    bound_sources[call['id']]=(original,source,resolved)
+                    projected_calls.append({**call,'arguments':json.dumps(resolved,ensure_ascii=False)})
+                    continue
             try:
-                if (isinstance(args, dict) and call['name'] in content_tools.INPUT_TOOLS
-                        and not any(key in args for key in ('plan_source', 'source_prompt'))):
-                    selected = content_tools.selected_source(content_state, args)
-                    if selected is not None:
-                        automatically_selected = 'chat_text_source' not in args
-                        args['chat_text_source'] = selected
-            except ValueError as error:
-                direct_errors[call['id']] = (str(error), '存在多条已选原文，请明确本次调用使用哪一条。')
+                from services.task_execution import content_objects
+                if call['name']=='image_agent' and not recovery_only and content_tools.enabled(runtime,prepared.execution_context):
+                    raise ValueError('CONTENT_INPUT_PATH_RETIRED')
+                if isinstance(args,dict) and 'content_source' in args:
+                    if (not content_tools.enabled(runtime,prepared.execution_context)
+                            or not recovery_only and not getattr(prepared,'content_controls_available',False)):
+                        raise PermissionError('CONTENT_SOURCE_DENIED')
+                    original = dict(args); reference = original.pop('content_source')
+                    resolved, source = content_objects.compile_input(runtime.task_execution_state,call['name'],original,reference,allow_old=recovery_only)
+                    bound_sources[call['id']] = (original,source,resolved)
+                    projected_calls.append({**call,'arguments':json.dumps(resolved,ensure_ascii=False)})
+                    continue
+                if (isinstance(args,dict) and isinstance(args.get('source_prompt'),dict)
+                        and 'content_object' in args['source_prompt'] and not recovery_only):
+                    raise ValueError('CONTENT_SOURCE_REQUIRED')
+                if (isinstance(args,dict) and not recovery_only and content_tools.enabled(runtime,prepared.execution_context)
+                        and ({'chat_input','chat_text_source'}.intersection(args) or 'source_prompt' in args)):
+                    raise ValueError('CONTENT_INPUT_PATH_RETIRED')
+                if (call['name'] in {'generate_image','generate_video'} and not recovery_only
+                        and content_tools.enabled(runtime,prepared.execution_context)
+                        and not (call['name']=='generate_image' and isinstance(args,dict) and set(args)=={'plan_source'})):
+                    raise ValueError('CONTENT_SOURCE_REQUIRED')
                 projected_calls.append(call)
-                continue
-            if not isinstance(args, dict) or 'chat_text_source' not in args:
-                projected_calls.append(call)
-                continue
-            source = args.pop('chat_text_source')
-            try:
-                if (not content_tools.enabled(runtime, prepared.execution_context)
-                        or (not recovery_only and not automatically_selected
-                            and not getattr(prepared, 'content_controls_available', False))):
-                    raise PermissionError('CHAT_SOURCE_DENIED')
-                resolved = await asyncio.to_thread(content_tools.bind_call, handler.db, request.task_id,
-                    prepared.execution_context, call['name'], args, source)
-                source = {**source, 'sha256': hashlib.sha256(source['text'].encode()).hexdigest()}
-                bound_sources[call['id']] = (args, source, resolved)
-                projected_calls.append({**call, 'arguments': json.dumps(resolved, ensure_ascii=False)})
             except (ValueError, TypeError, PermissionError, KeyError) as error:
                 code = str(error)
-                code = code if code.startswith('CHAT_') else 'CHAT_SOURCE_UNAVAILABLE'
-                direct_errors[call['id']] = (
-                    code, '执行内容未通过来源或完整性核验，本次未派发：' + code + '。请重新定位所需内容。')
+                code = code if code.startswith(('CHAT_INPUT_', 'CHAT_SOURCE_', 'CONTENT_')) else 'CHAT_INPUT_MAPPING_INVALID'
+                direct_errors[call['id']] = (code, '本次未派发，输入核验失败：' + code)
                 projected_calls.append(call)
         calls = projected_calls
         visible = getattr(prepared, 'content_visible_tool_names', None)
@@ -1906,45 +1927,6 @@ async def _execute_tools_impl(
             'image_binding_writer': persist_workflow_binding}
            if runtime and runtime.skill_runtime is not None and runtime.skill_runtime.checkpoint_version == 2 else {}),
     ) if ready_calls else []
-    if direct_enabled(runtime):
-        selected_in_batch = False
-        source_read_failed = False
-        for call, result, is_error, _display in results:
-            if call['name'] != 'get_conversation_context':
-                continue
-            if is_error:
-                try:
-                    arguments = json.loads(call.get('arguments') or '{}')
-                except (ValueError, TypeError):
-                    arguments = {}
-                if isinstance(arguments, dict) and ({'text_exact', 'text_exacts'}.intersection(arguments) or arguments.get('for_mapping')):
-                    source_read_failed = True
-                    state = content_tools.checkpoint_state(runtime)
-                    runtime.checkpoint_base[content_tools.STATE] = {**state, 'source_selection_failed': True}
-                    error = getattr(result, 'exception', None) or getattr(result, 'summary', result)
-                    handler._tool_result_stop_reason = (
-                        '所选内容超出单次读取上限，本轮已停止提交，请分批选择。' if 'TOO_LARGE' in str(error)
-                        else '无法核实所选原文，本轮已停止提交，请明确要使用的内容后继续。')
-                continue
-            try:
-                from services.tools.result import ToolResult
-                raw = result.raw if isinstance(result, ToolResult) else getattr(result, 'summary', result)
-                selection = json.loads(raw)
-            except (ValueError, TypeError, AttributeError):
-                continue
-            if isinstance(selection, dict):
-                state = content_tools.checkpoint_state(runtime)
-                try:
-                    updated = content_tools.remember_selection(state, selection, append=selected_in_batch)
-                    runtime.checkpoint_base[content_tools.STATE] = updated
-                    selected_in_batch = selected_in_batch or bool(updated.get('selected_sources'))
-                except ValueError:
-                    source_read_failed = True
-                    handler._tool_result_stop_reason = '所选原文过多，请分批选择后继续。'
-        if source_read_failed:
-            state = content_tools.checkpoint_state(runtime)
-            runtime.checkpoint_base[content_tools.STATE] = {**state, 'source_selection_failed': True,
-                'stop_message': handler._tool_result_stop_reason}
     if rejected or direct_reused:
         by_call = {item[0]["id"]: item for item in [*results, *rejected,*direct_reused]}
         results = [by_call[call["id"]] for call in calls]
@@ -1959,17 +1941,16 @@ async def _execute_tools_impl(
                    or getattr(result, 'error_message', None) or getattr(result, 'exception', ''))
         if code.startswith(('CHAT_INPUT_', 'CHAT_SOURCE_')):
             direct_errors.setdefault(call['id'], (code, '执行输入未通过核验，本次停止自动提交：' + code))
-    if any(code.startswith(('CHAT_INPUT', 'CHAT_SOURCE', 'IMAGE_SOURCE', 'IMAGE_ORIGINAL', 'IMAGE_REFERENCE',
+    if any(code.startswith(('CHAT_INPUT', 'CHAT_SOURCE', 'CONTENT_', 'IMAGE_SOURCE', 'IMAGE_ORIGINAL', 'IMAGE_REFERENCE',
                             'IMAGE_QUOTED', 'IMAGE_ASSET', 'IMAGE_CONTENT', 'IMAGE_LEGACY',
                             'RESOURCE_', 'TASK_IMAGE_INPUT', 'TASK_IMAGE_RESOURCE',
                             'IMAGE_SIZE', 'IMAGE_ASPECT', 'IMAGE_EXACT', 'IMAGE_CANVAS', 'IMAGE_DIMENSIONS',
-                            'IMAGE_RESOLUTION')) for code, _message in direct_errors.values()):
+                            'IMAGE_RESOLUTION')) for call_id, (code, _message) in direct_errors.items()):
         reasons = list(dict.fromkeys(message for _code, message in direct_errors.values()))
         handler._tool_result_stop_reason = '本轮已停止提交。' + '\n'.join(reasons)
         if direct_enabled(runtime):
             state = content_tools.checkpoint_state(runtime)
-            runtime.checkpoint_base[content_tools.STATE] = {**state, 'source_selection_failed': True,
-                'stop_message': handler._tool_result_stop_reason}
+            runtime.checkpoint_base[content_tools.STATE] = {**state, 'stop_message': handler._tool_result_stop_reason}
     for call, result, is_error, _display in results:
         if (call["name"] == "plan_ecommerce_images" and is_error
                 and getattr(result, "metadata", {}).get("stop_workflow") is True):

@@ -215,6 +215,14 @@ async def test_async_image_acceptance_leaves_main_model_free_to_finish_independe
     monkeypatch.setattr('services.handlers.chat.execution_engine.compact_tool_context',AsyncMock())
     h.org_id=None;h.db=object();rounds=[]
     args={'mode':'text_to_image','prompt':'用户完整原提示词','aspect_ratio':'3:4'}
+    from services.task_execution import content_objects as co
+    p.content_controls_available=True
+    await execute(r,p,h,req,[call(co.SAVE,{'document':{'title':'完整提示词','items':[{'title':'图1','body':args['prompt'],'materials':[],'options':{'aspect_ratio':'3:4'}}]}},'saved-text')])
+    row=co.catalog(r.task_execution_state)[0]
+    reference={k:row[k] for k in ('artifact_id','sha256')}|{'item_index':1}
+    # This test isolates post-acceptance scheduling; its in-memory history has no persisted text source.
+    def no_history_source(*_args): return {}
+    monkeypatch.setattr('services.handlers.chat.content_tools.source_text', no_history_source)
     r.task_operation_store=SimpleNamespace(registry=build_capability_catalog())
     r.task_image_resource_resolver=SimpleNamespace(prepare_request=AsyncMock(return_value=(args,[],None)))
     monkeypatch.setattr('services.task_execution.image_resources.create_resolver',lambda *a:r.task_image_resource_resolver)
@@ -233,7 +241,7 @@ async def test_async_image_acceptance_leaves_main_model_free_to_finish_independe
     async def model(current,tools,*args_,**kwargs):
         assert not kwargs.get('task_review')
         rounds.append(kwargs['model_round'])
-        if len(rounds)==1:return '', '', [call('generate_image',args,'image')],set()
+        if len(rounds)==1:return '', '', [call('generate_image',{'content_source':reference},'image')],set()
         assert r.task_execution_state.status=='active'
         assert r.task_execution_state.operations, [m for m in current.messages if m.get('role')=='tool']
         assert r.task_execution_state.operations[0].status=='accepted'
@@ -323,31 +331,27 @@ async def test_original_method_saves_before_dispatch_and_reuses_actual_five_item
     from pathlib import Path
     replay = os.getenv('TASK_ORIGINAL_REFERENCE_PLAN') if key == 'reference-image-prompts' else None
     plan = ImageMethodDocument.model_validate_json(Path(replay).read_text() if replay else document(5))
-    second = plan.image_plans[1]
-    image = {'prompt': image_prompt(second), 'aspect_ratio': second.aspect_ratio, 'mode': 'text_to_image'}
-    blocks = await execute(runtime, prepared, handler, request, [
-        call(SAVE_IMAGE_PLAN, {'image_count': 5, 'document': plan.model_dump(mode='json')}, 'save-five'),
-        call('generate_image', image, 'too-early'),
-    ])
+    from services.task_execution import content_objects as co
+    prepared.content_controls_available=True
+    original={'title':'原方法五条完整稿','items':[{'title':brief.title,'body':image_prompt(brief),'materials':[],
+        'options':{'aspect_ratio':brief.aspect_ratio}} for brief in plan.image_plans]}
+    blocks=await execute(runtime,prepared,handler,request,[call(co.SAVE,{'document':original},'save-five')])
     handler._execute_tool_calls.assert_not_awaited()
-    state = runtime.task_execution_state
-    artifact, = saved_image_plans(state)
-    assert len(ImageMethodDocument.model_validate_json(artifact.inline_text).image_plans) == 5
-    assert artifact.id == saves[-1]['_task_execution']['artifacts'][0]['id']
-    assert image_plan_item(state, set(), image) == {'artifact_id': artifact.id, 'image_item_index': 2}
-    with pytest.raises(TaskError, match='TASK_IMAGE_ARGUMENTS_NOT_PLANNED'):
-        image_plan_item(state, set(), {**image, 'prompt': 'rewritten'})
-    assert str(TaskState.model_validate(saves[-1]['_task_execution']).root_task_id) == runtime.task_id
-    assert any(b.get('tool_call_id') == 'too-early' and b['status'] == 'error' for b in blocks)
-    assert all(b.get('tool_name') != SAVE_IMAGE_PLAN for b in blocks)
-    assert any(m.get('tool_call_id') == 'save-five' and json.loads(m['content'])['ok']
-               for m in saves[-1]['messages'] if m.get('role') == 'tool')
-    restored = original_runtime(source, task_state=state, turn_id=runtime.turn_id)
+    state=runtime.task_execution_state
+    row=co.catalog(state)[0]
+    location={k:row[k] for k in ('artifact_id','sha256')}
+    artifact=next(a for a in state.artifacts if a.id==row['artifact_id'])
+    assert len(co.load(state,location|{'item_index':1})[1].items)==5
+    assert artifact.image_method.skill_key==key
+    from services.task_execution.plan_facts import requires_review
+    assert not requires_review(state,artifact)
+    assert not any(t['function']['name']==SAVE_IMAGE_PLAN for t in schemas(runtime))
+    restored=original_runtime(source,task_state=state,turn_id=runtime.turn_id)
     await restored.initialize(saves[-1]['skill_runtime'])
     assert 'generate_image' in restored.effective_allowed_tool_names
-    assert key in (restored.resident if key == 'reference-image-prompts' else restored.active)
-    runtime.skill_runtime = restored
-
+    assert key in (restored.resident if key=='reference-image-prompts' else restored.active)
+    runtime.skill_runtime=restored
+    image,_=co.compile_input(state,'generate_image',{},location|{'item_index':2})
     registry = build_capability_catalog()
     runtime.task_image_resource_resolver = SimpleNamespace(
         prepare_request=AsyncMock(side_effect=lambda args, *_a, **_kw: (args, [], None)))
@@ -405,10 +409,7 @@ async def test_original_method_saves_before_dispatch_and_reuses_actual_five_item
         return results
 
     handler._execute_tool_calls.side_effect = accept
-    requested = [dispatch] if submission_count == 1 else [
-        call('generate_image', {**image, 'prompt': image_prompt(brief), 'aspect_ratio': brief.aspect_ratio},
-             f'image-{index}')
-        for index, brief in enumerate(plan.image_plans, 1)]
+    requested=[call('generate_image',{'content_source':location|{'item_index':i}},f'image-{i}') for i in ([2] if submission_count==1 else range(1,6))]
     await execute(runtime, prepared, handler, request, requested, blocks=blocks)
     assert submitted == [raw['id'] for raw in requested]
     assert len(runtime.task_execution_state.operations) == submission_count
@@ -465,15 +466,13 @@ async def test_chat_revision_discovery_and_binding_video_and_word(monkeypatch, t
         org_id=None, turn=0, messages=[], tool_context=prepared.tool_context,
         permission=prepared.permission, execution_context=prepared.execution_context)
     schema = next(t for t in content_tools.model_tools(tools) if t['function']['name'] == 'generate_video')
-    assert 'chat_text_source' in schema['function']['parameters']['properties']
+    assert 'content_source' in schema['function']['parameters']['properties']
 
-    # The same history fragment also uses the existing native source_prompt contract.
-    image_args = content_tools.bind_call(handler.db, request.task_id, prepared.execution_context,
-        'generate_image', {'mode': 'text_to_image'}, {**source, 'mode': 'exact'})
-    assert image_args['prompt'] == revision
-    assert image_args['source_prompt']['handoff']['version'] == 2
-    assert image_args['source_prompt']['handoff']['mapping']['sources'][0]['message_id'] == source['message_id']
-
+    from services.task_execution import content_objects as co
+    await execute(runtime,prepared,handler,request,[call(co.SAVE,{'document':{'title':'修订稿','items':[
+        {'title':'最终原文','body':revision,'materials':[],'options':{}}]}},'register')])
+    row=co.catalog(runtime.task_execution_state)[0]
+    reference={k:row[k] for k in ('artifact_id','sha256')}|{'item_index':1}
     delivered = {}
     async def accept(calls, *_args, **kwargs):
         for raw in calls:
@@ -505,109 +504,19 @@ async def test_chat_revision_discovery_and_binding_video_and_word(monkeypatch, t
     handler._execute_tool_calls.side_effect = accept
     runtime.task_operation_store = SimpleNamespace(registry=build_capability_catalog())
     await execute(runtime, prepared, handler, request, [
-        call('generate_video', {'chat_input': {'sources': [{'message_id': message_id, 'content_index': 0}],
-            'parts': [{'source': 0, 'start': 0, 'end': len(revision), 'action': 'text', 'target': 'prompt'}]}}, 'video'),
+        call('generate_video', {'content_source':reference}, 'video'),
         call('code_execute', {'code': "from docx import Document\ndoc = Document()\ndoc.add_paragraph(chat_source_text)\ndoc.save('下载/revision.docx')\nemit_file('下载/revision.docx')",
-            'description': '按修订稿交付Word',
-            'chat_input': {'sources': [{'message_id': message_id, 'content_index': 0}],
-                'parts': [{'source': 0, 'start': 0, 'end': len(revision), 'action': 'text', 'target': 'chat_source_text'}]}}, 'word'),
+            'description':'按修订稿交付Word','content_source':reference}, 'word'),
     ])
     assert delivered == {'video_prompt': revision, 'word': revision}
-    bindings = runtime.checkpoint_base[content_tools.STATE]['bindings']
-    assert bindings['video']['sha256'] == bindings['word']['sha256'] == source['sha256']
-    rows[0]['content'][0]['text'] = '旧内容已经变更'
-    await execute(runtime, prepared, handler, request, [
-        call('generate_video', {'prompt': revision, 'chat_text_source': {**source, 'mode': 'exact'}}, 'stale'),
-    ])
-    assert 'CHAT_SOURCE_DOCUMENT_CHANGED' in str(prepared.messages[-1]['content'])
+    bindings=runtime.checkpoint_base[content_tools.STATE]['bindings']
+    assert bindings['video']['reference']==bindings['word']['reference']==reference
+    rows[0]['content'][0]['text']='历史聊天已变化，但保存的原文不变'
     handler._execute_tool_calls.assert_awaited_once()
-    await execute(runtime, prepared, handler, request, [
-        call(content_tools.READ, {'text_exact': revision}, 'failed-selection'),
-    ])
-    await execute(runtime, prepared, handler, request, [
-        call('generate_video', {'prompt': '绕过失败的来源选择'}, 'unbound-after-failure'),
-    ])
-    assert '引用尚未核实' in str(prepared.messages[-1]['content'])
+    await execute(runtime,prepared,handler,request,[call('generate_video',{'prompt':revision,'chat_text_source':{**source,'mode':'exact'}},'retired')])
+    assert 'CONTENT_INPUT_PATH_RETIRED' in str(prepared.messages[-1])
     handler._execute_tool_calls.assert_awaited_once()
 
-
-@pytest.mark.asyncio
-async def test_original_prompt_skill_text_then_second_item_in_new_turn(monkeypatch):
-    import os
-    from pathlib import Path
-    from services.agent.agent_result import AgentResult
-    from services.handlers.chat import content_tools
-    from services.skills.selection import SkillSelection
-    from services.task_execution.image_binding import image_prompt
-    from services.task_execution.methods import ImageMethodDocument
-    from tests.test_task_execution_original_skills import OriginalSource, original_runtime
-
-    replay = os.getenv('TASK_ORIGINAL_REFERENCE_PLAN')
-    if not replay or not os.getenv('TASK_ORIGINAL_SKILLS_EXPORT'):
-        pytest.skip('Requires the original published Skill and saved plan')
-    source = OriginalSource()
-    key = 'reference-image-prompts'
-    selection = SkillSelection(skill_id=key, revision=source.values[key].revision)
-    first, _, first_handler, _ = case()
-    skills = original_runtime(source, turn_id=first.turn_id)
-    await skills.initialize(selection=selection)
-    assert (await skills.activate_manual(selection))['ok']
-    plan = ImageMethodDocument.model_validate_json(Path(replay).read_text())
-    # Scripted model text from the original saved document. No model or image provider call.
-    prompts = [image_prompt(brief) for brief in plan.image_plans]
-    text = '\n\n'.join(f'{index}. {prompt}' for index, prompt in enumerate(prompts, 1))
-    first_handler._execute_tool_calls.assert_not_awaited()
-
-    runtime, prepared, handler, request = case()
-    prepared.content_controls_available = True
-    prepared.messages.extend([{'role': 'assistant', 'content': text},
-                              {'role': 'user', 'content': '只用刚才第二条提示词生成一张。'}])
-    message_id = str(uuid4())
-    parent = {'user_id': request.user_id, 'org_id': None,
-              'conversation_id': request.conversation_id, 'base_context_revision': 4}
-    history = [{'id': message_id, 'role': 'assistant', 'content': [{'type': 'text', 'text': text}]}]
-
-    class Query:
-        def __init__(self, table):
-            self.name = table
-        def __getattr__(self, name):
-            return lambda *args, **kwargs: self
-        def execute(self):
-            return SimpleNamespace(data=parent if self.name == 'tasks' else history)
-
-    handler.db = SimpleNamespace(table=Query)
-    monkeypatch.setattr(content_tools, '_check_identity', lambda *_: None)
-    monkeypatch.setattr('services.handlers.chat.execution_engine.compact_tool_context', AsyncMock())
-    await execute(runtime, prepared, handler, request, [
-        call(content_tools.READ, {'message_id': message_id, 'text_exact': prompts[1]}, 'read-second'),
-    ])
-    selected = json.loads(prepared.messages[-1]['content'])['source']
-    registry = build_capability_catalog()
-    runtime.task_operation_store = SimpleNamespace(registry=registry)
-    runtime.task_image_resource_resolver = SimpleNamespace(
-        prepare_request=AsyncMock(side_effect=lambda args, *_a, **_kw: (args, [], None)))
-    seen = []
-
-    async def accept(calls, *_args, **_kwargs):
-        raw, = calls
-        seen.append(json.loads(raw['arguments']))
-        return [(raw, AgentResult('受控图片调用'), False, '受控图片调用')]
-
-    handler._execute_tool_calls.side_effect = accept
-    start = text.index(prompts[1]); end = start + len(prompts[1])
-    mapped_parts = [
-        {'source': 0, 'start': 0, 'end': start, 'action': 'exclude', 'reason': '其他提示词及编号'},
-        {'source': 0, 'start': start, 'end': end, 'action': 'text', 'target': 'prompt'},
-        {'source': 0, 'start': end, 'end': len(text), 'action': 'exclude', 'reason': '本次未选择的其余提示词'}]
-    await execute(runtime, prepared, handler, request, [
-        call('generate_image', {'mode': 'text_to_image', 'chat_input': {
-             'sources': [{'message_id': message_id, 'content_index': 0}], 'parts': mapped_parts},
-             'aspect_ratio': plan.image_plans[1].aspect_ratio}, 'second-image')])
-    assert len(seen) == 1
-    assert seen[0]['prompt'] == selected['text']
-    assert prompts[1] in seen[0]['prompt'] and prompts[0] not in seen[0]['prompt']
-    assert seen[0]['source_prompt']['handoff']['mapping']['sources'][0]['message_id'] == message_id
-    assert 'plan_source' not in seen[0]
 
 @pytest.mark.asyncio
 async def test_exact_word_delivery_checks_host_file_before_upload(monkeypatch, tmp_path):
@@ -649,7 +558,7 @@ async def test_source_failure_preserves_reason_and_stops_automatic_generation(mo
              'aspect_ratio': '1:1'}, 'bad-source'),
     ])
     handler._execute_tool_calls.assert_not_awaited()
-    assert 'IMAGE_SOURCE_PROMPT_CHANGED' in str(prepared.messages[-1]['content'])
+    assert 'CONTENT_INPUT_PATH_RETIRED' in str(prepared.messages[-1]['content'])
     assert '停止提交' in handler._tool_result_stop_reason
 
 
@@ -695,30 +604,9 @@ async def test_selected_fragments_survive_batch_reads_without_last_item_overwrit
     name = content_tools.READ if reader == 'new' else 'get_conversation_context'
     location = {'message_id': message_id} if reader == 'new' else {'message_ids': [message_id]}
     # This test explicitly selects individual fragments, not entire documents.
-    location['selection_scope'] = 'fragment'
     reads = ([call(name, {**location, 'text_exact': text}, f'read-{index}') for index, text in enumerate(texts)]
              if parallel else [call(name, {**location, 'text_exacts': texts}, 'read-all')])
     await execute(runtime, prepared, handler, request, reads)
-    state = content_tools.checkpoint_state(runtime)
-    assert [source['text'] for source in state['selected_sources']] == texts
-    runtime.task_operation_store = SimpleNamespace(registry=build_capability_catalog())
-    runtime.task_image_resource_resolver = SimpleNamespace(
-        prepare_request=AsyncMock(side_effect=lambda args, *_args, **_kwargs: (args, [], None)))
-    prepared.content_controls_available = True
-    mapped_calls = []
-    full = '\n'.join(texts)
-    for index, text in enumerate(texts):
-        parts = []
-        for other in texts:
-            start = full.index(other)
-            part = {'source': 0, 'start': start, 'end': start + len(other)}
-            part.update(action='text', target='prompt') if other == text else part.update(action='exclude', reason='本次选择另一条')
-            parts.append(part)
-        parts.append({'source': 0, 'start': len(texts[0]), 'end': len(texts[0]) + 1,
-                      'action': 'exclude', 'reason': '原段落分隔符不进入本次提示词'})
-        mapped_calls.append(call('generate_image', {'mode': 'text_to_image', 'aspect_ratio': '1:1',
-            'chat_input': {'sources': [{'message_id': message_id, 'content_index': 0}], 'parts': parts}}, f'image-{index}'))
-    await execute(runtime, prepared, handler, request, mapped_calls)
-    assert seen == texts
-    proofs = content_tools.checkpoint_state(runtime)['bindings']
-    assert proofs['image-0']['sha256'] != proofs['image-1']['sha256']
+    state=content_tools.checkpoint_state(runtime)
+    assert 'selected_sources' not in state and 'bindings' not in state
+    assert not seen

@@ -499,6 +499,10 @@ class ChatImageInputResolver:
 
     def source_prompt(self, source: dict, prompt: str) -> dict:
         """A source is exact text and hash; no summary-based reconstruction."""
+        if isinstance(source,dict) and set(source)=={'content_object'}:
+            expected = self.verify_content_object(source['content_object'])
+            if expected.get('prompt') != prompt: raise ValueError('CONTENT_ARGUMENT_CHANGED')
+            return deepcopy(source)
         if isinstance(source, dict) and set(source) == {'handoff'}:
             outputs = self.verify_handoff(source['handoff'])
             if outputs.get('prompt') != prompt:
@@ -551,40 +555,27 @@ class ChatImageInputResolver:
         return {**deepcopy(source),"start":start,"end":start+len(prompt)}
 
     def complete_source_prompt(self, source: dict, prompt: str):
-        """Complete new message inputs; already accepted task snapshots stay exact."""
-        if 'handoff' in source or 'task_id' in source:
-            return prompt, self.source_prompt(source, prompt)
-        from services.handlers.chat_context.image_sources import content_parts
-        from services.handlers.chat_input_handoff import assemble, legacy_mapping
-        from services.tools.catalog import build_tool_catalog
-        row = self._message(source['message_id'])
-        parts = content_parts(row['content'])
-        index = source.get('content_index')
-        if type(index) is not int or not 0 <= index < len(parts) or parts[index].get('type') != 'text':
-            raise ValueError('IMAGE_SOURCE_PROMPT_INVALID')
-        text = parts[index]['text']
-        if 'bundle' in source:
-            # Verify the saved proof independently of the proposed prompt so
-            # mismatched bytes and missing purpose decisions are distinct.
-            proof = source['bundle']
-            try:
-                original = '\n\n'.join(text[p['start']:p['end']] for p in proof['spans'])
-            except (KeyError, TypeError):
-                raise ValueError('CHAT_SOURCE_PROOF_INVALID') from None
-            from services.handlers.chat_content_bundle import verify
-            verify(text, original, proof)
-            if original != text:
-                raise ValueError('CHAT_INPUT_MAPPING_REQUIRED')
-        verified = self.source_prompt(source, prompt)
-        document = {'text': text, 'context_revision': row.get('context_revision')}
-        mapping = legacy_mapping({'message_id': source['message_id'], 'content_index': index,
-                                  'text': text if 'adaptation' in source else prompt}, document,
-                                 mode='adapted' if 'adaptation' in source else 'exact',
-                                 instruction=source.get('adaptation'))
-        parameters = build_tool_catalog().require('generate_image').to_schema()['function']['parameters']
-        outputs, proof = assemble(mapping, lambda _: document, parameters,
-                                  reserved=('source_prompt', 'plan_source'))
-        return outputs['prompt'], {'handoff': {**proof, 'tool': 'generate_image'}}
+        """Read-only verification of the supplied text; never expand or rewrite it."""
+        return prompt,self.source_prompt(source,prompt)
+
+    def verify_content_object(self,proof):
+        from services.task_execution.content_objects import compile_input
+        from services.task_execution.reducer import digest
+        if not isinstance(proof,dict) or set(proof)!={'version','source','tool','arguments','arguments_sha256'} or proof['version']!=1 or proof['tool']!='generate_image':
+            raise ValueError('CONTENT_PROOF_INVALID')
+        state=getattr(self.owner,'_task_execution_state',None)
+        if state is None: state=getattr(getattr(self.owner,'_actor_runtime',None),'task_execution_state',None)
+        if (state is None or str(state.actor_user_id)!=str(self.owner.user_id)
+                or str(state.conversation_id)!=str(self.owner.conversation_id)
+                or (str(state.org_id) if state.org_id else None)!=self.owner.org_id
+                or not getattr(self.owner,'personal_context_allowed',False)
+                or not state.execution_identity.personal_context_allowed
+                or state.execution_identity.context_scope!=getattr(self.owner,'context_scope','user')
+                or state.execution_identity.workspace_owner_id!=str(getattr(self.owner,'workspace_user_id',self.owner.user_id))):
+            raise PermissionError('CONTENT_SOURCE_DENIED')
+        expected,_=compile_input(state,'generate_image',proof['arguments'],proof['source'],allow_old=True)
+        if expected['source_prompt']['content_object']!=proof: raise ValueError('CONTENT_PROOF_CHANGED')
+        return {k:v for k,v in expected.items() if k!='source_prompt'}
 
     def verify_handoff(self, proof):
         from services.handlers.chat_input_handoff import assemble

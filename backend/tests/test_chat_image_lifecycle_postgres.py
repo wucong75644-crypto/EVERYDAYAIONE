@@ -487,8 +487,9 @@ async def test_exact_history_selects_prompt_without_summary_guess(facts,monkeypa
         assert selected["prompt"]==prompt and selected["source_prompt"]["sha256"]==hashlib.sha256(prompt.encode()).hexdigest()
         resolver=ChatImageInputResolver(owner,base_revision=2,input_message_id="")
         source=resolver.source_prompt(selected["source_prompt"],prompt)
-        with pytest.raises(ValueError,match="CHAT_INPUT_MAPPING_REQUIRED"):
-            resolver.complete_source_prompt(selected["source_prompt"],prompt)
+        unchanged,verified=resolver.complete_source_prompt(selected['source_prompt'],prompt)
+        assert unchanged.encode()==prompt.encode()
+        assert verified==source
         assert source['bundle']['selection']['end']-source['bundle']['selection']['start']==len(prompt)
         fragment=json.loads(await owner._get_conversation_context({"message_ids":[first],"text_exact":prompt,"selection_scope":"fragment"}))
         assert fragment['selected_prompt']['prompt']==prompt

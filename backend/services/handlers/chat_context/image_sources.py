@@ -62,7 +62,9 @@ def format_image_sources(sources):
     return ("对话图片定位（不是自动选定的生图参考；按用户本次用途复制 reference 中的唯一定位并补充 role，"
             "或复制服务器 file_id；visually_present=false 仅为来源元数据，不能声称本轮看过图；"
             "定位缺失先读取 get_conversation_context/file_search，不要编造 ID）。" + SIZE_GUIDANCE + "：\n"
-            + json.dumps(sources, ensure_ascii=False))
+            + json.dumps([{key: value for key, value in source.items()
+                           if key not in {'quoted_message_id', 'quoted_content_index', 'quoted_task_id'}}
+                          for source in sources], ensure_ascii=False))
 
 
 def legacy_catalog(parent):

@@ -40,7 +40,9 @@ def model_schema(parameters, *, file_input=False, reserved=()):
         targets.append('chat_source_text')
     return {'type': 'object', 'additionalProperties': False, 'required': ['sources', 'parts'],
         'description': ('引用聊天内容执行任务时提交输入映射。sources引用完整原文part；parts逐段说明进入哪个真实参数、'
-                        '排除原因或被哪条修订覆盖，须覆盖全部原文（含空白）。正文用位置或行号引用，勿重抄；'
+                        '排除原因或被哪条修订覆盖，须覆盖全部原文（含空白）。每个part都必须带原文区间，包括value/exclude。'
+                        'mode、references、aspect_ratio等既有工具参数保留在chat_input外的原工具参数里；不得把无原文区间的默认参数塞进parts。'
+                        '正文用位置或行号引用，勿重抄；'
                         'for_mapping返回numbered_text供定位，行号不是原文，first_line/last_line为1起且含首尾行。'
                         '同一来源/版本复用已读取位置，不重复读整份方案。分析说明是否进入输入取决于本次任务，不取决于标题。'
                         '模型负责用途判断，后台只核验来源、覆盖和参数。'
@@ -58,6 +60,7 @@ def model_schema(parameters, *, file_input=False, reserved=()):
                 }}},
             'parts': {'type': 'array', 'minItems': 1, 'maxItems': 256, 'items': {
                 'type': 'object', 'additionalProperties': False, 'required': ['source', 'action'],
+                'oneOf': [{'required': ['start', 'end']}, {'required': ['first_line', 'last_line']}, {'required': ['text_exact']}],
                 'properties': {
                     'source': {'type': 'integer', 'minimum': 0},
                     'start': {'type': 'integer', 'minimum': 0, 'description': '原文字符起点，0起；与end组成左闭右开区间'},
