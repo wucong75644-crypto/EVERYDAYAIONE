@@ -128,3 +128,6 @@ rapidfuzz==3.10.1               # 商品名/客户名模糊匹配
 pyyaml==6.0.2                   # YAML 配置/规则文件
 pypdf==5.1.0                    # PDF 合并/拆分（已有 pdfplumber 只读，pypdf 可写）
 psutil==6.1.1                   # 沙盒内监控内存（防 OOM）
+
+# Personal KIE video MCP (Streamable HTTP)
+mcp==1.12.4

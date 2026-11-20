@@ -306,7 +306,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     set_kernel_manager(_kernel_manager)
     logger.info(f"KernelManager started | nsjail={'enabled' if _nsjail_cfg else 'disabled'}")
 
-    yield
+    from services.kie_video_mcp import mcp
+    async with mcp.session_manager.run():
+        yield
 
     await knowledge_worker.stop(knowledge_worker_task)
     await journal_worker.stop(journal_worker_task)
@@ -396,6 +398,9 @@ def create_app() -> FastAPI:
 
     # 注册路由
     register_routers(app)
+
+    from services.kie_video_mcp import authenticated_app
+    app.mount("/api/kie-mcp", authenticated_app)
 
     return app
 

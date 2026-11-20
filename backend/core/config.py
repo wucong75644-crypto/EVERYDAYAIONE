@@ -64,6 +64,7 @@ class Settings(BaseSettings):
     oss_cdn_domain: Optional[str] = None  # CDN 加速域名，如 cdn.everydayai.com.cn
 
     # KIE API 配置
+    kie_mcp_token: Optional[str] = None  # 独立个人 MCP 凭证；未配置则拒绝访问
     kie_api_key: Optional[str] = None
     kie_base_url: str = "https://api.kie.ai/v1"
 
