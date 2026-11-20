@@ -618,6 +618,13 @@ it('does not turn a completed progress-only message into a cancelled placeholder
   expect(screen.queryByText(/已取消/)).not.toBeInTheDocument();
 });
 
+it('hides the completed internal reply after its picture was published separately', () => {
+  const { container } = render(<MessageItem message={makeMessage({
+    role: 'assistant', status: 'completed', content: [],
+  })} />);
+  expect(container.querySelector('[data-message-id]')).toBeNull();
+});
+
 it('keeps the original answer when its task progress marker moves to the header', () => {
   render(<MessageItem message={makeMessage({ role: 'assistant', status: 'completed', content: [
     { type: 'task_progress', root_task_id: '11111111-1111-4111-8111-111111111111', presentation: 'model_directed' },

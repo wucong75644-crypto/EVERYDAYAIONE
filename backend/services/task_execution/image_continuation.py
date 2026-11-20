@@ -82,7 +82,7 @@ def continuation_payload(bundle, *, task, claim, execution_scope):
         +json.dumps({'original_goal':source.original_goal,'published_images':images,'failed_children':failures},ensure_ascii=False)}
     from .continuation_checkpoint import build_context
     return build_context(bundle['checkpoint'],source,candidate,task=task,claim=claim,message=message,
-        content_blocks=([{'type':'text','text':f'{len(images)}张图片已完成。'}] if candidate.status=='completed' else []),
+        content_blocks=[],  # The worker has already published the actual result messages.
         event_artifact_ids=tuple(item['artifact_id'] for item in images))
 
 

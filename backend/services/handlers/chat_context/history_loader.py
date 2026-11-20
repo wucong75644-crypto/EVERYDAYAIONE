@@ -289,7 +289,8 @@ async def build_context_messages(
             for row in rows:
                 if row.get("status")=="failed" and (row.get("generation_params") or {}).get("origin")!="chat_image":
                     continue
-                if any(isinstance(part, dict) and part.get("type") == "image" for part in content_parts(row.get("content"))):
+                parts = content_parts(row.get("content"))
+                if any(isinstance(part, dict) and part.get("type") == "image" for part in parts):
                     if not owner_loaded:
                         conversation = db.table("conversations").select("user_id,scope_type").eq("id", conversation_id).maybe_single().execute().data
                         owner_id = conversation.get("user_id") if isinstance(conversation, dict) else None
@@ -300,7 +301,7 @@ async def build_context_messages(
                         row["_trusted_image_sources"] = discovered_image_sources(
                             row, db, org_id=org_id, owner_id=owner_id, scope=owner_scope)
                 preserve_tool_protocol = False
-                if (row["role"] == "assistant" and not first_assistant_seen
+                if (row["role"] == "assistant" and parts and not first_assistant_seen
                         and (row.get("generation_params") or {}).get("origin") != "chat_image"):
                     first_assistant_seen = True
                     latest_marker = extract_interrupt_marker(row.get("content"))

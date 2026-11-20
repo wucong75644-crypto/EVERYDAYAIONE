@@ -343,7 +343,8 @@ export default memo(function MessageItem({
   // message placeholder. Keep live thinking and actual errors visible.
   const progressOnly = !isUser && Array.isArray(message.content) && message.content.some(part => part.type === 'task_progress')
     && message.content.every(part => part.type === 'task_progress' || (part.type === 'text' && !part.text.trim()));
-  if (progressOnly && message.status === 'completed' && !isStreaming && !isRegenerating && !isErrorMessage) return null;
+  const silentAssistant = !isUser && Array.isArray(message.content) && message.content.length === 0;
+  if ((progressOnly || silentAssistant) && message.status === 'completed' && !isStreaming && !isRegenerating && !isErrorMessage) return null;
 
   // 判断是否有媒体内容（需要更宽的显示区域）
   const hasMedia = hasImage || hasVideo || hasFiles || !!mediaPlaceholderInfo;

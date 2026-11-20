@@ -250,9 +250,10 @@ async def test_real_five_image_claim_executor_checkpoint_commit_without_model_or
     from core.local_db import AsyncLocalDBClient
     from core.db_scope import AsyncScopedDatabaseClient,DatabaseScope,DatabaseAccessKind
     from services.handlers.chat.executor import ChatGenerationExecutor
-    from services.handlers.chat.execution_engine import ChatExecutionResult,_run_loop
+    from services.handlers.chat.execution_engine import ChatExecutionResult,_finalize_output_parts,_run_loop
+    from services.handlers.chat.execution_sink import CollectingExecutionSink
+    from services.handlers.chat.stream_session import StreamTotals
     from services.replay_checkpoint_store import DatabaseReplayCheckpointStore
-    from schemas.message import TextPart
     f,state,child,event=await finished(continuation_db,monkeypatch,image_count=5,existing_source=existing_source)
     task,claim=claim_internal(f,enqueue(f,state,event)['task_id'])
     client=AsyncLocalDBClient(psycopg.conninfo.make_conninfo(f['dsn'],user='everydayai'),min_size=1,max_size=2)
@@ -286,13 +287,18 @@ async def test_real_five_image_claim_executor_checkpoint_commit_without_model_or
             # dependencies are supplied, so any attempted sampling fails.
             await _run_loop(handler=None,request=request,prepared=None,cancellation_event=asyncio.Event(),sink=None,
                 totals=None,blocks=request.replay_context['content_blocks'],runtime=runtime)
-            return ChatExecutionResult(parts=[TextPart(text='5张图片已完成。')],content_blocks=request.replay_context['content_blocks'],
-                usage={},credits_cost=0,tool_digest=None,replay_context=request.replay_context)
+            assert str(runtime.task_image_completion.event_id) == task['delivery_context']['event_id']
+            blocks=request.replay_context['content_blocks']
+            kwargs['handler']._pending_emit_payloads=[]
+            parts=await _finalize_output_parts(handler=kwargs['handler'],prepared=None,totals=StreamTotals(),
+                blocks=blocks,sink=CollectingExecutionSink(),cancellation_event=runtime.cancellation_event,runtime=runtime)
+            return ChatExecutionResult(parts=parts,content_blocks=blocks,usage={},credits_cost=0,tool_digest=None,
+                replay_context=request.replay_context)
         monkeypatch.setattr('services.handlers.chat.executor.execute_chat',complete_chat)
         executor=ChatGenerationExecutor(scoped,handler_factory=lambda db:SimpleNamespace(db=db),handler_db_factory=lambda:scoped,
             replay_checkpoint_store=DatabaseReplayCheckpointStore(scoped))
         outcome=await executor.execute(task,claim,asyncio.Event())
-        assert len(called)==1 and outcome.credits_cost==0
+        assert len(called)==1 and outcome.credits_cost==0 and outcome.result_content==[]
         # Restart after commit_ready: reuse terminal output, do not execute chat.
         again=await executor.execute(task,claim,asyncio.Event())
         assert again==outcome and len(called)==1

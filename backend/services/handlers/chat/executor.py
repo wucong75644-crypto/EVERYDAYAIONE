@@ -128,8 +128,10 @@ class ChatGenerationExecutor:
                     response=await followup_db.rpc('adopt_agent_task_followup',parameters).execute()
                 return response.data
             runtime.task_followup_adopt=adopt_followup
-        if (replay_context is None and (task.get('delivery_context') or {}).get('input_kind') == 'agent_task_continuation'):
-            source_kind=(task.get('delivery_context') or {}).get('source_kind','image')
+        delivery = task.get('delivery_context') or {}
+        is_continuation = delivery.get('input_kind') == 'agent_task_continuation'
+        source_kind = delivery.get('source_kind', 'image')
+        if replay_context is None and is_continuation:
             if source_kind in {'scheduled','video'}:
                 from services.task_execution.receipt_continuation import prepare_receipt_continuation as prepare_continuation
             elif source_kind=='image':
@@ -143,8 +145,15 @@ class ChatGenerationExecutor:
             actor_user_id=execution_scope.actor_user_id, org_id=task.get('org_id'),
             execution_scope=execution_scope,
         ) if replay_context and '_task_execution' in replay_context else None
-        runtime.task_native_event_pending=((task.get('delivery_context') or {}).get('input_kind')=='agent_task_continuation'
-            and (task.get('delivery_context') or {}).get('source_kind') in {'scheduled','video'})
+        runtime.task_native_event_pending = is_continuation and source_kind in {'scheduled', 'video'}
+        if is_continuation and source_kind == 'image':
+            from services.task_execution.contracts import ContinuationInput, TaskError
+
+            completion = ContinuationInput.model_validate((replay_context or {}).get('_continuation_input'))
+            if (str(completion.event_id) != delivery.get('event_id') or runtime.task_execution_state is None
+                    or completion.logical_task_id != runtime.task_execution_state.root_task_id):
+                raise TaskError('TASK_CONTINUATION_INPUT_UNVERIFIED')
+            runtime.task_image_completion = completion
         if runtime.task_execution_state is not None:
             runtime.committed_task_execution_revision = runtime.task_execution_state.revision
         if (replay_context or {}).get('_task_requirement_review') is not None:

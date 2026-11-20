@@ -516,6 +516,20 @@ describe('wsMessageHandlers', () => {
       expect(store.setIsSending).toHaveBeenCalledWith(false);
     });
 
+    it('completes an empty assistant reply without a second completion toast', async () => {
+      const { toast } = await import('react-hot-toast');
+      (store.getMessage as ReturnType<typeof vi.fn>).mockReturnValue(null);
+
+      handlers.message_done({
+        task_id: 'task_1',
+        conversation_id: 'conv_1',
+        message: { id: 'msg_1', role: 'assistant', status: 'completed', content: [] },
+      });
+
+      expect(store.completeTask).toHaveBeenCalledWith('task_1');
+      expect(toast.success).not.toHaveBeenCalled();
+    });
+
     it('should still updateMessage when already completed (DB data覆盖)', () => {
       (store.getMessage as ReturnType<typeof vi.fn>).mockReturnValue({
         id: 'msg_1',

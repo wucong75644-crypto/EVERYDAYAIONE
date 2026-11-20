@@ -99,7 +99,10 @@ function notifyMessageDone(messageData: Record<string, unknown> | undefined, ena
   if (!enabled) return;
   const isFailed = messageData?.status === 'failed';
   if (isFailed) toast.error('生成失败');
-  else toast.success('生成完成');
+  else if (!(messageData?.role === 'assistant'
+    && Array.isArray(messageData.content) && messageData.content.length === 0)) {
+    toast.success('生成完成');
+  }
 }
 
 function notifyWorkspaceChanged(messageData: Record<string, unknown> | undefined): void {

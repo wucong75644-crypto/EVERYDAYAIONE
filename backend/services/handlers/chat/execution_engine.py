@@ -471,7 +471,7 @@ async def execute_chat(
                 prepared.messages,
                 request.conversation_id,
                 prepared.budget.turns_used,
-            ),
+            ) if parts or getattr(runtime, 'task_image_completion', None) is None else None,
             replay_context=_build_replay_context(
                 prepared.messages,
                 blocks,
@@ -534,6 +534,10 @@ async def _finalize_output_parts(*, handler, prepared, totals, blocks, sink,
         await _apply_budget_stop(prepared, totals, blocks, sink,
             cancellation_event=cancellation_event, runtime=runtime)
     await _consume_emit_payloads(handler, blocks, sink)
+    if (getattr(runtime, 'task_image_completion', None) is not None
+            and runtime.task_execution_state.status == 'completed'
+            and not blocks and not totals.text and not totals.thinking and not form_hint):
+        return []
     parts = build_content_parts(blocks, fallback_text=totals.text, fallback_thinking=totals.thinking)
     if isinstance(knowledge_run, KnowledgeRun):
         for part in parts:
@@ -609,8 +613,8 @@ async def _run_loop(
                 'result_content': serialize_content_parts(parts),
                 'usage': dict(totals.usage),
                 'credits_cost': handler._calculate_credits(totals.usage) if request.calculate_credits else 0,
-                'tool_digest': _build_digest(prepared.messages, request.conversation_id,
-                                           prepared.budget.turns_used)}
+                'tool_digest': _build_digest(prepared.messages, request.conversation_id, prepared.budget.turns_used)
+                    if parts or getattr(runtime, 'task_image_completion', None) is None else None}
     thinking_mode = request.thinking_mode
     entry_question = next((b for b in blocks if b.get("ecom_entry_question") is True), None)
     if entry_question:
@@ -918,14 +922,26 @@ async def _run_loop(
             content_state = runtime.task_execution_state or content_followup_state(runtime)
             server_image_plan = content_tools.uses_server_image_plan(prepared)
             reuse_source = content_tools.selects_previous_item(request)
+            first_delivery = (getattr(request.context_anchor, 'base_revision', None) == 0
+                              and not content_objects.objects(content_state)
+                              and not getattr(runtime, 'task_content_groups', ()))
+            if (first_delivery and reuse_source and not server_image_plan and model_round == 0
+                    and not getattr(runtime.task_user_changes, 'items', ())
+                    and content_tools.is_single_image_source_request(request)
+                    and not any(m.get('role') == 'assistant' for m in prepared.messages)):
+                await _check_cancelled(cancellation_event, request, prepared.messages, blocks, totals,
+                                       'before_model')
+                question = content_tools.MISSING_IMAGE_PROMPT_QUESTION
+                blocks.append({'type': 'text', 'text': question})
+                totals.text += question
+                await sink.on_block(blocks[-1])
+                return None
             tools = [*content_tools.model_tools(
                 tools, selectable_source_images=content_objects.has_selectable_source_images(content_state),
                 server_image_plan=server_image_plan, reuse_source=reuse_source,
                 inline_image=allowed_for_offer(runtime, server_image_plan=server_image_plan, reuse_source=reuse_source),
                 current_images=content_objects.current_source_images(request),
-                first_delivery=(getattr(request.context_anchor, 'base_revision', None) == 0
-                                and not content_objects.objects(content_state)
-                                and not getattr(runtime, 'task_content_groups', ())),
+                first_delivery=first_delivery,
             ), *content_tools.SCHEMAS]
             prepared.content_output_available = not server_image_plan
         from services.tools.model_contracts import project_model_tool
@@ -1180,6 +1196,25 @@ async def _run_loop(
     return None
 
 
+_IMAGE_DELIVERY_COMPLETE = '<image-delivery-complete/>'
+
+
+def _image_delivery_can_finish_silently(runtime):
+    """Only an applied image event with a complete physical outcome can close silently."""
+    event = getattr(runtime, 'task_image_completion', None)
+    if event is None or not event.event_artifact_ids or runtime.task_unreviewed_changes:
+        return False
+    state = runtime.task_execution_state
+    if not state.model_directed:
+        return False
+    plan = state.working_plan
+    if plan and any(item.status != 'completed' for item in plan.steps):
+        return False
+    from services.task_execution.direct_loop import end_candidate
+
+    return end_candidate(state).status == 'completed'
+
+
 async def _read_turn(
     prepared: Any,
     tools: list[dict[str, Any]],
@@ -1211,13 +1246,27 @@ async def _read_turn(
     from services.task_execution.direct_loop import followup_source
     awaiting_content_owner = runtime is not None and runtime.task_execution_state is None and followup_source(runtime) is not None
     defer_narrative = getattr(prepared, "defer_ecom_narrative", False)
-    image_reply = (not task_review and request is not None and not defer_narrative
+    image_completion = not task_review and getattr(runtime, 'task_image_completion', None) is not None
+    image_reply = (not task_review and not image_completion and request is not None and not defer_narrative
                    and content_tools.image_execution_request(request, runtime))
-    defer_narrative = defer_narrative or image_reply
+    silent_delivery = image_completion and _image_delivery_can_finish_silently(runtime)
+    defer_narrative = defer_narrative or image_reply or silent_delivery
     from services.handlers.interrupt_anchor import project_interrupt_history
 
     skills = runtime.skill_runtime if runtime and not task_review else None
     messages = project_interrupt_history(prepared.messages)
+    if image_completion:
+        instruction = (
+            '这是已核验的图片任务完成事件。图片结果已由系统发布，按完成事件处理原目标剩余的要求。'
+            '如有失败，按已记录的结果说明，不自动重提交失败的图片。'
+        )
+        if silent_delivery:
+            instruction += (
+                '如果已发布的图片已满足用户全部要求，且没有待处理的追加要求，'
+                '只返回 ' + _IMAGE_DELIVERY_COMPLETE + '，无需再发完成通知。'
+                '如果用户还要求其他交付，直接完成那些工作。'
+            )
+        messages = [*messages, {'role': 'system', 'content': instruction}]
     stream_kwargs = {
         "messages": skills.model_messages(messages, tools) if skills else messages,
         "tools": tools,
@@ -1429,10 +1478,17 @@ async def _read_turn(
     if image_reply and not content_output:
         if not getattr(prepared, 'image_receipt_seen', False) and not any(
                 c['name'] == content_objects.SAVE for c in ordered_calls):
-            turn_text = content_tools.unconfirmed_image_reply(turn_text, bool(ordered_calls))
-        if turn_text:
-            totals.text += turn_text
-            await sink.on_text(turn_text)
+            turn_text = content_tools.unconfirmed_image_reply(
+                turn_text, bool(ordered_calls), awaiting_prompt=content_tools.selects_previous_item(request),
+            )
+    if silent_delivery:
+        if turn_text.strip() == _IMAGE_DELIVERY_COMPLETE:
+            turn_text = ''
+        if not turn_text.strip() and not ordered_calls:
+            turn_text = turn_thinking = ''
+    if (image_reply or silent_delivery) and not content_output and turn_text:
+        totals.text += turn_text
+        await sink.on_text(turn_text)
     return turn_text, turn_thinking, ordered_calls, previewed_call_ids
 
 
@@ -1601,8 +1657,11 @@ async def _execute_tools_impl(
         for call in calls
     )
     if use_repair_contract and not recovery_only:
+        repair_chat_images = (getattr(prepared, 'content_controls_available', False)
+                              and not content_tools.uses_server_image_plan(prepared))
         repair_batch = tool_argument_repairs.Batch.prepare(
-            runtime, request, calls, getattr(prepared, 'content_visible_tools', {}))
+            runtime, request, calls, getattr(prepared, 'content_visible_tools', {}),
+            repair_chat_images=repair_chat_images)
     repair_rejections = repair_batch.rejections if repair_batch else {}
     direct_reused=[]
     bound_sources = {}
@@ -1618,7 +1677,8 @@ async def _execute_tools_impl(
         if getattr(prepared,'last_provider_output',None):assistant['_dashscope_output']=prepared.last_provider_output
         if getattr(prepared,'last_reasoning_content',''):assistant['reasoning_content']=prepared.last_reasoning_content
         from services.task_execution import inline_image_action
-        inline_calls = [call for call in calls if inline_image_action.is_inline_call(call)]
+        inline_calls = [call for call in calls if call['id'] not in repair_rejections
+                        and inline_image_action.is_inline_call(call)]
         inline_barrier = bool(inline_calls and len(calls) != 1)
         if inline_barrier and recovery_only:
             raise ConversationStopRequested('inline_image_batch_checkpoint_invalid')
@@ -1943,14 +2003,16 @@ async def _execute_tools_impl(
                 args = {'content_source': reference}
             else:
                 args = None
+            check_format = (call['name'] in REVIEWED_MODEL_TOOLS
+                            or (scoped_content and not server_image_plan and call['name'] == 'generate_image'))
             try:
                 if not inline_calls:
-                    if not recovery_only and call['name'] in REVIEWED_MODEL_TOOLS:
+                    if not recovery_only and check_format:
                         args = decode_model_arguments(call['name'], call.get('arguments'))
                     else:
                         args = json.loads(call.get('arguments') or '{}')
             except (ValueError, TypeError) as error:
-                if not recovery_only and call['name'] in REVIEWED_MODEL_TOOLS:
+                if not recovery_only and check_format:
                     direct_errors[call['id']] = ('MODEL_TOOL_ARGUMENTS_INVALID', str(error))
                     projected_calls.append(call)
                     continue

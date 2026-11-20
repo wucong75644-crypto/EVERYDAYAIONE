@@ -17,6 +17,9 @@ CONTROLS = frozenset({DISCOVER, READ})
 INPUT_TOOLS = frozenset({'generate_video', 'generate_image', 'code_execute'})
 MEDIA_TOOLS = frozenset({'generate_video', 'generate_image'})
 STATE = '_chat_content_tools'
+MISSING_IMAGE_PROMPT_QUESTION = (
+    '这条对话里还没有你提到的原提示词。可以发给我原稿，或告诉我按当前素材重新写一版再生成吗？'
+)
 _IMAGE_ACTION = (r'(?:生图|出图|改图|做图|画一张|(?:生成|做成?|制作|绘制)[^。！？!?；;，,\n]{0,14}'
                  r'(?:图片|图像|主图|封面图)|generate (?:an? |the )?image)')
 _NEGATED_IMAGE_ACTION = re.compile(
@@ -65,11 +68,16 @@ def selects_previous_item(request):
     pointer = re.search(
         rf'第\s*{number}\s*(?:个|条|项|版|套)(?:{item}|(?=\s*(?:和原图|带原图|帮我|做|生成|出图|执行|$)))'
         rf'|{item}\s*[#＃]?\s*{number}'
-        rf'|(?:之前|刚才|上面|旧|原来|已保存)的?{item}', text)
+        rf'|(?:之前|刚才|上面|旧|原来|已保存)的?{item}'
+        rf'|(?:你|助手)(?:之前|刚才|刚|上次|上一轮|先前)?(?:给我|帮我)?'
+        rf'(?:写|拟|生成|整理|提供|给|做|出)(?:过)?的(?:那[条份版个])?\s*{item}', text)
     if not pointer:
         return False
     if (re.search(r'(?:不用|别用|不要用|舍弃|忽略|取消)\s*$', text[:pointer.start()])
             or re.match(r'\s*(?:不要了|不用了|先不做)', text[pointer.end():])):
+        return False
+    # Pasted text explicitly identified as the source is already in the current input.
+    if re.search(r'提示词(?:原文)?(?:如下)?\s*[：:]\s*\S', text):
         return False
     # Revising/authoring and then executing is a compound task. Keep both actions available.
     if re.search(rf'(?:写|设计|拟|整理|列出).{{0,24}}{item}', text[:pointer.start()]):
@@ -78,7 +86,16 @@ def selects_previous_item(request):
         r'(?:导出|做成|制成|生成|转成)(?:一份|一个|一段)?(?:视频|文件|文档|Word|PDF)', text, re.I))
 
 
-def unconfirmed_image_reply(text, has_calls):
+def is_single_image_source_request(request):
+    """Use the early question only when it will not interrupt an independent request."""
+    text = ' '.join(part.text for part in request.content if part.type == 'text').strip()
+    text = re.sub(r'^(?:这个|这张|这|这是)(?:是)?(?:图片|图|参考图)[。！!，,]\s*', '', text)
+    clauses = [part for part in re.split(r'[。！？!?；;，,\n]', text) if part.strip()]
+    return (len(clauses) == 1 and not re.search(r'另外|顺便|同时|并且|以及|然后', clauses[0])
+            and image_execution_request(request))
+
+
+def unconfirmed_image_reply(text, has_calls, *, awaiting_prompt=False):
     if has_calls:
         return ''
     # A genuine clarification or failure can accompany a status. A free-form
@@ -86,6 +103,8 @@ def unconfirmed_image_reply(text, has_calls):
     notice = '本轮尚未收到图片任务的受理回执。'
     if text.strip() and (text.rstrip().endswith(('？', '?')) or re.search(r'无法|缺少|失败|请(?:选择|指定|上传|确认)', text)):
         if not re.search(r'已(?:经)?(?:成功)?(?:提交|受理|派发|生成)|提交成功|正在(?:生成|排队)', text):
+            if awaiting_prompt and text.rstrip().endswith(('？', '?')):
+                return text
             return text + '\n\n' + notice
     return notice
 
@@ -250,6 +269,12 @@ def model_tools(tools, *, selectable_source_images=False, server_image_plan=Fals
                    '每次调用处理一张图。多张已选且相互独立的图片按条目顺序在同一轮提交各自的调用。'
                    if name == 'generate_image' else ' 仅接受文字脚本，不传图片素材；不支持视频剪辑。')
             )
+            if name == 'generate_image' and reuse_source:
+                tool['function']['description'] += (
+                    ' 这轮要沿用已有原稿。目录未定位时先查会话原文；'
+                    '找不到或无法唯一确定时请用户提供或选择，不另写一份替代。'
+                    '用户指定当前上传图片时，从本轮图片引用中绑定该图。'
+                )
             if name == 'generate_image' and inline_image:
                 from services.task_execution.inline_image_action import InlineRequest
 
@@ -261,7 +286,8 @@ def model_tools(tools, *, selectable_source_images=False, server_image_plan=Fals
                 if definitions:
                     projected['$defs'] = definitions
                 tool['function']['description'] += (
-                    ' 用户要求立即生成单张新图或编辑一张已选图时，单独调用本工具传draft。'
+                    ' 用户要求创作单张新图或编辑一张已选图时，单独调用本工具传draft。'
+                    '用户指定已有提示词时先定位原稿，找不到就请用户补充。'
                     '填写完整编辑要求body，并在materials逐一标记明确的图片引用和用途。'
                     '系统保存原稿并提交，不需要先调用save_task_text。'
                     '只改提示词时使用保存工具；多张图或已有策划继续用content_source。'

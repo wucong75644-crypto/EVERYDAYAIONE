@@ -64,6 +64,7 @@ class ConversationTurnRuntime:
         self.skill_runtime = None  # Owned by this turn; never a handler/global cache.
         self.mcp_invocations = {}  # Result snapshots only; the ledger remains authoritative.
         self.task_execution_state = None  # New logical tasks only; old checkpoints remain unchanged.
+        self.task_image_completion = None  # Verified continuation input, distinct from a user turn.
         self.task_bootstrap = None  # Trusted input only; never populated from request params.
         self.task_direct_plan = None  # Optional notes, never an execution grant.
         self.task_direct_plan_owner = None

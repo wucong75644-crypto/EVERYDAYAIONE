@@ -7,7 +7,9 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
 from services.task_execution.reducer import digest
-from services.tools.model_contracts import REVIEWED_MODEL_TOOLS, decode_model_arguments, model_argument_error
+from services.tools.model_contracts import (
+    REVIEWED_MODEL_TOOLS, decode_model_arguments, model_argument_error, offered_argument_error,
+)
 
 KEY = 'tool_argument_repairs'
 LIMIT = 3
@@ -67,7 +69,7 @@ class Batch:
     rejections: dict[str, str]
 
     @classmethod
-    def prepare(cls, runtime, request, calls, offers):
+    def prepare(cls, runtime, request, calls, offers, *, repair_chat_images=False):
         previous = read(runtime)
         input_id = _input_id(runtime, request, previous)
         version = _input_version(runtime, input_id)
@@ -75,10 +77,12 @@ class Batch:
         rejections, targets = {}, {}
         for call in calls:
             name = call['name']
-            if name not in REVIEWED_MODEL_TOOLS:
-                continue
             parameters = offers.get(name, {}).get('parameters')
             if parameters is None:
+                continue
+            chat_image = (repair_chat_images and name == 'generate_image'
+                          and 'content_source' in parameters.get('properties', {}))
+            if not chat_image and name not in REVIEWED_MODEL_TOOLS:
                 continue
             args = {}
             try:
@@ -86,7 +90,26 @@ class Batch:
             except ValueError as error:
                 rejection = str(error)
             else:
-                rejection = model_argument_error(name, args, parameters)
+                if chat_image:
+                    from services.task_execution.content_objects import ImageContentReference
+                    from services.task_execution.inline_image_action import InlineRequest
+
+                    input_type = ImageContentReference if 'content_source' in args else InlineRequest
+                    reference = args.get('content_source')
+                    if isinstance(reference, dict) and 'sha256' in reference:
+                        # Old clients may still supply a proof that is no longer
+                        # advertised. Validate it and keep it for the version check.
+                        fields = parameters['properties']
+                        source = fields['content_source']
+                        parameters = {**parameters, 'properties': {
+                            **fields, 'content_source': {**source, 'properties': {
+                                **source['properties'],
+                                'sha256': ImageContentReference.model_json_schema()['properties']['sha256'],
+                            }},
+                        }}
+                    rejection = offered_argument_error(name, args, parameters, input_type=input_type)
+                else:
+                    rejection = model_argument_error(name, args, parameters)
             if rejection:
                 target = digest([name, _operation(args, parameters), INVALID])
                 targets[call['id']] = target

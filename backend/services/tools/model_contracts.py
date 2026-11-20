@@ -54,7 +54,22 @@ def project_model_tool(tool):
 def model_argument_error(name, arguments, parameters):
     if name not in REVIEWED_MODEL_TOOLS or parameters is None:
         return None
-    issues = _issues(arguments, model_parameters(name, parameters), image_hints=False)
+    return offered_argument_error(name, arguments, model_parameters(name, parameters))
+
+
+def offered_argument_error(name, arguments, parameters, *, input_type=None):
+    issues = _issues(arguments, parameters, image_hints=False)
+    if not issues and input_type is not None:
+        from pydantic import ValidationError
+
+        try:
+            input_type.model_validate(arguments['content_source'] if 'content_source' in arguments else arguments)
+        except ValidationError as error:
+            prefix = '$.content_source' if 'content_source' in arguments else '$'
+            issues = [
+                {'path': prefix + ''.join(f'.{part}' for part in detail['loc']), 'reason': detail['msg']}
+                for detail in error.errors(include_input=False, include_url=False, include_context=False)[:12]
+            ]
     if not issues:
         return None
     return _rejection(name, issues, parameters)
