@@ -22,16 +22,17 @@ def receipt(oss,task,key,meta):
         'size':meta.content_length,'mime_type':'video/mp4','name':str(task['id'])+'.mp4'}
 
 
+# OSS get_object_meta returns only basic metadata; HEAD includes our ownership/checksum headers.
 async def persist(oss,task,url):
     key=object_key(task)
     if await finish_file_io(oss.bucket.object_exists,key):
-        return receipt(oss,task,key,await finish_file_io(oss.bucket.get_object_meta,key))
+        return receipt(oss,task,key,await finish_file_io(oss.bucket.head_object,key))
     content,content_type=await oss._downloader.download(url,task['user_id'],'video',oss.MAX_VIDEO_SIZE)
     if len(content)<12 or content[4:8]!=b'ftyp':raise ValueError('VIDEO_MP4_BYTES_INVALID')
     checksum=hashlib.sha256(content).hexdigest()
     await finish_file_io(oss.bucket.put_object,key,content,headers={'Content-Type':'video/mp4',
         'x-oss-forbid-overwrite':'true','x-oss-meta-source-task':str(task['id']),'x-oss-meta-content-sha256':checksum})
-    result=receipt(oss,task,key,await finish_file_io(oss.bucket.get_object_meta,key))
+    result=receipt(oss,task,key,await finish_file_io(oss.bucket.head_object,key))
     if result['content_sha256']!=checksum or result['size']!=len(content):raise ValueError('VIDEO_STORED_BYTES_CHANGED')
     return result
 
@@ -39,6 +40,6 @@ async def persist(oss,task,url):
 async def verify(oss,task,output):
     key=object_key(task)
     if output.get('object_key')!=key:raise ValueError('VIDEO_OUTPUT_SCOPE_DENIED')
-    actual=receipt(oss,task,key,await finish_file_io(oss.bucket.get_object_meta,key))
+    actual=receipt(oss,task,key,await finish_file_io(oss.bucket.head_object,key))
     if any(actual[k]!=output.get(k) for k in actual):raise ValueError('VIDEO_STORED_BYTES_CHANGED')
     return actual
