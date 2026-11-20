@@ -210,7 +210,8 @@ def model_tools(tools, *, selectable_source_images=False, server_image_plan=Fals
                 'properties': {'content_source': parameters['properties']['content_source']}, 'required': ['content_source']}
             media = '一张图片' if name == 'generate_image' else '一段短视频'
             tool['function']['description'] = (
-                f'用 content_source 选择一个已保存条目，异步生成{media}。'
+                f'异步生成{media}。执行已有稿件时，按标题、序号或最近修订从成果目录选中条目，'
+                '直接把该条的content_source作为同名参数提交，无需重新保存。'
                 '后台读取完整原文、素材与规格，受理后由页面展示进度和结果。'
                 + (' 已绑定的图自动复用。继续其余条目时跳过已有受理或结果的项；用户明确换图时只替换此次参考图。'
                    if name == 'generate_image' else '')

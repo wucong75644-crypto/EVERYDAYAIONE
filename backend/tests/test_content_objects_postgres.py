@@ -1051,7 +1051,7 @@ async def test_real_remaining_plans_keep_original_and_new_upload_can_replace_it(
                        ] if '剩' in question or '其他三个' in question else [index]
             actions = []
             for idx in indices:
-                selected = {'artifact_id': group['artifact_id'], 'item_index': idx}
+                selected = dict(group['items'][idx - 1]['content_source'])
                 if override:
                     selected['image_override'] = [override]
                 if '只改第二' in question:

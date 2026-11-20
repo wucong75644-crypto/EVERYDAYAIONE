@@ -274,11 +274,11 @@ def selection_parameters(model=ContentReference):
 
 SCHEMA = {'type': 'function', 'function': {'name': SAVE,
     'description': '交付可供后续选择的方案、提示词或脚本：只提交一次document，每条写title和body，页面直接展示这份原文。普通问答直接回复。'
-        '已有成果直接选条目。未登记的分条正文用message_source指定原回复消息，后台定位整组原文；continue_execution=true。'
+        '只执行已有成果时，直接将目录条目的content_source交给目标工具。未登记的分条正文用message_source指定原回复消息，后台定位整组原文；continue_execution=true。'
         '仅后台无法识别边界时才按已核实的完整行范围指定条目。'
         '已有历史稿件或图片时，只有用户明确开启独立制作才可用document和new_content=true交接全新内容。'
         'body包含最终要求和限制；按用户或方法要求交付的可见结构放display_prefix，内部说明放notes。仅有条目专用素材或已确定执行规格时才填materials或options。'
-        '修订既有条目时，base选择成果ID和条目，updates传修订正文。后台绑定版本并保留未改条目、素材和规格。'
+        '修订既有条目时，base使用该条目的content_source，updates传修订正文。后台绑定版本并保留未改条目、素材和规格。'
         '本轮实际执行时设continue_execution=true；单一明确的原图由后台关联，多图用途或条目例外再指定。还要求看文字时设show_content=true。',
     'parameters': save_parameters()}}
 
@@ -354,21 +354,35 @@ def content_image_receipts(state):
     return receipts
 
 
+def with_item_sources(row):
+    """Project actionable references without changing stored records or history rows."""
+    return {**row, 'items': [
+        {**item, 'content_source': {'artifact_id': row['artifact_id'], 'item_index': item['item_index']}}
+        for item in row['items']
+    ]}
+
+
 def catalog(state, *, for_model=False, include_image_markers=False):
     receipts = content_image_receipts(state) if for_model else {}
     latest = {}
+    documents = {}
     for artifact in objects(state):
         record = ContentRecord.model_validate_json(artifact.inline_text)
+        if for_model:
+            documents[artifact.id] = record.document
         previous = latest.get(record.object_key)
         if previous is None or record.revision > previous[1].revision:
             latest[record.object_key] = (artifact,record)
     rows = []
     for artifact, record in latest.values():
+        base = documents.get(record.base_artifact_id)
         items = []
         for index, item in enumerate(record.document.items, 1):
             entry = {'item_index': index, 'title': item.title, 'options': item.options}
             if for_model:
                 entry['has_bound_inputs'] = any(material.usage == 'input' for material in item.materials)
+                if base and index <= len(base.items) and item != base.items[index - 1]:
+                    entry['changed_in_revision'] = record.revision
                 receipt = receipts.get((artifact.id, index))
                 if receipt:
                     entry['image_status'] = receipt['status']
@@ -387,7 +401,7 @@ def catalog(state, *, for_model=False, include_image_markers=False):
             row['uploads'] = [{'name': image.name, 'reference': image.reference.model_dump(
                 mode='json', include={'message_id', 'content_index'})}
                 for image in record.source_images if image.reference.message_id]
-        rows.append(row)
+        rows.append(with_item_sources(row) if for_model else row)
     return rows
 
 def is_current(state, artifact_id):

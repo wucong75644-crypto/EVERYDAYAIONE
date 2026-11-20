@@ -691,3 +691,28 @@ async def test_unresolved_product_image_cannot_be_silently_omitted_by_mode_optio
     with pytest.raises(TaskError, match='CONTENT_SOURCE_IMAGE_SELECTION_REQUIRED'):
         co.compile_input(r.task_execution_state, 'generate_image', {}, ref(row))
     h._execute_tool_calls.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_catalog_reference_by_title_and_last_edit_resolves_same_saved_input():
+    r, p, h, q, _ = await registered()
+    def visible_items():
+        facts = json.loads(context_message(r)['content'].split('\n')[-1])
+        group, = facts['content_objects']
+        return group['items']
+
+    second = visible_items()[1]
+    await execute(r, p, h, q, [call(co.SAVE, {
+        'base': second['content_source'],
+        'updates': [{'item_index': 2, 'item': {'body': '修订后的完整原文。\n负面提示词：保留装订孔。'}}],
+    }, 'revise-second')])
+    items = visible_items()
+    named, = [item for item in items if item['title'] == second['title']]
+    changed, = [item for item in items if item.get('changed_in_revision') == 2]
+    assert named == changed == items[1]
+    assert named['content_source'] != second['content_source']
+    args, _ = co.compile_input(r.task_execution_state, 'generate_image', {}, named['content_source'])
+    assert args['prompt'] == '修订后的完整原文。\n负面提示词：保留装订孔。'
+    assert args['references'][0]['message_id'] == 'original' and args['aspect_ratio'] == '1:1'
+    with pytest.raises(TaskError, match='CONTENT_BASE_VERSION_CHANGED'):
+        co.compile_input(r.task_execution_state, 'generate_image', {}, second['content_source'])

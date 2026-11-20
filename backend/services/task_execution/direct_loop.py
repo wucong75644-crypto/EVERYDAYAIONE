@@ -226,14 +226,14 @@ def context_message(runtime,*,state=None):
     if source is not None and state is None:
         facts['previous_task']={k:copy.deepcopy(source['state'].get(k)) for k in ('root_task_id','original_goal','status','operations','artifacts')}
         for artifact in facts['previous_task'].get('artifacts',[]):artifact.pop('inline_text',None)
-    from .content_objects import TAG, catalog
+    from .content_objects import TAG, catalog, with_item_sources
     facts['content_objects'] = catalog(state, for_model=True)
     if source is not None and state is None:
         source_state = TaskState.model_validate(source['state'])
         older = getattr(runtime, 'task_content_groups', ())
         facts['previous_content_objects'] = catalog(source_state, for_model=True, include_image_markers=bool(older))
         if older:
-            facts['older_content_objects'] = [{k: v for k, v in row.items() if k != 'root_task_id'} for row in older]
+            facts['older_content_objects'] = [with_item_sources({k: v for k, v in row.items() if k != 'root_task_id'}) for row in older]
     if state is not None:
         facts.update(revision=state.revision,status=state.status,
             operations=[v.model_dump(mode='json') for v in state.operations],
