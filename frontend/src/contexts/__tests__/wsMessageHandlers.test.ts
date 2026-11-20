@@ -16,8 +16,12 @@
  * 9. 边界情况
  */
 
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createWSMessageHandlers, flushChunkBuffer, type HandlerDeps, type MessageStoreActions } from '../wsMessageHandlers';
+import type { Message } from '../../types/message';
+import type { WSIncomingMessage } from '../wsMessageHandlerShared';
 import { scheduledTaskForm } from '../../test/fixtures/scheduledTaskForm';
 
 const scheduledStore = vi.hoisted(() => ({ optimisticUpdate: vi.fn(), fetchRuns: vi.fn(), fetchTasks: vi.fn() }));
@@ -113,6 +117,39 @@ function createMockDeps(store: MessageStoreActions): HandlerDeps {
 
 describe('independent chat image delivery', () => {
   beforeEach(() => vi.clearAllMocks());
+  const replayDir = process.env.CHAT_EXECUTION_WS_REPLAY_DIR;
+  const scenarios = ['recorded-first', 'recorded-fifth', 'text-to-image', 'image-to-image'];
+  for (const scenario of ['recorded-write-once', 'recorded-retired', 'recorded-third-output', 'recorded-quoted-output',
+    'new-third-output', 'recorded-third-history', 'new-third-history',
+    'continuity-ordinary-1', 'continuity-ordinary-2', 'continuity-ordinary-3',
+    'continuity-ordinary-4', 'continuity-ordinary-5', 'continuity-ordinary-6',
+    'continuity-skill-1', 'continuity-skill-2', 'continuity-skill-3']) {
+    if (replayDir && existsSync(join(replayDir, scenario + '.json'))) scenarios.push(scenario);
+  }
+  it.skipIf(!replayDir).each(scenarios)('projects the actual local worker receipt for %s', scenario => {
+    const dir = replayDir!;
+    const [pending, done] = JSON.parse(readFileSync(join(dir, scenario + '.json'), 'utf8')) as WSIncomingMessage[];
+    const store = createMockStore();
+    const handlers = createWSMessageHandlers(createMockDeps(store));
+    handlers.message_pending(pending);
+    const placeholder = vi.mocked(store.addMessage).mock.calls[0][1];
+    expect(placeholder.status).toBe('pending');
+    expect(placeholder.content[0]).toMatchObject({ type: 'image', url: null });
+    vi.mocked(store.getMessage).mockReturnValue(placeholder);
+    handlers.message_done(done);
+    const [messageId, final] = vi.mocked(store.updateMessage).mock.calls.at(-1)!;
+    expect(messageId).toBe(placeholder.id);
+    expect(final).toMatchObject({ status: 'completed', content: [{
+      type: 'image', url: expect.stringMatching(scenario.startsWith('continuity-')
+        ? /\/generated\/[\da-f-]+\.png$/ : /\/generated\/local-replay\.png$/),
+      width: 30, height: ['image-to-image', 'new-third-output', 'new-third-history', 'continuity-ordinary-6', 'continuity-skill-3'].includes(scenario) ? 40 : 30,
+    }] });
+    vi.mocked(store.getMessage).mockReturnValue({ ...placeholder, ...final } as Message);
+    handlers.message_pending(pending);
+    expect(store.updateMessage).toHaveBeenCalledOnce();
+    expect(store.completeStreaming).not.toHaveBeenCalled();
+  });
+
   it('accepts a placeholder without registering parent streaming or sending state', () => {
     const store = createMockStore(); const deps = createMockDeps(store);
     const handlers = createWSMessageHandlers(deps);

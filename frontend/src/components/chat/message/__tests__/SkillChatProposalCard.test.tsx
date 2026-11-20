@@ -50,6 +50,24 @@ describe('SkillChatProposalCard', () => {
     expect(skillCreationService.confirmChatProposal).not.toHaveBeenCalled();
   });
 
+  it('sends explicit automatic-use consent with the same confirmation', async () => {
+    vi.mocked(skillCreationService.confirmChatProposal).mockResolvedValue({
+      ...makeProposal(), status: 'committed',
+    });
+    render(<SkillChatProposalCard proposalId="proposal-1" />);
+    const checkbox = await screen.findByRole('checkbox', { name: /允许 AI/ });
+    expect(checkbox).not.toBeChecked();
+    fireEvent.click(checkbox);
+    fireEvent.click(screen.getByRole('button', { name: '确认并继续' }));
+
+    await waitFor(() => expect(skillCreationService.confirmChatProposal).toHaveBeenCalledExactlyOnceWith(
+      'proposal-1', {
+        expected_version: 1, content_sha256: 'a'.repeat(64), target_scope: 'personal',
+        allow_model_selection: true,
+      },
+    ));
+  });
+
   it('confirms an edit as a personal update without offering another publication scope', async () => {
     vi.mocked(skillCreationService.getChatProposal).mockResolvedValue({
       ...makeProposal(), operation: 'update', target_package_id: 'package-1',

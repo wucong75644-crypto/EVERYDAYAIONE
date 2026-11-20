@@ -56,6 +56,16 @@ def _append_image_locators(messages, row, *, org_id=None, visible_indices=()):
         return  # Legacy non-persisted caller fixtures have no selectable source.
     from .image_sources import image_sources, format_image_sources
     text = format_image_sources(row.get("_trusted_image_sources") or image_sources(row, org_id, visible_indices))
+    from .image_sources import content_parts
+    import hashlib
+    text_sources = [{'message_id': str(row['id']), 'content_index': i, 'role': row['role'],
+                     'context_revision': row.get('context_revision'), 'chars': len(part['text']),
+                     'sha256': hashlib.sha256(part['text'].encode()).hexdigest()}
+                    for i, part in enumerate(content_parts(row.get('content')))
+                    if isinstance(part, dict) and part.get('type') == 'text' and isinstance(part.get('text'), str) and part['text']]
+    if text_sources:
+        text = ('正文来源定位（与图片reference分开；供读取和理解历史；执行已登记内容使用content_source）：\n'
+                + json.dumps(text_sources, ensure_ascii=False) + ('\n' + text if text else ''))
     if not text:
         return
     target = next((message for message in reversed(messages)

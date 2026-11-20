@@ -62,10 +62,15 @@ def _schema_generate_image_async():
                     "variant_id":{"type":"string","minLength":1,"maxLength":200},
                     "source_task_id":{"type":"string"},
                     "source_prompt":{"type":"object","additionalProperties":False,
-                        "required":["sha256"],"oneOf":[{"required":["message_id","content_index"]},{"required":["task_id"]}],"properties":{
+                        "description":"提示词原文的消息或历史图片任务定位。后台核对原文并计算sha256，可省略sha256；不要自行编造校验值。",
+                        "oneOf":[{"required":["message_id","content_index"]},{"required":["task_id"]},{"required":["handoff"]},{"required":["content_object"]}],"properties":{
+                            "handoff":{"type":"object","description":"后台核验后的输入映射凭据，不能自行构造或修改"},
+                            "content_object":{"type":"object","description":"宿主从已登记对象组装的完整执行凭据，模型不能自行构造"},
                             "task_id":{"type":"string"},
                             "message_id":{"type":"string"},"content_index":{"type":"integer","minimum":0},
                             "sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"},
+                            "bundle":{"type":"object","description":"后台返回的完整内容凭据，原样传回；不要自行构造"},
+                            "adaptation":{"type":"string","description":"后台组装改编输入时保留的改编要求，不替代原始方案"},
                         }},
                     "plan_source":{"type":"object","additionalProperties":False,
                         "required":["plan_id","revision","item_id"],"properties":{

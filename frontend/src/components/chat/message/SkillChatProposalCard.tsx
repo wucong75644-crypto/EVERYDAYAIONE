@@ -31,6 +31,7 @@ export default function SkillChatProposalCard({ proposalId, fallbackTitle }: {
 }) {
   const [proposal, setProposal] = useState<SkillChatProposal | null>(null);
   const [target, setTarget] = useState<Target>('personal');
+  const [allowModelSelection, setAllowModelSelection] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const refresh = useCallback(async ({ preserveError = false }: RefreshOptions = {}) => {
@@ -44,7 +45,7 @@ export default function SkillChatProposalCard({ proposalId, fallbackTitle }: {
     }
     catch { if (!preserveError) setError('暂时无法读取 Skill 候选，请刷新页面后重试。'); }
   }, [proposalId]);
-  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => { setAllowModelSelection(false); void refresh(); }, [refresh]);
 
   const act = async (operation: 'confirm' | 'cancel') => {
     if (!proposal || busy) return;
@@ -53,6 +54,7 @@ export default function SkillChatProposalCard({ proposalId, fallbackTitle }: {
       if (operation === 'confirm') {
         const result = await skillCreationService.confirmChatProposal(proposalId, {
           expected_version: proposal.version, content_sha256: proposal.content_sha256, target_scope: target,
+          ...(allowModelSelection ? { allow_model_selection: true } : {}),
         });
         setProposal({ ...proposal, ...result, status: result.status, target_scope: target });
       } else {
@@ -123,6 +125,11 @@ export default function SkillChatProposalCard({ proposalId, fallbackTitle }: {
         {!targetAvailable && <p role="alert" className="mt-2 text-xs text-amber-700">当前组织已关闭此发布范围，请选择其他范围或联系组织管理员。</p>}
         {Object.values(proposal.available_targets || {}).every(value => value === false) && <p role="alert" className="mt-2 text-xs text-amber-700">当前组织已关闭 AI Skill 创建权限，此候选无法确认。</p>}
       </fieldset>}
+      {awaiting && <label className="flex items-center gap-2 text-xs text-text-secondary">
+        <input type="checkbox" checked={allowModelSelection} disabled={busy || !targetAvailable}
+          onChange={event => setAllowModelSelection(event.target.checked)} />
+        允许 AI 在相关任务中按需使用此 Skill
+      </label>}
       {error && <p role="alert" className="text-xs text-red-600">{error}</p>}
       {awaiting ? <div className="flex flex-wrap justify-end gap-2">
         <Button variant="secondary" size="sm" disabled={busy} onClick={() => void act('cancel')}><X className="mr-1 h-3.5 w-3.5" />取消</Button>

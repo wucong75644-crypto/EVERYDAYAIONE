@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -110,6 +111,10 @@ ERP_AGENT_RESULT_BUDGET = 4000
 # ≤30K: 直接回传（不截断）  >30K: 落盘 staging + 2K 预览
 CODE_EXECUTE_BUDGET = 30000
 
+# Exact source selections are already bounded by their reader. Their identity
+# and body must travel together, without a staging preview dropping either.
+SOURCE_SELECTION_BUDGET = 30000
+
 # 不截断的工具（返回本身有界或自有防线）
 # - generate_image/video: 返回本身就短
 # - file_search: 命中图片直接返回多模态 FileReadResult；列表/单文件描述本身简短
@@ -159,6 +164,15 @@ def wrap(
     # 已经分流过的结果不再处理（防重入）
     if PERSISTED_OUTPUT_TAG in result:
         return result
+
+    if tool_name == "get_conversation_context" and len(result) <= SOURCE_SELECTION_BUDGET:
+        try:
+            selected = json.loads(result)
+        except (ValueError, TypeError):
+            selected = None
+        if isinstance(selected, dict) and ("selected_prompt" in selected or "selected_prompts" in selected
+                                           or selected.get('mapping_sources') is True):
+            return result
 
     # 确定预算
     if budget is None:

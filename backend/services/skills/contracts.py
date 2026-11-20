@@ -98,6 +98,7 @@ class SkillCatalogMetadata(Contract):
     tool_policy: Literal['restricted', 'platform'] = 'restricted'
     coordination: CoordinationContract | None = None
     task_stage: TaskStageContract | None = None
+    content_protocol: Literal['content-objects-v2'] | None = None
 
     @model_validator(mode='after')
     def unambiguous_tool_policy(self):
@@ -122,6 +123,8 @@ class SkillCatalogMetadata(Contract):
             result.pop('tool_policy', None)
         if self.coordination is None:
             result.pop('coordination', None)
+        if self.content_protocol is None:
+            result.pop('content_protocol', None)
         if self.task_stage is None:
             result.pop('task_stage', None)
         return result

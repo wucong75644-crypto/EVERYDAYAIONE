@@ -114,6 +114,21 @@ async def test_new_model_call_replays_accepted_original_without_second_handler_c
 
 
 @pytest.mark.asyncio
+async def test_native_checkpoint_without_a_receipt_cannot_start_an_image(monkeypatch):
+    from unittest.mock import Mock
+    from services.tools.result import UncertainToolInvocationError
+
+    runtime, coordinator, context, handler, io, service, call = await case(monkeypatch)
+    handler._actor_invocation_store = SimpleNamespace(lookup=Mock(return_value=None))
+    decision = service.policy.decide(call.name, context, call.arguments)
+    lifecycle = coordinator.lifecycle(handler, context, 'first', recovery_only=True)
+    with pytest.raises(UncertainToolInvocationError, match='ACTOR_RECOVERY_UNRECORDED_EFFECT'):
+        await lifecycle.replay(call, context, decision)
+    assert runtime.task_execution_state.operations == () and coordinator.store.calls == []
+    io.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_confirmed_rejection_allows_repair_but_preserves_attempt_history(monkeypatch):
     runtime, coordinator, context, handler, io, service, call = await case(monkeypatch)
     io.return_value = AgentResult('未受理', status='error', error_message='IMAGE_INPUT_UNAVAILABLE',

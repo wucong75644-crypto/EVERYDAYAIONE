@@ -39,6 +39,13 @@ def contract_for(candidate, body_sha256):
     return found[1] if found and found[0] == candidate.skill_key else None
 
 
+def image_planning_participants(participants):
+    """Prompt writing and image planning produce the same per-image brief."""
+    return {p.skill_key for p in participants if p.contract and not p.phase_resident
+            and any(c.scope in {'image.prompting', 'image.planning'} and 'plan' in c.actions
+                    for c in p.contract.claims)}
+
+
 def required_protocol_tools(composition):
     from .coordination import method_for
     result = set()
@@ -54,6 +61,7 @@ def incompatible_protocol_tools(composition):
     from .coordination import method_for
     # The server planner requires ecommerce.server_plan. An inline owner must
     # not be told to activate a competing owner to use this tool.
-    if method_for(composition, 'image.planning') == 'ecommerce.inline':
+    if (method_for(composition, 'image.planning') == 'ecommerce.inline'
+            or method_for(composition, 'image.prompting') == 'image.prompt'):
         return frozenset({'plan_ecommerce_images'})
     return frozenset()

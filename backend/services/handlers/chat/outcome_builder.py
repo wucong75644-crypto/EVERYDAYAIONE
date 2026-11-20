@@ -80,13 +80,17 @@ def _build_part(block: dict[str, Any]) -> ContentPart | None:
             duration_ms=block.get("duration_ms"),
         )
     if block_type == "text":
-        return TextPart(text=block["text"])
+        return TextPart(text=block["text"], content_artifact_id=block.get("content_artifact_id"),
+                        content_incomplete=block.get("content_incomplete"))
     if block_type == "task_progress":
         from schemas.message import TaskProgressPart
         return TaskProgressPart(**block)
     if block_type == "skill_step":
         return SkillStepPart(**block)
     if block_type == "tool_step":
+        from services.task_execution.model_directed import SAVE_IMAGE_PLAN
+        if block.get("tool_name") in {SAVE_IMAGE_PLAN, "get_conversation_context"}:
+            return None
         return ToolStepPart(
             tool_name=block["tool_name"],
             tool_call_id=block["tool_call_id"],

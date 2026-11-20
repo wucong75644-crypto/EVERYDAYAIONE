@@ -123,6 +123,27 @@ class ToolRuntime:
             bind_resolved=getattr(lifecycle,'bind_resolved_arguments',None)
             if file_call is not None and bind_resolved is not None:
                 await bind_resolved(original_call,call,context,decision)
+            async def verify_chat_source():
+                binding = getattr(self.executor, '_chat_source_bindings', {}).get(call.call_id)
+                if binding is None:
+                    return
+                original, source, expected = binding
+                if source.get('kind')=='content_object':
+                    from services.task_execution.content_objects import compile_input
+                    current,_=compile_input(self.executor._task_execution_state,call.name,original,source['reference'],allow_old=source.get('allow_old',False))
+                elif getattr(self.executor, '_task_recovery_only', False):
+                    from services.handlers.chat_input_handoff import rebind_call
+                    current = await asyncio.to_thread(rebind_call, self.executor.db, context.task_id,
+                        context, call.name, original, source)
+                else:
+                    raise PermissionError('CONTENT_INPUT_PATH_RETIRED')
+                # File target resolution has its own policy/version proof and
+                # durable canonical binding. Check the proposed source mapping
+                # against its original arguments, before that native conversion.
+                if current != expected or thaw(original_call.arguments) != expected:
+                    raise PermissionError('CHAT_SOURCE_CHANGED')
+
+            await verify_chat_source()
             # Read-only peek: completed business calls do not require a second
             # approval. Current policy/action/resources are checked above.
             if lifecycle is not None:
@@ -167,6 +188,7 @@ class ToolRuntime:
                 self.check_lifetime(context)
                 from services.task_execution.requirement_changes import gate as user_change_gate
                 await user_change_gate(self.executor)
+                await verify_chat_source()
                 if file_call is not None:
                     # Membership/manifest may have changed while approval waited.
                     resolve_resources(self.executor, name, call.arguments)

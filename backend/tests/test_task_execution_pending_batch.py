@@ -24,6 +24,28 @@ class ModelBoundaryReached(Exception):
 
 
 @pytest.mark.asyncio
+async def test_recovery_closes_pending_legacy_save_without_repeating_its_assistant_message():
+    from services.handlers.chat.execution_engine import _execute_tools
+    from services.handlers.chat.execution_sink import CollectingExecutionSink
+    from services.task_execution.pending_batch import recover_pending_batch
+    from tests.test_model_directed_loop import case as direct_case
+
+    runtime, prepared, handler, request = direct_case()
+    pending = {'id': 'pending-save', 'name': 'save_task_image_plan', 'arguments': '{}'}
+    prepared.messages.append(_assistant_tool_message('', [pending]))
+
+    await recover_pending_batch(prepared=prepared, runtime=runtime, request=request, handler=handler,
+        sink=CollectingExecutionSink(), totals=StreamTotals(), blocks=[],
+        cancellation_event=runtime.cancellation_event, model_round=2, execute_tools=_execute_tools,
+        repeated_tool_call_guard=None)
+
+    assert not pending_calls(prepared.messages)[0]
+    assert len([m for m in prepared.messages if m.get('tool_calls')]) == 1
+    assert json.loads(prepared.messages[-1]['content'])['code'] == 'TASK_IMAGE_METHOD_NOT_ACTIVE'
+    handler._execute_tool_calls.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('count,mixed,closed_images,existing_source', [
     (1,False,False,False), (1,True,False,False), (5,True,False,False), (5,True,True,False),
     (5,False,False,True), (5,True,True,True)])

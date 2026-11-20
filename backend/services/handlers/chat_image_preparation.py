@@ -4,7 +4,7 @@ import uuid
 from services.handlers.chat_image_request import ChatImageNotAcceptedError
 
 
-def prepare_input(resolver,args,*,scoped,workflow,settings,composition=None,entry_checked=False):
+def prepare_input(resolver,args,*,scoped,workflow,settings,composition=None,entry_checked=False,reference_cache=None):
     owner=resolver.owner
     if not entry_checked:validate_entry(owner,args,scoped=scoped,workflow=workflow,settings=settings,composition=composition)
     plan_source=args.get("plan_source")
@@ -52,7 +52,33 @@ def prepare_input(resolver,args,*,scoped,workflow,settings,composition=None,entr
     normalized=resolver.normalize_legacy(args)
     if normalized.get("background")=="transparent" and not settings.chat_image_transparent_enabled:
         raise PermissionError("CHAT_IMAGE_TRANSPARENT_DISABLED")
-    refs=resolver.resolve(normalized.get("references",[]))
+    if (not plan_proof and 'source_prompt' not in normalized
+            and isinstance(normalized.get('prompt'), str) and normalized['prompt'].strip()):
+        source = resolver.locate_source_prompt(normalized['prompt'])
+        if source is not None:
+            normalized['source_prompt'] = source
+    if 'source_prompt' in normalized:
+        normalized['prompt'], normalized['source_prompt'] = resolver.complete_source_prompt(
+            normalized['source_prompt'], normalized['prompt'])
+        if 'content_object' in normalized['source_prompt']:
+            from services.handlers.chat_input_handoff import digest
+            proof=normalized['source_prompt']['content_object']
+            if digest({k:v for k,v in normalized.items() if k!='source_prompt'}) != proof['arguments_sha256']:
+                raise ValueError('CONTENT_ARGUMENT_CHANGED')
+        if 'handoff' in normalized['source_prompt']:
+            from services.handlers.chat_input_handoff import check_outputs
+            check_outputs(resolver.verify_handoff(normalized['source_prompt']['handoff']), normalized)
+    references = normalized.get('references', [])
+    if reference_cache is None:
+        refs = resolver.resolve(references)
+    else:
+        import json
+        from copy import deepcopy
+        cache_key = json.dumps(references, sort_keys=True, ensure_ascii=False)
+        if cache_key not in reference_cache:
+            reference_cache[cache_key] = resolver.resolve(references)
+        refs = deepcopy(reference_cache[cache_key])
+        resolver.verify(refs, digest=False)
     if plan_proof:
         frozen_sources={entry["source_id"]:entry for entry in plan["input_snapshot"]["resolved_references"]}
         from services.agent.image.ecommerce_planner.contracts import source_id
@@ -63,8 +89,22 @@ def prepare_input(resolver,args,*,scoped,workflow,settings,composition=None,entr
                     or expected["file_version"]!=reference["file_version"]
                     or expected["workspace_path"]!=reference["workspace_path"]):
                 raise ValueError("ECOM_PLAN_REFERENCE_CHANGED")
-    from services.handlers.image_size_requirements import resolve_size_requirement
-    intent, previous = resolver.size_context()
+    from services.handlers.image_size_requirements import resolve_size_requirement, selected_source_size
+    size_fields = {'aspect_ratio', 'mode', 'width', 'height', 'orientation'}
+    source = normalized.get('source_prompt')
+    bound_specs = {}
+    if source and 'content_object' in source:
+        bound_specs = {key: normalized[key] for key in ('aspect_ratio', 'resolution', 'output_format')
+                       if key in normalized}
+        intent, previous = resolver.size_context(use_previous=False, infer_attachment_canvas=False)
+    else:
+        intent, previous = resolver.size_context()
+    if source and not size_fields.intersection(intent) and not size_fields.intersection(previous):
+        selected_size = selected_source_size(normalized['prompt'])
+        if selected_size:
+            provenance = {f'source_{key}': source[key] for key in ('message_id', 'task_id') if key in source}
+            previous = {**selected_size, 'mode': 'explicit', **previous, **provenance}
+            intent = {**{key: selected_size[key] for key in ('width', 'height') if key in selected_size}, **intent}
     if plan_proof:
         locked_size = plan["target_size"]
         ratio = locked_size["aspect_ratio"]
@@ -83,9 +123,13 @@ def prepare_input(resolver,args,*,scoped,workflow,settings,composition=None,entr
             normalized, refs, intent={}, previous=locked_size)
         target_size = locked_size
     else:
+        previous.update({key: bound_specs[key] for key in ('aspect_ratio', 'resolution')
+                         if key in bound_specs})
+        if 'aspect_ratio' in bound_specs:
+            previous['mode'] = 'auto' if bound_specs['aspect_ratio'] == 'auto' else 'explicit'
         normalized, target_size = resolve_size_requirement(normalized, refs, intent=intent, previous=previous)
-    if "source_prompt" in normalized:
-        normalized["source_prompt"] = resolver.source_prompt(normalized["source_prompt"],normalized["prompt"])
+        if any(normalized.get(key) != value for key, value in bound_specs.items()):
+            raise ChatImageNotAcceptedError('IMAGE_SIZE_CONFLICT', '当前规格与已保存方案不同，请先更新方案再执行。')
     if "source_task_id" in normalized:
         resolver.validate_source_task(normalized["source_task_id"])
     return normalized,refs,target_size,plan_proof

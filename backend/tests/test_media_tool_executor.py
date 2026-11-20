@@ -142,6 +142,7 @@ async def test_real_acceptance_preparation_uses_default_and_preserves_uncertain_
     resolver=MagicMock()
     resolver.size_context.return_value=(None, {})
     resolver.normalize_legacy.side_effect=deepcopy
+    resolver.locate_source_prompt.return_value=None
     resolver.resolve.return_value=([{"workspace_path":"original.png","content_sha256":"a"*64,"role":"subject","width":1024,"height":1024,"aspect_ratio":"1:1"}] if mode=="image_to_image" else [])
     monkeypatch.setattr("services.handlers.chat_image_request.ChatImageInputResolver",lambda *_,**__:resolver)
     if outcome=="invalid_input":

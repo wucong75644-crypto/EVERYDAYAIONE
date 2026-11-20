@@ -166,9 +166,7 @@
               "source_prompt": {
                 "type": "object",
                 "additionalProperties": false,
-                "required": [
-                  "sha256"
-                ],
+                "description": "提示词原文的消息或历史图片任务定位。后台核对原文并计算sha256，可省略sha256；不要自行编造校验值。",
                 "oneOf": [
                   {
                     "required": [
@@ -180,9 +178,27 @@
                     "required": [
                       "task_id"
                     ]
+                  },
+                  {
+                    "required": [
+                      "handoff"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "content_object"
+                    ]
                   }
                 ],
                 "properties": {
+                  "handoff": {
+                    "type": "object",
+                    "description": "后台核验后的输入映射凭据，不能自行构造或修改"
+                  },
+                  "content_object": {
+                    "type": "object",
+                    "description": "宿主从已登记对象组装的完整执行凭据，模型不能自行构造"
+                  },
                   "task_id": {
                     "type": "string"
                   },
@@ -196,6 +212,14 @@
                   "sha256": {
                     "type": "string",
                     "pattern": "^[0-9a-f]{64}$"
+                  },
+                  "bundle": {
+                    "type": "object",
+                    "description": "后台返回的完整内容凭据，原样传回；不要自行构造"
+                  },
+                  "adaptation": {
+                    "type": "string",
+                    "description": "后台组装改编输入时保留的改编要求，不替代原始方案"
                   }
                 }
               },
@@ -244,7 +268,7 @@
         "type": "function",
         "function": {
           "name": "get_conversation_context",
-          "description": "读取当前获准会话基线内的精确历史原文及图片来源。历史提示词必须读原文后复用，不能用摘要猜测。返回 message_id/content_index/sha256；task_id 可读取已发布图片实际输入的完整提示词。每次最多20条/8个指定消息。",
+          "description": "读取当前获准会话基线内的精确历史原文及图片来源。历史提示词必须读原文后复用，不能用摘要猜测。返回 message_id/content_index/sha256；task_id 可读取已发布图片实际输入的完整提示词。已在上下文中的原文可直接用消息定位交给执行工具；text_exacts 可一次选取多段，精确读取只返回选中片段及图片来源，不按标题扩展或分类。历史读取只供理解；执行已登记原文使用content_source，修订先保存完整新原文，不建立聊天分段映射。每次最多20条/8个指定消息。",
           "parameters": {
             "type": "object",
             "additionalProperties": false,
@@ -264,11 +288,30 @@
               "task_id": {
                 "type": "string"
               },
+              "text_exacts": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 100,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 20000
+                },
+                "description": "一次精确选取多条原文，按请求顺序返回。与text_exact互斥。"
+              },
               "text_exact": {
                 "type": "string",
                 "minLength": 1,
                 "maxLength": 20000,
-                "description": "从返回原文逐字选取的完整提示词；服务器确认唯一原文位置并返回它的sha256。"
+                "description": "读取逐字原文片段；只读定位，不建立执行绑定。"
+              },
+              "selection_scope": {
+                "type": "string",
+                "enum": [
+                  "item",
+                  "fragment"
+                ],
+                "description": "旧读取兼容字段，仅返回原文片段，不自动扩展；不建立执行绑定。"
               }
             }
           }

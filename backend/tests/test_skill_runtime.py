@@ -52,6 +52,39 @@ def state(source=None, **changes):
 def activate(key="report", **args):
     return json.dumps({"skill_id": key, "args": args}, ensure_ascii=False)
 
+async def test_retired_image_orchestration_remains_restorable_without_model_instructions(monkeypatch):
+    import services.skills.runtime as runtime_module
+    from services.skills.resolver import SkillResolver
+    from tests.test_skill_resolver import context as resolution_context
+
+    key = 'chat-image-orchestration'
+    official = item(key, revision='v3')
+    current = resolution_context()
+    resolver = SkillResolver()
+    assert resolver.select(current, [official]) == []
+    assert resolver.select(current, [official], restoring=True) == [official]
+    personal = official.model_copy(update={
+        'scope_kind': 'personal', 'package_user_id': current.actor_user_id, 'assignment_org_id': None,
+    })
+    assert resolver.select(current, [official, personal]) == [personal]
+
+    source = Source([official], body='Legacy direction to copy the checksum.')
+    historic = state(source)
+    with monkeypatch.context() as old_release:
+        old_release.setattr(runtime_module, 'retired_platform_skill', lambda key, scope: False)
+        await historic.initialize()
+        assert (await historic.activate(activate(key)))['ok']
+        checkpoint = historic.checkpoint()
+        messages = historic.messages()
+
+    resumed = state(source)
+    await resumed.initialize(checkpoint)
+    assert resumed.checkpoint() == checkpoint
+    resumed.ensure_messages(messages)
+    assert all(key not in message['content'] for message in messages)
+    assert not resumed.model_candidates()
+    assert (await resumed.activate(activate(key)))['code'] == 'SKILL_NOT_AVAILABLE'
+
 
 async def test_body_is_loaded_only_for_explicit_available_activation():
     source = Source([item(), item("hidden", model_selectable=False)])

@@ -215,6 +215,14 @@ async def test_async_image_acceptance_leaves_main_model_free_to_finish_independe
     monkeypatch.setattr('services.handlers.chat.execution_engine.compact_tool_context',AsyncMock())
     h.org_id=None;h.db=object();rounds=[]
     args={'mode':'text_to_image','prompt':'用户完整原提示词','aspect_ratio':'3:4'}
+    from services.task_execution import content_objects as co
+    p.content_controls_available=True
+    await execute(r,p,h,req,[call(co.SAVE,{'document':{'title':'完整提示词','items':[{'title':'图1','body':args['prompt'],'materials':[],'options':{'aspect_ratio':'3:4'}}]}},'saved-text')])
+    row=co.catalog(r.task_execution_state)[0]
+    reference={k:row[k] for k in ('artifact_id','sha256')}|{'item_index':1}
+    # This test isolates post-acceptance scheduling; its in-memory history has no persisted text source.
+    def no_history_source(*_args): return {}
+    monkeypatch.setattr('services.handlers.chat.content_tools.source_text', no_history_source)
     r.task_operation_store=SimpleNamespace(registry=build_capability_catalog())
     r.task_image_resource_resolver=SimpleNamespace(prepare_request=AsyncMock(return_value=(args,[],None)))
     monkeypatch.setattr('services.task_execution.image_resources.create_resolver',lambda *a:r.task_image_resource_resolver)
@@ -233,7 +241,7 @@ async def test_async_image_acceptance_leaves_main_model_free_to_finish_independe
     async def model(current,tools,*args_,**kwargs):
         assert not kwargs.get('task_review')
         rounds.append(kwargs['model_round'])
-        if len(rounds)==1:return '', '', [call('generate_image',args,'image')],set()
+        if len(rounds)==1:return '', '', [call('generate_image',{'content_source':reference},'image')],set()
         assert r.task_execution_state.status=='active'
         assert r.task_execution_state.operations, [m for m in current.messages if m.get('role')=='tool']
         assert r.task_execution_state.operations[0].status=='accepted'
@@ -290,3 +298,322 @@ async def test_failed_plan_checkpoint_publishes_no_marker_and_restores_original_
             cancellation_event=r.cancellation_event,sink=sink)
     assert blocks==[] and p.messages==before and r.task_direct_plan is None
     sink.on_block.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('key', ['reference-image-prompts', 'ecommerce-image-prompts'])
+@pytest.mark.parametrize('submission_count', [1, 5])
+async def test_original_method_saves_before_dispatch_and_reuses_actual_five_item_document(
+        key, submission_count, record_property, monkeypatch):
+    import os
+    from services.skills.selection import SkillSelection
+    from services.task_execution.direct_loop import duplicate_image_plan_items, image_plan_item, saved_image_plans
+    from services.task_execution.image_binding import image_prompt
+    from services.task_execution.methods import ImageMethodDocument
+    from services.task_execution.model_directed import SAVE_IMAGE_PLAN
+    from tests.test_task_execution_methods import document
+    from tests.test_task_execution_original_skills import OriginalSource, original_runtime
+
+    if not os.getenv('TASK_ORIGINAL_SKILLS_EXPORT'):
+        pytest.skip('Requires private original published Skill inputs')
+    saves = []
+    async def save(point, payload):
+        saves.append(copy.deepcopy(payload))
+        return {'outcome': 'saved'}
+    runtime, prepared, handler, request = case(save)
+    source = OriginalSource()
+    selection = SkillSelection(skill_id=key, revision=source.values[key].revision)
+    skills = original_runtime(source, turn_id=runtime.turn_id)
+    await skills.initialize(selection=selection)
+    assert (await skills.activate_manual(selection))['ok']
+    runtime.skill_runtime = skills
+
+    from pathlib import Path
+    replay = os.getenv('TASK_ORIGINAL_REFERENCE_PLAN') if key == 'reference-image-prompts' else None
+    plan = ImageMethodDocument.model_validate_json(Path(replay).read_text() if replay else document(5))
+    from services.task_execution import content_objects as co
+    prepared.content_controls_available=True
+    original={'title':'原方法五条完整稿','items':[{'title':brief.title,'body':image_prompt(brief),'materials':[],
+        'options':{'aspect_ratio':brief.aspect_ratio}} for brief in plan.image_plans]}
+    if key == 'reference-image-prompts':
+        original['display_prefix'] = '# 参考图判断\n\n' + plan.reference_analysis
+        for index, (item, brief) in enumerate(zip(original['items'], plan.image_plans), 1):
+            item['display_prefix'] = (f'# 方案{index}｜{brief.title}\n\n'
+                f'## 方案内容\n\n{brief.layout}\n\n## 视觉设定\n\n{plan.visual_direction}\n\n'
+                f'## 参考图使用方式\n\n{plan.product_facts}')
+            item['body'] = f'## 完整生图提示词\n\n{brief.prompt}\n\n## 负面提示词\n\n{brief.negative_prompt}'
+    blocks=await execute(runtime,prepared,handler,request,[call(co.SAVE,{'document':original},'save-five')])
+    handler._execute_tool_calls.assert_not_awaited()
+    state=runtime.task_execution_state
+    row=co.catalog(state)[0]
+    location={k:row[k] for k in ('artifact_id','sha256')}
+    artifact=next(a for a in state.artifacts if a.id==row['artifact_id'])
+    assert len(co.load(state,location|{'item_index':1})[1].items)==5
+    assert artifact.image_method.skill_key==key
+    from services.task_execution.plan_facts import requires_review
+    assert not requires_review(state,artifact)
+    assert not any(t['function']['name']==SAVE_IMAGE_PLAN for t in schemas(runtime))
+    restored=original_runtime(source,task_state=state,turn_id=runtime.turn_id)
+    await restored.initialize(saves[-1]['skill_runtime'])
+    assert 'generate_image' in restored.effective_allowed_tool_names
+    assert key in (restored.resident if key=='reference-image-prompts' else restored.active)
+    runtime.skill_runtime=restored
+    image,_=co.compile_input(state,'generate_image',{},location|{'item_index':2})
+    registry = build_capability_catalog()
+    runtime.task_image_resource_resolver = SimpleNamespace(
+        prepare_request=AsyncMock(side_effect=lambda args, *_a, **_kw: (args, [], None)))
+    dispatch = call('generate_image', image, 'second')
+    candidate, errors = stage_native_calls(runtime, prepared, [dispatch], registry)
+    assert not errors
+    runtime.task_execution_state = candidate
+    candidate, errors = await bind_image_recipes(runtime, [dispatch], registry)
+    assert not errors
+    recipe = next(a for a in candidate.artifacts if 'image.direct.recipe' in a.validations)
+    assert json.loads(recipe.inline_text)['method_handoff'] == {'artifact_id': artifact.id, 'image_item_index': 2}
+    runtime.task_execution_state = candidate
+    changed_ref = call('generate_image', {**image, 'resolution': '2K'}, 'same-item')
+    candidate, errors = stage_native_calls(runtime, prepared, [changed_ref], registry)
+    assert not errors
+    runtime.task_execution_state = candidate
+    candidate, errors = await bind_image_recipes(runtime, [changed_ref], registry)
+    assert not errors
+    assert set(duplicate_image_plan_items(candidate, [dispatch, changed_ref])) == {'same-item'}
+
+    from services.skills.contracts import SkillError
+    with monkeypatch.context() as patch:
+        patch.setattr(source, 'load', AsyncMock(side_effect=SkillError('SKILL_ACCESS_DENIED')))
+        runtime.task_execution_state = candidate
+        _, denied = await bind_image_recipes(runtime, [dispatch], registry)
+        assert denied['second'][0] == 'TASK_IMAGE_METHOD_UNAVAILABLE'
+
+    from services.agent.agent_result import AgentResult
+    from services.task_execution.image_binding import bind_image_call
+    from services.task_execution.reducer import reserve_operation, record_operation
+    monkeypatch.setattr('services.handlers.chat.execution_engine.compact_tool_context', AsyncMock())
+    runtime.task_execution_state = state
+    runtime.task_operation_store = SimpleNamespace(registry=registry)
+    submitted = []
+
+    async def accept(calls, *_args, **_kwargs):
+        results = []
+        for raw in calls:
+            submitted.append(raw['id'])
+            parsed = ToolCall(raw['id'], raw['name'], json.loads(raw['arguments']))
+            current = runtime.task_execution_state
+            binding = bind_image_call(current, parsed, registry)
+            saved_recipe = next(a for a in current.artifacts if a.id == binding.planning_artifact_id)
+            assert json.loads(saved_recipe.inline_text)['method_handoff']['artifact_id'] == artifact.id
+            current, operation, _ = reserve_operation(current, expected_revision=current.revision,
+                step_id=binding.step_id, capability='platform.generate_image', effect_key=binding.effect_key,
+                effect_version=1, arguments=json.loads(raw['arguments']), owner_task_id=UUID(runtime.task_id),
+                invocation_id=raw['id'])
+            operation = operation.model_copy(update={'tool_name': 'generate_image', 'owner_turn_id': UUID(runtime.turn_id)})
+            current = TaskState.model_validate({**current.model_dump(),
+                'operations': tuple(operation if old.id == operation.id else old for old in current.operations)})
+            runtime.task_execution_state = record_operation(current, operation.id, owner_task_id=UUID(runtime.task_id),
+                status='accepted', receipt_ref='task:' + str(uuid4()))
+            results.append((raw, AgentResult('受控受理回执', metadata={'accepted': True}), False, '受控受理回执'))
+        return results
+
+    handler._execute_tool_calls.side_effect = accept
+    requested=[call('generate_image',{'content_source':location|{'item_index':i}},f'image-{i}') for i in ([2] if submission_count==1 else range(1,6))]
+    await execute(runtime, prepared, handler, request, requested, blocks=blocks)
+    assert submitted == [raw['id'] for raw in requested]
+    assert len(runtime.task_execution_state.operations) == submission_count
+    assert str(runtime.task_execution_state.root_task_id) == runtime.task_id
+    for name, value in {
+        'skill': key, 'revision': selection.revision, 'planned_items': 5, 'external_dispatches': 0, 'substitute_acceptances': len(submitted),
+        'root_before': runtime.task_id, 'root_after_restore': str(state.root_task_id),
+        'plan_input': 'saved original plan' if replay else 'controlled five-item document',
+        'plan_ref': artifact.reference, 'recipe_ref': recipe.reference,
+    }.items():
+        record_property(name, value)
+
+
+@pytest.mark.asyncio
+async def test_chat_revision_discovery_and_binding_video_and_word(monkeypatch, tmp_path):
+    from docx import Document
+    from services.agent.agent_result import AgentResult
+    from services.handlers.chat import content_tools
+    from services.handlers.chat.tool_loop import prepare_tool_turn
+
+    runtime, prepared, handler, request = case()
+    prepared.content_controls_available = True
+    revision = '首发八折，今天有效。'
+    message_id = str(uuid4())
+    parent = {'user_id': request.user_id, 'org_id': None,
+              'conversation_id': request.conversation_id, 'base_context_revision': 4}
+    rows = [
+        {'id': message_id, 'role': 'assistant', 'content': [{'type': 'text', 'text': revision}]},
+    ]
+
+    class Query:
+        def __init__(self, table):
+            self.name = table
+        def __getattr__(self, name):
+            return lambda *args, **kwargs: self
+        def execute(self):
+            return SimpleNamespace(data=parent if self.name == 'tasks' else rows)
+
+    handler.db = SimpleNamespace(table=Query)
+    monkeypatch.setattr('services.file_upload.upload_to_payload', AsyncMock(return_value=None))
+    monkeypatch.setattr(content_tools, '_check_identity', lambda *_: None)
+    monkeypatch.setattr('services.tools.runtime_context._check_identity', lambda *_: None)
+    monkeypatch.setattr('services.handlers.chat.execution_engine.compact_tool_context', AsyncMock())
+    await execute(runtime, prepared, handler, request, [
+        call(content_tools.DISCOVER, {'query': '生成短视频'}, 'discover'),
+        call(content_tools.READ, {'message_id': message_id, 'text_exact': revision}, 'read'),
+    ])
+    handler._execute_tool_calls.assert_not_awaited()
+    source = json.loads(prepared.messages[-1]['content'])['source']
+    assert source['text'] == revision
+    names = runtime.checkpoint_base[content_tools.STATE]['names']
+    assert 'generate_video' in names
+    tools = prepare_tool_turn(core_tools=[], discovered_names=set(names),
+        org_id=None, turn=0, messages=[], tool_context=prepared.tool_context,
+        permission=prepared.permission, execution_context=prepared.execution_context)
+    schema = next(t for t in content_tools.model_tools(tools) if t['function']['name'] == 'generate_video')
+    assert 'content_source' in schema['function']['parameters']['properties']
+
+    from services.task_execution import content_objects as co
+    await execute(runtime,prepared,handler,request,[call(co.SAVE,{'document':{'title':'修订稿','items':[
+        {'title':'最终原文','body':revision,'materials':[],'options':{}}]}},'register')])
+    row=co.catalog(runtime.task_execution_state)[0]
+    reference={k:row[k] for k in ('artifact_id','sha256')}|{'item_index':1}
+    delivered = {}
+    async def accept(calls, *_args, **kwargs):
+        for raw in calls:
+            args = json.loads(raw['arguments'])
+            assert 'chat_text_source' not in args
+            assert kwargs['chat_source_bindings'][raw['id']][2] == args
+            if raw['name'] == 'generate_video':
+                delivered['video_prompt'] = args['prompt']
+            else:
+                from services.sandbox.executor import SandboxExecutor
+                output = tmp_path / '下载'
+                output.mkdir()
+                from services.sandbox.kernel_manager import KernelManager
+                manager = KernelManager()
+                await manager.start()
+                try:
+                    sandbox = SandboxExecutor(timeout=30, max_result_chars=8000, workspace_dir=str(tmp_path),
+                        staging_dir=str(tmp_path), output_dir=str(output), kernel_manager=manager,
+                        conversation_id=request.conversation_id)
+                    sandbox._expected_document_text = revision
+                    result = await sandbox.execute(args['code'], '生成 Word')
+                finally:
+                    await manager.shutdown()
+                assert result.status == 'success', result.summary
+                assert result.emit_payloads and result.emit_payloads[0]['kind'] == 'file'
+                delivered['word'] = Document(output / 'revision.docx').paragraphs[0].text
+        return [(raw, AgentResult('受控执行结果'), False, '受控执行结果') for raw in calls]
+
+    handler._execute_tool_calls.side_effect = accept
+    runtime.task_operation_store = SimpleNamespace(registry=build_capability_catalog())
+    await execute(runtime, prepared, handler, request, [
+        call('generate_video', {'content_source':reference}, 'video'),
+        call('code_execute', {'code': "from docx import Document\ndoc = Document()\ndoc.add_paragraph(chat_source_text)\ndoc.save('下载/revision.docx')\nemit_file('下载/revision.docx')",
+            'description':'按修订稿交付Word','content_source':reference}, 'word'),
+    ])
+    assert delivered == {'video_prompt': revision, 'word': revision}
+    bindings=runtime.checkpoint_base[content_tools.STATE]['bindings']
+    assert bindings['video']['reference']==bindings['word']['reference']==reference
+    rows[0]['content'][0]['text']='历史聊天已变化，但保存的原文不变'
+    handler._execute_tool_calls.assert_awaited_once()
+    await execute(runtime,prepared,handler,request,[call('generate_video',{'prompt':revision,'chat_text_source':{**source,'mode':'exact'}},'retired')])
+    assert 'CONTENT_INPUT_PATH_RETIRED' in str(prepared.messages[-1])
+    handler._execute_tool_calls.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_exact_word_delivery_checks_host_file_before_upload(monkeypatch, tmp_path):
+    from docx import Document
+    from services.sandbox.executor import SandboxExecutor
+
+    upload = AsyncMock(return_value=None)
+    monkeypatch.setattr('services.file_upload.upload_to_payload', upload)
+    document = Document()
+    document.add_paragraph('模型误用了旧稿')
+    path = tmp_path / 'revision.docx'
+    document.save(path)
+    sandbox = SandboxExecutor(workspace_dir=str(tmp_path), output_dir=str(tmp_path))
+    sandbox._expected_document_text = '首发八折，今天有效。'
+    payload = {'kind': 'file', 'path': str(path), 'name': path.name}
+    with pytest.raises(ValueError, match='CHAT_SOURCE_DOCUMENT_MISMATCH'):
+        await sandbox._upload_payload_files([payload])
+    upload.assert_not_awaited()
+    with pytest.raises(ValueError, match='CHAT_SOURCE_DOCUMENT_MISMATCH'):
+        await sandbox._auto_emit_missed({}, [])
+    upload.assert_not_awaited()
+    document.paragraphs[0].text = sandbox._expected_document_text
+    document.save(path)
+    await sandbox._upload_payload_files([payload])
+    upload.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_source_failure_preserves_reason_and_stops_automatic_generation(monkeypatch):
+    runtime, prepared, handler, request = case()
+    runtime.task_operation_store = SimpleNamespace(registry=build_capability_catalog())
+    runtime.task_image_resource_resolver = SimpleNamespace(
+        prepare_request=AsyncMock(side_effect=ValueError('IMAGE_SOURCE_PROMPT_CHANGED')))
+    monkeypatch.setattr('services.handlers.chat.execution_engine.compact_tool_context', AsyncMock())
+    await execute(runtime, prepared, handler, request, [
+        call('generate_image', {'mode': 'image_to_image', 'prompt': '原提示词',
+             'references': [{'message_id': str(uuid4()), 'content_index': 1, 'role': '产品'}],
+             'source_prompt': {'message_id': str(uuid4()), 'content_index': 0},
+             'aspect_ratio': '1:1'}, 'bad-source'),
+    ])
+    handler._execute_tool_calls.assert_not_awaited()
+    assert 'CONTENT_INPUT_PATH_RETIRED' in str(prepared.messages[-1]['content'])
+    assert '停止提交' in handler._tool_result_stop_reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('reader', ['new', 'legacy'])
+@pytest.mark.parametrize('parallel', [False, True])
+async def test_selected_fragments_survive_batch_reads_without_last_item_overwrite(monkeypatch, mock_db, reader, parallel):
+    from services.agent.agent_result import AgentResult
+    from services.agent.conversation_tool_mixin import ConversationToolMixin
+    from services.handlers.chat import content_tools
+
+    runtime, prepared, handler, request = case()
+    message_id, input_id = str(uuid4()), str(uuid4())
+    texts = ['第一个版本：新品首发。', '第二个版本：限时优惠。']
+    mock_db.set_table_data('tasks', [{'id': request.task_id, 'user_id': request.user_id, 'org_id': None,
+        'conversation_id': request.conversation_id, 'base_context_revision': 1,
+        'input_message_id': input_id, 'request_params': {}}])
+    mock_db.set_table_data('messages', [{'id': message_id, 'role': 'assistant', 'org_id': None,
+        'conversation_id': request.conversation_id, 'status': 'completed', 'message_kind': 'conversation',
+        'context_revision': 1, 'content': [{'type': 'text', 'text': '\n'.join(texts)}]}])
+    handler.db = mock_db
+    owner = SimpleNamespace(db=mock_db, user_id=request.user_id, workspace_user_id=request.user_id,
+        org_id=None, conversation_id=request.conversation_id, task_id=request.task_id,
+        context_scope='user', personal_context_allowed=True, execution_mode='interactive')
+    seen = []
+
+    async def accept(calls, *_args, **_kwargs):
+        results = []
+        for raw in calls:
+            args = json.loads(raw['arguments'])
+            if raw['name'] == 'get_conversation_context':
+                output = ConversationToolMixin._exact_image_history(owner, args)
+            else:
+                seen.append(args['prompt'])
+                output = '本地替身'
+            results.append((raw, AgentResult(output), False, output))
+        return results
+
+    handler._execute_tool_calls.side_effect = accept
+    monkeypatch.setattr(content_tools, '_check_identity', lambda *_: None)
+    monkeypatch.setattr('services.handlers.chat.execution_engine.compact_tool_context', AsyncMock())
+    prepared.content_controls_available = reader == 'new'
+    name = content_tools.READ if reader == 'new' else 'get_conversation_context'
+    location = {'message_id': message_id} if reader == 'new' else {'message_ids': [message_id]}
+    # This test explicitly selects individual fragments, not entire documents.
+    reads = ([call(name, {**location, 'text_exact': text}, f'read-{index}') for index, text in enumerate(texts)]
+             if parallel else [call(name, {**location, 'text_exacts': texts}, 'read-all')])
+    await execute(runtime, prepared, handler, request, reads)
+    state=content_tools.checkpoint_state(runtime)
+    assert 'selected_sources' not in state and 'bindings' not in state
+    assert not seen

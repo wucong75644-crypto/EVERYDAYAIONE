@@ -79,6 +79,7 @@ export const skillCreationService = {
 
   async confirmChatProposal(proposalId: string, data: {
     expected_version: number; content_sha256: string; target_scope: 'personal' | 'org' | 'platform';
+    allow_model_selection?: boolean;
   }): Promise<SkillChatProposal> {
     const response = await api.post<ApiResponse<SkillChatProposal>>(
       `/skills/authoring/proposals/chat/${proposalId}/confirm`, data,
