@@ -430,13 +430,16 @@ async def test_repeated_tool_call_stop_finalizes_actor_preview():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("tool_name, accepted, is_error, terminal", [
-    ("erp_agent", True, False, False),
-    ("generate_image", True, False, True),
-    ("generate_image", False, False, False),
-    ("generate_image", True, True, False),
+@pytest.mark.parametrize("tool_name, accepted, has_receipt, is_error, terminal", [
+    ("erp_agent", True, True, False, False),
+    ("generate_image", True, True, False, True),
+    ("generate_image", True, False, False, False),
+    ("generate_image", False, True, False, False),
+    ("generate_image", True, True, True, False),
 ])
-async def test_actor_tool_preview_is_updated_before_tool_execution(monkeypatch, tool_name, accepted, is_error, terminal):
+async def test_actor_tool_preview_is_updated_before_tool_execution(
+    monkeypatch, tool_name, accepted, has_receipt, is_error, terminal,
+):
     order = []
 
     class Sink:
@@ -455,8 +458,11 @@ async def test_actor_tool_preview_is_updated_before_tool_execution(monkeypatch, 
         order.append("execute")
         call = _args[0][0]
         from services.agent.agent_result import AgentResult
+        metadata = {"accepted": accepted}
+        if has_receipt:
+            metadata["task_id"] = "49bfee30-2c71-490a-bf45-b9c613a7763e"
         result = AgentResult(summary="工具结果", status="error" if is_error else "success",
-                             metadata={"accepted": accepted})
+                             metadata=metadata)
         return [(call, result, is_error, "工具结果")]
 
     monkeypatch.setattr(
@@ -512,6 +518,7 @@ async def test_actor_tool_preview_is_updated_before_tool_execution(monkeypatch, 
     )
 
     assert handler._terminal_image_pending is terminal
+    assert getattr(prepared, "image_receipt_seen", False) is terminal
     assert order == ["update", "execute"]
     assert len(blocks) == 1
     assert prepared.messages[-2]["role"] == "tool"
