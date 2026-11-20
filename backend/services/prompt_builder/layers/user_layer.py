@@ -59,9 +59,9 @@ class UserLayer:
             attachment_refs = format_current_attachment_refs(inp.workspace_files, inp.org_id)
 
         from services.handlers.chat_context.image_sources import format_image_sources
-        sources = format_image_sources(inp.image_sources)
         from services.handlers.image_size_requirements import size_preflight_notice
         size_notice = size_preflight_notice(inp.text, inp.image_sources)
+        sources = format_image_sources(inp.image_sources, include_size_guidance=bool(size_notice))
         if sources or size_notice:
             attachment_refs = "\n\n".join(filter(None, (attachment_refs, size_notice, sources)))
 

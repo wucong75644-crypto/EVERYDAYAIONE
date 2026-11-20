@@ -6,17 +6,22 @@ can exist before there is an actual operation; native adapters own all effects.
 from __future__ import annotations
 
 import copy
+import hashlib
+import re
 import json
 from dataclasses import replace
 from uuid import UUID
 
-from pydantic import ValidationError
+from pydantic import Field, ValidationError
 from services.conversation_commands import SafePoint
 from services.tools import ToolCall
 from services.tools.policy import ToolPolicy
 from services.tools.spec import thaw
-from .contracts import Artifact, TaskError, TaskState, WorkingPlan
-from .model_directed import INSTRUCTIONS, PREFIX, PLAN_SCHEMA, WorkingPlanUpdate, enabled, record_calls
+from .contracts import Artifact, Fact, MethodBinding, TaskError, TaskState, WorkingPlan
+from .model_directed import (
+    INSTRUCTIONS, PREFIX, PLAN_SCHEMA, SAVE_IMAGE_PLAN, WorkingPlanUpdate, enabled, record_calls,
+)
+from .methods import ImageMethodDocument, profile_for
 from .reducer import digest, register_artifacts, complete_step
 
 PLAN_KEY='_task_direct_plan'
@@ -35,6 +40,153 @@ READ_CONTROLS=frozenset({'find_task_text','read_task_text','read_task_result',
     'read_task_write_result','read_task_scheduled_result','read_task_code_result'})
 NATIVE_TOOLS=frozenset({'generate_image','generate_video','code_execute',
     'agent_reach','manage_scheduled_task','file_delete','restore_file','erp_execute'})
+
+
+class SaveImagePlan(Fact):
+    image_count: int = Field(strict=True, ge=1, le=100)
+    document: ImageMethodDocument
+
+
+def active_image_methods(runtime):
+    skills = getattr(runtime, 'skill_runtime', None)
+    if skills is None:
+        return {}
+    return {key: profile for key, active in skills.active.items()
+            if (profile := profile_for(skills.directory[key], active)) is not None}
+
+
+def active_image_profiles(runtime):
+    return {profile[0] for profile in active_image_methods(runtime).values()}
+
+
+def saved_image_plans(state):
+    if state is None:
+        return ()
+    committed = {artifact_id for result in state.results for artifact_id in result.artifact_ids}
+    return tuple(a for a in state.artifacts if a.id in committed and 'image.direct.plan' in a.validations)
+
+
+def save_image_plan(runtime, call, registry):
+    methods = active_image_methods(runtime)
+    if len(methods) != 1:
+        raise TaskError('TASK_IMAGE_METHOD_NOT_ACTIVE' if not methods else 'TASK_IMAGE_METHOD_CONFLICT')
+    key, (profile, retire, source) = next(iter(methods.items()))
+    skills = runtime.skill_runtime
+    candidate, active = skills.directory[key], skills.active[key]
+    value = SaveImagePlan.model_validate_json(call['arguments'])
+    plans = value.document.image_plans
+    distinct = {tuple(' '.join(text.split()) for text in (p.layout, p.prompt, p.negative_prompt)) for p in plans}
+    prompts = {(p.prompt, p.negative_prompt, p.aspect_ratio) for p in plans}
+    if (len(plans) != value.image_count or len(distinct) != value.image_count
+            or len(prompts) != value.image_count or any(p.plan_source for p in plans)):
+        raise TaskError('TASK_IMAGE_PLAN_EVIDENCE_INVALID')
+    text = value.document.model_dump_json(exclude_none=True)
+    if len(text.encode()) > 50_000:
+        raise TaskError('TASK_IMAGE_PLAN_TOO_LARGE')
+    state = runtime.task_execution_state
+    owner = UUID(str(runtime.task_id))
+    checksum = hashlib.sha256(text.encode()).hexdigest()
+    for saved in saved_image_plans(state):
+        if saved.sha256 == checksum:
+            return state, saved
+        if saved.delivery_task_id == owner:
+            raise TaskError('TASK_IMAGE_PLAN_ALREADY_SAVED')
+    parsed = ToolCall(call['id'], SAVE_IMAGE_PLAN, value.model_dump(mode='json'))
+    state = record_calls(state, runtime.task_bootstrap, [parsed], registry)
+    from .model_directed import call_binding
+    step, requirement = call_binding(state, parsed)
+    artifact_id = 'direct-image-plan-' + digest(step.id)[:32]
+    artifact = Artifact(id=artifact_id, kind='text', reference=f'task-text:{state.root_task_id}:{artifact_id}',
+        sha256=checksum, inline_text=text, source_task_id=owner, delivery_task_id=owner,
+        source_call_id=call['id'], step_id=step.id,
+        validations=('artifact.exists', 'image.plan.valid', 'image.direct.plan', profile),
+        image_method=MethodBinding(package_id=candidate.package_id, skill_key=key, revision=active.revision,
+            body_sha256=active.body_sha256, profile_id=profile, contract_source=source,
+            requirement_ids=(requirement.id,), image_count=value.image_count, retire_on_complete=retire))
+    state = register_artifacts(state, [artifact])
+    return complete_step(state, step.id, [artifact.id], owner_task_id=owner), artifact
+
+
+def stage_image_plan_batch(runtime, prepared, blocks, calls, assistant, registry, *, assistant_already_present=False):
+    """Close a pending historical plan save without replaying the assistant message."""
+    if not assistant_already_present:
+        prepared.messages.append(copy.deepcopy(assistant))
+    candidate = runtime.task_execution_state
+    for call in calls:
+        result = {'ok': False, 'code': 'TASK_IMAGE_PLAN_SAVE_BARRIER'}
+        if call['name'] == SAVE_IMAGE_PLAN and candidate is runtime.task_execution_state:
+            try:
+                candidate, artifact = save_image_plan(runtime, call, registry)
+                working_plan = getattr(runtime, 'task_direct_plan', None)
+                if working_plan is not None and working_plan != candidate.working_plan:
+                    from .model_directed import update_working_plan
+                    candidate = update_working_plan(candidate, working_plan.model_dump(mode='json'))
+                result = {'ok': True, 'artifact_id': artifact.id, 'reference': artifact.reference,
+                          'task_id': str(candidate.root_task_id)}
+            except (ValueError, TypeError, KeyError) as error:
+                result['code'] = str(error) if isinstance(error, TaskError) else 'TASK_IMAGE_PLAN_EVIDENCE_INVALID'
+        output = json.dumps(result, ensure_ascii=False)
+        prepared.messages.append({'role': 'tool', 'tool_call_id': call['id'], 'content': output})
+        blocks[:] = [b for b in blocks if b.get('tool_call_id') != call['id']]
+        if call['name'] != SAVE_IMAGE_PLAN:
+            blocks.append({'type': 'tool_step', 'tool_name': call['name'], 'tool_call_id': call['id'],
+                'presentation': 'model_directed', 'status': 'error', 'output': output})
+    return candidate
+
+
+def retire_saved_image_method(runtime, candidate):
+    from .methods import retire_bound_methods
+    skills = runtime.skill_runtime
+    if skills is None or candidate is runtime.task_execution_state:
+        return skills
+    previous = {a.id for a in runtime.task_execution_state.artifacts} if runtime.task_execution_state else set()
+    committed={key for result in candidate.results for key in result.artifact_ids} if candidate else set()
+    retiring = [a.image_method for a in candidate.artifacts if a.id not in previous and a.id in committed
+                and a.image_method is not None and a.image_method.retire_on_complete
+                and a.image_method.skill_key in skills.active]
+    return retire_bound_methods(skills, candidate, retiring)
+
+
+def existing_image_source_schema(tool):
+    """During planning, only existing native sources may go straight to images."""
+    tool = copy.deepcopy(tool)
+    function = tool['function']
+    function['description'] = ('仅当用户要求直接使用已保存原稿或原提示词时调用。'
+        '新的逐图方案必须先保存，再使用新方案生成。' + function['description'])
+    function['parameters']['oneOf'] = [
+        {'required': ['mode', 'prompt', 'source_prompt']}, {'required': ['plan_source']},
+    ]
+    return tool
+
+
+def image_plan_item(state, skills_profiles, arguments, *, artifact_id=None, server_image_plan=False):
+    plans = saved_image_plans(state)
+    source=arguments.get('source_prompt',{})
+    if isinstance(source,dict) and 'content_object' in source:
+        from .content_objects import ImageContentReference, load
+        reference = ImageContentReference.model_validate(source['content_object']['source'])
+        artifact,_document,item=load(state,reference)
+        if artifact_id is not None and artifact.id!=artifact_id:raise TaskError('TASK_IMAGE_ARGUMENTS_NOT_PLANNED')
+        if arguments.get('prompt')!=item.body:raise TaskError('CONTENT_ARGUMENT_CHANGED')
+        return {'artifact_id':artifact.id,'image_item_index':reference.item_index} if artifact.image_method else None
+    if artifact_id is None and server_image_plan and arguments.get('plan_source'):
+        return None  # The native server workflow verifies its separate plan and receipt.
+    if artifact_id is None and (not plans and not skills_profiles
+            or not plans and (arguments.get('plan_source') or arguments.get('source_prompt'))):
+        # These references are verified independently by native image preparation.
+        return None
+    from .image_binding import image_prompt
+    for artifact in reversed(plans):
+        if artifact_id is not None and artifact.id != artifact_id:
+            continue
+        if skills_profiles and not skills_profiles.intersection(artifact.validations):
+            continue
+        document = ImageMethodDocument.model_validate_json(artifact.inline_text)
+        for index, brief in enumerate(document.image_plans, 1):
+            if (arguments.get('prompt') == image_prompt(brief) and arguments.get('aspect_ratio') == brief.aspect_ratio
+                    and not arguments.get('plan_source') and not arguments.get('source_prompt')):
+                return {'artifact_id': artifact.id, 'image_item_index': index}
+    raise TaskError('TASK_IMAGE_ARGUMENTS_NOT_PLANNED' if plans else 'TASK_IMAGE_PLAN_EVIDENCE_MISSING')
 
 
 def restore_plan(runtime,payload):
@@ -74,16 +226,28 @@ def context_message(runtime,*,state=None):
     if source is not None and state is None:
         facts['previous_task']={k:copy.deepcopy(source['state'].get(k)) for k in ('root_task_id','original_goal','status','operations','artifacts')}
         for artifact in facts['previous_task'].get('artifacts',[]):artifact.pop('inline_text',None)
+    from .content_objects import TAG, catalog, with_item_sources
+    facts['content_objects'] = catalog(state, for_model=True)
+    if source is not None and state is None:
+        source_state = TaskState.model_validate(source['state'])
+        older = getattr(runtime, 'task_content_groups', ())
+        facts['previous_content_objects'] = catalog(source_state, for_model=True, include_image_markers=bool(older))
+        if older:
+            facts['older_content_objects'] = [with_item_sources({k: v for k, v in row.items() if k != 'root_task_id'}) for row in older]
     if state is not None:
         facts.update(revision=state.revision,status=state.status,
             operations=[v.model_dump(mode='json') for v in state.operations],
             artifacts=[v.model_dump(mode='json',exclude={'inline_text'}) for v in state.artifacts],
             completed_call_steps=[v.step_id for v in state.results])
+    artifacts = facts['previous_task']['artifacts'] if 'previous_task' in facts else facts.get('artifacts', ())
+    if isinstance(artifacts, list):
+        artifacts[:] = [artifact for artifact in artifacts if TAG not in artifact.get('validations', ())]
     return {'role':'system','content':PREFIX+INSTRUCTIONS+'\n'+json.dumps(facts,ensure_ascii=False)}
 
 
 def schemas(runtime,controller=None):
-    result=[PLAN_SCHEMA]
+    from .content_objects import save_schema
+    result=[PLAN_SCHEMA, save_schema(runtime)]
     if runtime.task_execution_state is None and followup_source(runtime):result.append(RESUME_SCHEMA)
     if controller is not None:
         for schema in controller.schemas():
@@ -158,10 +322,13 @@ def stage_plan_calls(runtime,prepared,blocks,calls,assistant):
     return [c for c in calls if c['name']!='update_task_plan'],True
 
 
-def stage_native_calls(runtime,prepared,calls,registry):
+def stage_native_calls(runtime,prepared,calls,registry,*,server_image_plan=False):
     candidate=runtime.task_execution_state
     errors={}
     for call in calls:
+        if call['name'] == 'image_agent' and (active_image_profiles(runtime) or saved_image_plans(candidate)):
+            errors[call['id']] = ('CONTENT_INPUT_PATH_RETIRED', '旧图片编排入口已停用；请保存完整原文并使用generate_image的content_source提交。')
+            continue
         if call['name'] not in NATIVE_TOOLS:continue
         try:
             args=json.loads(call.get('arguments',''))
@@ -169,6 +336,11 @@ def stage_native_calls(runtime,prepared,calls,registry):
             if call['name']=='generate_image':
                 from services.tools.argument_validation import validate_model_image_arguments
                 validate_model_image_arguments(registry.require(call['name']),args)
+                try:
+                    image_plan_item(candidate, active_image_profiles(runtime), args, server_image_plan=server_image_plan)
+                except TaskError as error:
+                    errors[call['id']] = (str(error), '请先保存或读取实际逐图方案，再使用其中的提示词和比例。')
+                    continue
             parsed=ToolCall(call['id'],call['name'],args)
             context=replace(prepared.execution_context,call_id=call['id'])
             decision=ToolPolicy(registry).decide(call['name'],context,args)
@@ -300,7 +472,28 @@ async def advance_results(runtime,prepared,*,reconcile_pending=False):
     return controller.state
 
 
-async def bind_image_recipes(runtime,calls,registry):
+async def verify_image_method(runtime, state, artifact_id):
+    from .methods import binding_profile
+    from services.skills.contracts import SkillError
+    committed={key for result in state.results for key in result.artifact_ids}
+    artifact = next((a for a in state.artifacts if a.id == artifact_id and a.id in committed), None)
+    proof = artifact.image_method if artifact else None
+    skills = runtime.skill_runtime
+    candidate = skills.directory.get(proof.skill_key) if proof and skills else None
+    if candidate is None or (candidate.package_id, candidate.revision) != (proof.package_id, proof.revision):
+        raise TaskError('TASK_IMAGE_METHOD_UNAVAILABLE')
+    try:
+        validated = await skills.source.load(candidate, restoring=True)
+        skills._check_cancelled()
+        skills._validate_identity(candidate, validated)
+        if (validated.body_sha256 != proof.body_sha256
+                or profile_for(candidate, validated) != (*binding_profile(proof), proof.contract_source)):
+            raise TaskError('TASK_IMAGE_METHOD_UNAVAILABLE')
+    except SkillError:
+        raise TaskError('TASK_IMAGE_METHOD_UNAVAILABLE') from None
+
+
+async def bind_image_recipes(runtime,calls,registry,*,server_image_plan=False):
     """Freeze actual resolved inputs, without interpreting or approving prose."""
     state=runtime.task_execution_state
     if state is None:return state,{}
@@ -309,28 +502,93 @@ async def bind_image_recipes(runtime,calls,registry):
     from services.tools.argument_validation import parse_model_image_arguments
     resolver=getattr(runtime,'task_image_resource_resolver',None)
     prepare=getattr(resolver,'prepare_request',None)
+    prepare_batch = getattr(resolver, '__dict__', {}).get('prepare_batch')
+    if prepare_batch is not None:
+        prepare = prepare_batch()
     errors={}
+    verified = set()
     for raw in calls:
         if raw['name']!='generate_image':continue
         try:
             args=parse_model_image_arguments(registry.require('generate_image'),raw.get('arguments'))
             binding=bind_image_call(state,ToolCall(raw['id'],'generate_image',args),registry)
-            if any(a.id==binding.planning_artifact_id for a in state.artifacts):continue
+            existing = next((a for a in state.artifacts if a.id == binding.planning_artifact_id), None)
+            handoff = (json.loads(existing.inline_text).get('method_handoff') if existing
+                       else image_plan_item(state, active_image_profiles(runtime), args, server_image_plan=server_image_plan))
+            if handoff and handoff['artifact_id'] not in verified:
+                await verify_image_method(runtime, state, handoff['artifact_id'])
+                verified.add(handoff['artifact_id'])
+            if existing:
+                continue
             if prepare is None:raise TaskError('TASK_IMAGE_REUSE_NATIVE_PREPARATION_REQUIRED')
             normalized,resolved,proof=await prepare(args,state,raw['id'],binding_required=False)
-            body=json.dumps({'arguments_sha256':binding.arguments_sha256,'normalized':normalized,
-                'resolved':fingerprint(resolved),'source_proof':proof},ensure_ascii=False,sort_keys=True,separators=(',',':'))
-            import hashlib
+            recipe = {'arguments_sha256':binding.arguments_sha256,'normalized':normalized,
+                      'resolved':fingerprint(resolved),'source_proof':proof}
+            if handoff:
+                recipe['method_handoff'] = handoff
+            body=json.dumps(recipe,ensure_ascii=False,sort_keys=True,separators=(',',':'))
             artifact=Artifact(id=binding.planning_artifact_id,kind='text',reference='image-input:'+raw['id'],
                 sha256=hashlib.sha256(body.encode()).hexdigest(),inline_text=body,
                 source_task_id=UUID(str(runtime.task_id)),delivery_task_id=UUID(str(runtime.task_id)),
                 source_call_id=raw['id'],step_id=binding.step_id,validations=('artifact.exists','image.direct.recipe'))
             state=register_artifacts(state,[artifact])
         except (ValueError,TypeError,PermissionError,OSError) as error:
-            code=str(error) if isinstance(error,TaskError) else 'TASK_IMAGE_INPUT_UNAVAILABLE'
-            errors[raw['id']]=(code,'图片输入尚未核实，本次未派发：'+code)
+            reason = getattr(error, 'code', None) or str(error)
+            code = reason if re.fullmatch(r'[A-Z][A-Z0-9_]{1,100}', reason) else 'TASK_IMAGE_INPUT_UNAVAILABLE'
+            guidance = getattr(error, 'guidance', '')
+            errors[raw['id']] = (code, '生图输入校验失败，本次未派发：' + code
+                                + ('。' + guidance if guidance else ''))
     return state,errors
 
+
+def duplicate_image_plan_items(state, calls):
+    """Block equivalent items using the same ledger as method image slots."""
+    if state is None:
+        return {}
+    from .content_objects import ContentRecord, objects
+
+    groups = {artifact.id: ContentRecord.model_validate_json(artifact.inline_text)
+              for artifact in objects(state)}
+    held = {operation.step_id for operation in state.operations if operation.status != 'failed_before_dispatch'}
+    held.update(result.step_id for result in state.results)
+    by_call = {}
+    occupied = {}
+    for artifact in state.artifacts:
+        if 'image.direct.recipe' not in artifact.validations:
+            continue
+        recipe = json.loads(artifact.inline_text)
+        handoff = recipe.get('method_handoff')
+        normalized = recipe['normalized']
+        proof = (normalized.get('source_prompt') or {}).get('content_object')
+        if proof is None:
+            if handoff is None:
+                continue
+            item = (handoff['artifact_id'], handoff['image_item_index'])
+        else:
+            selection = proof['source']
+            if selection['artifact_id'] not in groups:
+                continue
+            effect = {key: value for key, value in normalized.items() if key not in {
+                'source_prompt', 'references', 'plan_item_id', 'variant_id', 'size_requirement'}}
+            record = groups[selection['artifact_id']]
+            if handoff is not None:
+                # A pinned method owns the slot specs. Unverified tool arguments cannot
+                # create another variant; a real revision or different input file can.
+                slot = record.document.items[selection['item_index'] - 1]
+                effect = {'prompt': slot.body, 'options': slot.options}
+            item = (record.object_key, selection['item_index'], digest([effect, recipe['resolved']]))
+        by_call[artifact.source_call_id] = (item, artifact.step_id)
+        if artifact.step_id in held:
+            occupied[item] = artifact.step_id
+    errors = {}
+    for call in calls:
+        proof = by_call.get(call['id'])
+        if proof is None:
+            continue
+        item, step = proof
+        if occupied.setdefault(item, step) != step:
+            errors[call['id']] = ('TASK_IMAGE_PLAN_ITEM_ALREADY_SUBMITTED', '此方案项以相同原文、素材和规格提交过，请复用原结果。')
+    return errors
 
 def end_candidate(state):
     """Physical outcomes, not an independent judgment of natural-language goals."""
@@ -375,17 +633,117 @@ async def reuse_images(runtime,calls):
     return state,results,parts,errors
 
 
-async def resume_from_model(runtime,prepared,blocks,calls,assistant,*,turn,model_round,build_checkpoint):
+def content_followup_state(runtime):
+    source = followup_source(runtime)
+    if runtime.task_execution_state is None and source is not None:
+        return TaskState.model_validate(source['state'])
+    return None
+
+
+async def select_content_owner(runtime, calls):
+    """Bind a path offered by the scoped catalog; recheck it under the current Turn lease."""
+    groups = getattr(runtime, 'task_content_groups', ())
+    if not groups or runtime.task_execution_state is not None:
+        return
+    selected = set()
+    for call in calls:
+        try:
+            value = json.loads(call['arguments'])
+            ref = value['base' if call['name'] == 'save_task_text' else 'content_source']
+            selected.add(ref['artifact_id'])
+        except (ValueError, KeyError, TypeError):
+            return
+    roots = {row['root_task_id'] for row in groups if row['artifact_id'] in selected}
+    if len(roots) == 1 and selected <= {row['artifact_id'] for row in groups}:
+        source = await runtime.read_content_root(roots.pop())
+        if source:
+            runtime.task_followup_candidate = source
+
+
+def can_resume_content_calls(runtime, calls, *, server_image_plan=False):
+    from services.handlers.chat.content_tools import INPUT_TOOLS, validate_model_input
+    from .content_objects import SAVE, SaveContent, compile_input, is_current, load
+
+    revision = len(calls) == 1 and calls[0]['name'] == SAVE
+    if not calls or (not revision and any(call['name'] not in INPUT_TOOLS for call in calls)):
+        return False
+    state = content_followup_state(runtime)
+    if state is None:
+        return False
+    try:
+        if revision:
+            draft = SaveContent.model_validate_json(calls[0]['arguments'])
+            if draft.base is None or not is_current(state, draft.base.artifact_id):
+                return False
+            _, document, _ = load(state, draft.base)
+            indices = {update.item_index for update in draft.updates}
+            return len(indices) == len(draft.updates) and max(indices) <= len(document.items)
+        for call in calls:
+            args = json.loads(call['arguments'])
+            validate_model_input(call['name'], args, server_image_plan=server_image_plan)
+            if not isinstance(args, dict) or 'content_source' not in args:
+                return False
+            reference = args.pop('content_source')
+            compile_input(state, call['name'], args, reference)
+    except (ValueError, TypeError, KeyError):
+        return False
+    return True
+
+
+def restored_content_calls(runtime, visible_tools):
+    """Reuse the selection already made for the authenticated followup input."""
+    checkpoint = runtime.checkpoint_base
+    followup = checkpoint.get('_task_followup')
+    initial = checkpoint.get('_task_followup_input_checkpoint')
+    state = runtime.task_execution_state
+    if not followup or not initial or state is None or runtime.task_user_changes is None:
+        return []
+    if followup.get('source_root_task_id') != str(state.root_task_id):
+        return []
+    changes = [item for item in runtime.task_user_changes.items
+               if str(item.event_id) not in runtime.task_direct_seen]
+    if (len(changes) != 1 or not changes[0].delivered
+            or str(changes[0].owner_task_id) != runtime.task_id
+            or changes[0].message_sha256 != followup.get('input_sha256')):
+        return []
+
+    messages = initial.get('messages', ())
+    selected = set()
+    for message in reversed(messages):
+        if message.get('role') == 'tool':
+            try:
+                result = json.loads(message.get('content', ''))
+            except (TypeError, ValueError):
+                return []
+            if (isinstance(result, dict) and result.get('content_followup') is True
+                    and result.get('status') == 'resuming' and result.get('accepted') is False):
+                selected.add(message.get('tool_call_id'))
+            continue
+        if message.get('role') == 'system':
+            continue
+        original = message.get('tool_calls') or ()
+        if message.get('role') != 'assistant' or not original or selected != {c['id'] for c in original}:
+            return []
+        if any(c['function']['name'] not in visible_tools for c in original):
+            return []
+        return [{**c['function'], 'id': c['id'] + ':continued'} for c in original]
+    return []
+
+
+async def resume_from_model(runtime,prepared,blocks,calls,assistant,*,turn,model_round,build_checkpoint,
+                            selected_content=False):
     """The main model chooses affiliation; the original fenced transfer commits it."""
     from .followup import FollowupObservation,apply
+    from .content_objects import SAVE
     source=followup_source(runtime)
-    chosen=[c for c in calls if c['name']=='resume_task_execution']
+    chosen = calls if selected_content else [c for c in calls if c['name'] == 'resume_task_execution']
     observation=None;error_code=None
     try:
         if source is None or runtime.task_execution_state is not None:raise TaskError('TASK_FOLLOWUP_SOURCE_CHANGED')
-        if len(chosen) != 1:
+        if not selected_content and len(chosen) != 1:
             raise TaskError('TASK_FOLLOWUP_INPUT_INVALID')
-        selection = json.loads(chosen[0]['arguments'])
+        selection = ({'relation': 'amend' if chosen[0]['name'] == SAVE else 'continue'}
+                     if selected_content else json.loads(chosen[0]['arguments']))
         if not isinstance(selection, dict) or selection.get('relation') not in ('continue', 'amend'):
             raise TaskError('TASK_FOLLOWUP_INPUT_INVALID')
         user_message = source.get('message')
@@ -400,9 +758,13 @@ async def resume_from_model(runtime,prepared,blocks,calls,assistant,*,turn,model
         error_code=str(error) if isinstance(error,TaskError) else 'TASK_FOLLOWUP_INPUT_INVALID'
     prepared.messages.append(copy.deepcopy(assistant))
     for call in calls:
-        selected=observation is not None and call['id']==chosen[0]['id']
-        result={'ok':selected,'status':'resuming' if selected else 'not_executed',
-            'instruction':'先接回真实历史任务，再根据恢复上下文决定业务调用；本批未派发任何业务操作。'}
+        selected = observation is not None and (selected_content or call['id'] == chosen[0]['id'])
+        result = {'ok': selected and not selected_content, 'status': 'resuming' if selected else 'not_executed',
+            'instruction': '先接回真实历史任务，再根据恢复上下文决定业务调用；本批未派发任何业务操作。'}
+        if selected and selected_content:
+            result.update(accepted=False, content_followup=True, instruction=(
+                '指定成果属于正在接回的原任务。本次尚未派发。后台将沿用所选条目与原参数。'
+            ))
         if error_code:result['code']=error_code
         prepared.messages.append({'role':'tool','tool_call_id':call['id'],'content':json.dumps(result,ensure_ascii=False)})
         if error_code:

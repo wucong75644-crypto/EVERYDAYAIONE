@@ -198,8 +198,10 @@ def test_exact_reader_returns_full_prompt_hash_and_existing_file_identity(contex
     row,_,prompt,read=exact_reader(context,legacy)
     result=json.loads(read({'message_ids':[row['id']],'text_exact':prompt}))
     assert result['selected_prompt']['prompt']==prompt
-    assert result['selected_prompt']['source_prompt']=={'message_id':row['id'],'content_index':4,
+    proof = result['selected_prompt']['source_prompt']
+    assert {key: value for key, value in proof.items() if key != 'bundle'}=={'message_id':row['id'],'content_index':4,
         'sha256':hashlib.sha256(prompt.encode()).hexdigest()}
+    assert proof['bundle']['scope'] == 'fragment'
     images=[p for p in result['messages'][0]['parts'] if p['type']=='image']
     assert [p['file_id'] for p in images]==[compute_fid(None,'A.png'),compute_fid(None,'B.png')]
     assert [p['reference']['content_index'] for p in images]==[1,3]
@@ -240,7 +242,8 @@ def test_existing_cross_conversation_quote_keeps_current_locator_and_original_ca
     assert displayed[0]['reference']=={'message_id':current['id'],'content_index':0}
     assert displayed[0]['quoted_message_id']==row['id']
     assert displayed[0]['canvas']['aspect_ratio']=='1:1'
-    assert '\"aspect_ratio\": \"1:1\"' in size_preflight_notice('参考图片写提示词',displayed)
+    assert not size_preflight_notice('参考图片写提示词',displayed)
+    assert '"aspect_ratio": "1:1"' in size_preflight_notice('保留原图比例生成图片',displayed)
     selected = resolver(cross_conversation_quote).resolve([displayed[0]['reference']|{'role':'product'}])
     args,target = resolve_size_requirement({'mode':'image_to_image','prompt':'笔记本产品比例3:4，保留原图画布',
         'aspect_ratio':'3:4','resolution':'1K'},selected,intent=user_size_intent('随机选三个提示词生成图片'))
@@ -341,3 +344,30 @@ def test_deleted_origin_preserves_workspace_permission_asset_and_image_checks(co
         files.resolve_safe_path('B.png').write_bytes(b'not an image')
     with pytest.raises((PermissionError, ValueError, OSError)):
         resolver(context).resolve([{'message_id': current['id'], 'content_index': 0, 'role': 'product'}])
+
+
+def test_prompt_locator_uses_host_hash_and_still_rejects_changed_text(context):
+    row, owner, prompt, read = exact_reader(context)
+    native = resolver(context)
+    source = {'message_id': row['id'], 'content_index': 4}
+    verified = native.source_prompt(source, prompt)
+    assert verified['sha256'] == hashlib.sha256(prompt.encode()).hexdigest()
+    assert 'sha256' not in source
+    with pytest.raises(ValueError, match='IMAGE_SOURCE_PROMPT_CHANGED'):
+        native.source_prompt(source, '模型改写的正文')
+    with pytest.raises(ValueError, match='IMAGE_SOURCE_PROMPT_CHANGED'):
+        native.source_prompt({**source, 'sha256': '0' * 64}, prompt)
+    import json
+    row['content'][4]['text'] = ('无关长正文' * 5000) + prompt
+    result = json.loads(read({'message_ids': [row['id']], 'text_exact': prompt, 'selection_scope': 'fragment'}))
+    text = [part['text'] for part in result['messages'][0]['parts'] if part['type'] == 'text']
+    assert text == [prompt]
+    assert len(json.dumps(result, ensure_ascii=False)) < 4000
+
+
+def test_exact_history_over_response_budget_requires_smaller_selection(context):
+    row, _owner, _prompt, read = exact_reader(context)
+    text = 'A' * 16000
+    row['content'][4]['text'] = text
+    with pytest.raises(ValueError, match='IMAGE_HISTORY_SELECTION_TOO_LARGE_SELECT_FEWER_FRAGMENTS'):
+        read({'message_ids': [row['id']], 'text_exact': text})

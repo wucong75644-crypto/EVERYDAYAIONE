@@ -139,11 +139,9 @@ export const createStreamingSlice: StateCreator<
       // 多块模式：追加到最后一个 text block
       // 如果最后一个 block 不是 text（如 tool_result），创建新 text block
       const lastIndex = content.length - 1;
-      if (lastIndex >= 0 && content[lastIndex].type === 'text') {
-        content[lastIndex] = {
-          type: 'text' as const,
-          text: (content[lastIndex] as { text: string }).text + chunk,
-        };
+      const lastPart = content[lastIndex];
+      if (lastPart?.type === 'text' && !lastPart.content_artifact_id) {
+        content[lastIndex] = { type: 'text', text: lastPart.text + chunk };
       } else {
         // 没有 text block 或最后一个不是 text → 创建新 text block
         content.push({ type: 'text' as const, text: chunk });
@@ -177,6 +175,18 @@ export const createStreamingSlice: StateCreator<
         ));
         if (existingIndex >= 0) {
           content[existingIndex] = { ...content[existingIndex], ...block };
+        } else {
+          content.push(block);
+        }
+      } else if (block.type === 'text' && block.content_artifact_id) {
+        const existingIndex = content.findIndex((part) => (
+          part.type === 'text' && part.content_artifact_id === block.content_artifact_id
+        ));
+        const last = content[content.length - 1];
+        if (existingIndex >= 0) {
+          content[existingIndex] = block;
+        } else if (last?.type === 'text' && !last.content_artifact_id && last.text === block.text) {
+          content[content.length - 1] = block;
         } else {
           content.push(block);
         }
@@ -215,7 +225,9 @@ export const createStreamingSlice: StateCreator<
       // 如果实时 chunk 尚未落 Store，直接补一个 text block，避免静默丢失。
       let replaced = false;
       for (let i = content.length - 1; i >= 0; i--) {
-        if (content[i].type === 'text') {
+        const part = content[i];
+        if (part.type === 'text') {
+          if (part.content_artifact_id) break;
           content[i] = block;
           replaced = true;
           break;

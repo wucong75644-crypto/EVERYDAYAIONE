@@ -6,6 +6,26 @@ from services.conversation_state import ConversationPauseRequested
 from tests.test_file_target_execution import fixture
 
 
+@pytest.mark.parametrize('changed', [False, True])
+async def test_input_mapping_preserves_native_file_resolution_and_confirmation(fixture, monkeypatch, changed):
+    executor, _, create = fixture
+    target = create('mapped.csv')
+    original = {'files': 'mapped.csv'}
+    executor._chat_source_bindings = {'mapped-file': (original, {'kind': 'input_mapping'}, original)}
+    executor._task_recovery_only = True
+    # Source mapping is validated by its own loop tests; this boundary verifies
+    # cooperation with native filename -> canonical path conversion.
+    monkeypatch.setattr('services.handlers.chat_input_handoff.rebind_call',
+                        lambda *_: {'files': 'different.csv'} if changed else dict(original))
+    result = await executor.tool_runtime.execute('file_delete', original, call_id='mapped-file')
+    if changed:
+        assert not result.execution.handler_started and target.exists()
+        executor.tool_confirmer.assert_not_awaited()
+    else:
+        assert result.execution.handler_started and not target.exists()
+        executor.tool_confirmer.assert_awaited_once()
+
+
 @pytest.mark.parametrize('paused',[False,True])
 async def test_original_file_resolution_is_bound_before_any_replay_or_handler(fixture,paused):
     executor,_,create=fixture

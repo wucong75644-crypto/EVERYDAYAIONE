@@ -19,6 +19,9 @@ class WorkingPlanUpdate(WorkingPlan):
         description='修改历史计划时，从同一候选逐字复制版本。')
 
 
+SAVE_IMAGE_PLAN = 'save_task_image_plan'
+
+
 PREFIX = '[Model-directed execution]\n'
 
 
@@ -38,7 +41,13 @@ INSTRUCTIONS = ('自主理解完整用户目标，选择所需Skill、工具或A
     'editable_working_plans是可选的历史计划快照。用户明确修改已有计划时引用对应ID及版本；'
     '独立任务按新计划登记，不能凭标题相似合并。'
     '用户手选方法优先完成其适用阶段，不因关键词换掉；用户要求分析和完整提示词时必须交付。'
-    '已有完整提示词、原图或成图先读取复用，不凭摘要重写，不重复生成。'
+    '交付可复用稿件用save_task_text的document，各条按原方法写一次。页面展示同一份内容，普通对话直接回答。'
+    '执行已有稿件按用户所指的组和条目使用目录提供的content_source；后台沿用原文、配图和规格。'
+    '修订用所选条目的引用作base并提交updates。结合当前对话和changed_in_revision定位刚改的条目，仍有多个可能时询问。'
+    '只有执行本轮全新制作的内容才先登记新稿再调用目标工具。'
+    '每条body是用户可见并执行的完整最终原文，包含全部执行要求和限制；执行阶段后台逐字复制，不再拼接。'
+    '改编、翻译或修订先写好完整新原文并保存新版本，再选择对象执行；不在工具调用时分段映射或覆盖原文。'
+    '找工具用find_available_tools获取实际用法；需要理解和定位历史内容时读取原会话。'
     '宿主自动登记已核实的原生工具成果，不需手动导入或标记步骤完成。'
     '程序记录执行事实，不替你判断全部自然语言目标或内容质量；对照原目标检查遗漏并如实交付。'
     '权限、确认、预算和操作回执不能自行豁免。已受理或结果不明先核实，不能换ID重发。'
@@ -134,7 +143,11 @@ def record_calls(state, bootstrap, calls, registry,*,input_sha256=None):
     input_sha256=input_sha256 or digest([])
     for call in calls:
         spec = registry.get(call.name)
-        if spec is None or not spec.capability:
+        if call.name in {SAVE_IMAGE_PLAN, 'save_task_text'}:
+            capability = 'task.image_plan.save' if call.name == SAVE_IMAGE_PLAN else 'task.text.save'
+        elif spec is not None and spec.capability:
+            capability = spec.capability
+        else:
             continue
         checksum = digest(thaw(call.arguments))
         known = next((v for v in bindings if v.call_id == call.call_id), None)
@@ -156,7 +169,7 @@ def record_calls(state, bootstrap, calls, registry,*,input_sha256=None):
         original = matches[0] if matches else None
         if original is not None and original.status in {'completed', 'failed_after_dispatch'}:
             raise TaskError('TASK_DIRECT_RESULT_REUSE_REQUIRED')
-        if any(v.capability == spec.capability and v.status in {'reserved', 'accepted', 'uncertain'}
+        if any(v.capability == capability and v.status in {'reserved', 'accepted', 'uncertain'}
                and v is not original for v in previous_operations):
             raise TaskError('TASK_DIRECT_EFFECT_UNRESOLVED')
         if original is not None:
@@ -164,13 +177,14 @@ def record_calls(state, bootstrap, calls, registry,*,input_sha256=None):
         else:
             suffix = digest([call.call_id, call.name])[:32]
             rid, step_id = 'host.result.' + suffix, 'host.call.' + suffix
-            kind = 'image' if call.name == 'generate_image' else 'receipt'
+            kind = ('image' if call.name == 'generate_image' else
+                    'text' if call.name in {SAVE_IMAGE_PLAN, 'save_task_text'} else 'receipt')
             requirements.append(Requirement(id=rid,
                 source_message_id=state.source_message_ids[0] if state else bootstrap.input_message_id,
                 description='本次工具调用的真实执行结果：' + call.name,
                 artifact_kind=kind, minimum=1))
             steps.append(PlanStep(id=step_id, title='执行 ' + call.name,
-                capability=spec.capability, requirement_ids=(rid,),
+                capability=capability, requirement_ids=(rid,),
                 image_item_index=1 if kind == 'image' else None))
         bindings.append(CallBinding(call_id=call.call_id, tool_name=call.name,
             arguments_sha256=checksum, step_id=step_id,input_sha256=input_sha256))

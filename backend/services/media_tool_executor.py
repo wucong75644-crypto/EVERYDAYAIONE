@@ -33,6 +33,12 @@ class MediaToolMixin:
             code = str(error)
             if getattr(error, "guidance", ""):
                 guidance = error.guidance
+            elif code.startswith('CONTENT_'):
+                guidance = '请核对已保存的成果、版本和原生参数，按同一个content_source继续。'
+            elif code.startswith(('CHAT_INPUT_', 'CHAT_SOURCE_')):
+                guidance = ('先用read_conversation_text或get_conversation_context的for_mapping读取完整来源，'
+                            '按本次任务及真实工具参数通过chat_input说明输入、排除与修订。'
+                            '不要改写原文、丢弃约束或换成无来源输入重试。')
             elif code.startswith("RESOURCE_") or code in {
                 "IMAGE_INPUT_UNAVAILABLE", "IMAGE_ORIGINAL_UNAVAILABLE", "IMAGE_REFERENCE_CHANGED", "IMAGE_DIMENSIONS_UNAVAILABLE",
                 "IMAGE_REFERENCE_LOCATOR_INVALID", "IMAGE_CONTENT_INDEX_INVALID", "IMAGE_ASSET_DENIED",

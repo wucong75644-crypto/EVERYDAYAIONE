@@ -18,6 +18,7 @@ from services.changeset.repository import ChangeSetRepository
 from services.changeset.service import ChangeSetService
 from services.skills.authoring import SkillAuthoring
 from services.skills.authoring_contracts import DraftContent, new_draft_content
+from services.skills.contracts import CapabilityKey, CoordinationContract, SkillKey, TaskStageContract
 from services.skills.creation_policy import for_organization
 from services.skills.repository import SkillRepository
 from services.tools.dispatcher import current_dispatch_call_id
@@ -40,6 +41,9 @@ class ChatSkillCandidate(DraftContent):
     expected_target_revision: str | None = Field(default=None, min_length=1, max_length=100)
     expected_target_draft_version: int | None = Field(default=None, ge=0)
 
+    required_capabilities: tuple[CapabilityKey, ...] | None = Field(default=None, max_length=64)
+    workflow_output_profile: Literal['reference-prompts-v1', 'ecommerce-image-plan-v1'] | None = None
+    required_skills: tuple[SkillKey, ...] | None = Field(default=None, max_length=4)
     intended_use: Literal['chat', 'scheduled_task'] | None = None
 
     def draft_content(self, base_content: DraftContent | None = None) -> DraftContent:
@@ -48,7 +52,26 @@ class ChatSkillCandidate(DraftContent):
         if not self.body.strip():
             raise ValueError('SKILL_CANDIDATE_BODY_REQUIRED')
         base_metadata = base_content.catalog_metadata if base_content else self.catalog_metadata
+        registration = {}
+        if 'workflow_output_profile' in self.model_fields_set:
+            profile = self.workflow_output_profile
+            claim = ('image.prompting', 'image.prompt') if profile == 'reference-prompts-v1' else (
+                'image.planning', 'ecommerce.inline')
+            registration['coordination'] = CoordinationContract(kind='workflow', claims=(
+                {'scope': claim[0], 'method': claim[1], 'actions': ('plan',)},
+            ), requires=(self.required_skills if self.required_skills is not None else
+                         base_metadata.coordination.requires if base_metadata.coordination else ())) if profile else None
+            registration['task_stage'] = TaskStageContract(output_profile=profile, restriction_scope='phase') if profile else None
+        if self.required_skills is not None and 'workflow_output_profile' not in self.model_fields_set:
+            coordination = base_metadata.coordination
+            if coordination is None or coordination.kind != 'workflow':
+                raise ValueError('SKILL_WORKFLOW_PROFILE_REQUIRED')
+            registration['coordination'] = CoordinationContract(kind='workflow', claims=coordination.claims,
+                requires=self.required_skills)
+        if self.required_capabilities is not None:
+            registration['required_capabilities'] = self.required_capabilities
         metadata = base_metadata.model_copy(update={
+            **registration,
             'name': self.name,
             'triggers': (self.triggers if 'triggers' in self.model_fields_set else
                          (base_metadata.triggers if base_content else ())),
@@ -302,6 +325,11 @@ def read_personal_skill_for_edit(db, settings, *, actor_id: str, org_id: str | N
         'body': content.body,
         'task_modes': list(content.catalog_metadata.task_modes),
         'triggers': list(content.catalog_metadata.triggers),
+        'required_capabilities': list(content.catalog_metadata.required_capabilities),
+        'required_skills': (list(content.catalog_metadata.coordination.requires)
+                            if content.catalog_metadata.coordination else []),
+        'workflow_output_profile': (content.catalog_metadata.task_stage.output_profile
+                                    if content.catalog_metadata.task_stage else None),
         'assets': [asset.model_dump(mode='json', exclude={'content', 'source'})
                    for asset in content.assets],
         'template_variables': content.template_variables,

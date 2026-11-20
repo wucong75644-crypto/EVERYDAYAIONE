@@ -10,11 +10,14 @@ TEST_ONLY_SKILLS = frozenset({
     'a001', 'asset-test-0921', 'recommendation-smoke-20260926', 'test-daily-report',
 })
 
+def retired_platform_skill(skill_key: str, scope_kind: str) -> bool:
+    return scope_kind == 'platform' and skill_key == 'chat-image-orchestration'
+
 
 def discoverable(skill_key: str, scope_kind: str, execution_mode: str) -> bool:
     # Personal methods are owned by their creator; never classify them by name.
     if scope_kind == 'personal':
         return True
-    if skill_key in TEST_ONLY_SKILLS:
+    if skill_key in TEST_ONLY_SKILLS or retired_platform_skill(skill_key, scope_kind):
         return False
     return skill_key not in SOCIAL_WORKFLOW_SKILLS or execution_mode in {'scheduled', 'preflight'}

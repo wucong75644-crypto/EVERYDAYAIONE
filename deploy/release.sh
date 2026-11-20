@@ -46,6 +46,7 @@ usage() {
   --backend-only         仅部署后端
   --enable-knowledge     安装知识解析依赖并启用自动整理及历史回填（包含后端发布）
   --enable-agent-task-execution 开启新编排入口，保持新增ERP写适配关闭
+  --chat-image-skill-target PATH 从本地清单更新指定个人编排 Skill（包含后端发布）
   --skip-test            复用已完成的定向测试，跳过执行器全量测试；保留构建/迁移/健康检查
   --rollback SHA         从 origin/main 历史中的提交回滚应用版本，不回滚数据库迁移
   -h, --help             显示帮助
@@ -72,6 +73,7 @@ backend_only=false
 skip_test=false
 enable_knowledge=false
 enable_agent_task_execution=false
+chat_image_skill_target=''
 declare -a task_files=()
 declare -a source_only_files=()
 declare -a migration_files=()
@@ -124,6 +126,14 @@ while [[ $# -gt 0 ]]; do
             enable_knowledge=true; shift ;;
         --enable-agent-task-execution)
             enable_agent_task_execution=true; shift ;;
+        --publish-chat-image-platform-skill)
+            fail "官方聊天图片编排已下线，图片执行使用通用链路"
+            ;;
+        --chat-image-skill-target)
+            [[ $# -ge 2 && -f "$2" ]] || fail "缺少个人编排 Skill 目标清单"
+            chat_image_skill_target=$(cd "$(dirname "$2")" && pwd)/$(basename "$2")
+            shift 2
+            ;;
         --skip-test)
             skip_test=true
             shift
@@ -161,6 +171,11 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+if [[ -n "$chat_image_skill_target" ]]; then
+    [[ "$frontend_only" == false && "$accept_and_close" == false && -z "$rollback_sha" && -z "$recover_owner" ]] \
+        || fail "--chat-image-skill-target 只用于包含后端的正常发布"
+fi
 
 if [[ "$enable_knowledge" == true ]]; then
     [[ "$frontend_only" == false && "$accept_and_close" == false && -z "$rollback_sha" && -z "$recover_owner" ]] \
@@ -713,6 +728,24 @@ if ! EVERYDAYAI_RELEASE_CONTEXT="$executor_context" \
     tail -n 160 "$release_log" >&2
     exit 1
 fi
+if [[ -n "$chat_image_skill_target" ]]; then
+    skill_source=examples/skills/catalog/platform/chat-image-orchestration/v3/SKILL.md
+    if ! (
+        set -e
+        echo 'DEPLOY_STAGE stage=chat_image_skill'
+        python3 -c 'import json, pathlib, sys; print(json.dumps({"target": json.loads(pathlib.Path(sys.argv[1]).read_text()), "source": pathlib.Path(sys.argv[2]).read_bytes().decode("utf-8")}))' \
+            "$chat_image_skill_target" "$skill_source" \
+            | ssh -p "$SERVER_PORT" -o ConnectTimeout=10 -o BatchMode=yes "$SERVER_USER@$SERVER_HOST" \
+                /var/www/everydayai/backend/venv/bin/python \
+                /var/www/everydayai/deploy/publish-chat-image-skill.py --lock-token "$release_lock_token"
+    ) >>"$release_log" 2>&1; then
+        release_executor_state=unconfirmed
+        echo "RELEASE_RESULT status=failed stage=chat_image_skill commit=$commit_sha log=$release_log" >&2
+        tail -n 24 "$release_log" >&2
+        exit 1
+    fi
+fi
+
 release_executor_state=completed
 tail -n 40 "$release_log"
 popd >/dev/null

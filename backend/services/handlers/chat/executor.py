@@ -112,6 +112,11 @@ class ChatGenerationExecutor:
             if not response or response.data.get('outcome') not in {'found', 'not_found'}:
                 raise RuntimeError('TASK_FOLLOWUP_READ_UNCONFIRMED')
             runtime.task_followup_candidate = response.data.get('source')
+            runtime.task_content_groups = response.data.get('other_groups', [])
+            async def read_content_root(root):
+                result = await followup_db.rpc('read_agent_content_followup', {**args, 'p_root_task_id': root}).execute()
+                return result.data.get('source') if result else None
+            runtime.read_content_root = read_content_root
             async def adopt_followup(source,observation,payload):
                 parameters={'p_task_id':claim.task_id,'p_execution_token':claim.execution_token,
                     'p_root_task_id':source['state']['root_task_id'],'p_expected_revision':source['state']['revision'],

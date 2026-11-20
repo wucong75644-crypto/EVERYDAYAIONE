@@ -90,6 +90,10 @@ class SandboxToolMixin:
             if managed_options and getattr(self,'image_execution_token',None) is not None:
                 from services.task_execution.requirement_changes import gate as user_change_gate
                 executor._before_managed_submit=lambda:user_change_gate(self)
+            from services.tools.dispatcher import current_dispatch_call_id
+            binding = getattr(self, '_chat_source_bindings', {}).get(current_dispatch_call_id())
+            if binding is not None and binding[1]['mode'] == 'exact':
+                executor._expected_document_text = binding[1]['text']
             result = await executor.execute(code, description)
             # 产物透传由 tool_loop_executor._process_emit_markers 处理 (emit_payloads)
             # 此处不再需要 _chart_options/_image_dims 透传 (沙盒 IO 统一协议)

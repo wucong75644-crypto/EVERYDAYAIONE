@@ -127,7 +127,7 @@ class ImageHandler(BaseHandler):
             # Only this input/read boundary precedes acceptance. RPC exceptions
             # below may mean a committed task; never classify those as rejected.
             code = getattr(error, "code", None) or str(error)
-            if not code.startswith(("IMAGE_", "CHAT_IMAGE_", "RESOURCE_")) or not code.replace("_", "").isalnum():
+            if not code.startswith(("IMAGE_", "CHAT_IMAGE_", "CHAT_INPUT_", "CHAT_SOURCE_", "CONTENT_", "TASK_IMAGE_", "RESOURCE_")) or not code.replace("_", "").isalnum():
                 code = "IMAGE_INPUT_UNAVAILABLE"
             raise ChatImageNotAcceptedError(code, getattr(error, "guidance", "")) from error
         if owner.cancellation_event is not None and owner.cancellation_event.is_set():

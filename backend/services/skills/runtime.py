@@ -18,11 +18,14 @@ from services.skills.renderer import (
 )
 from services.skills.resolver import SkillCandidate, skill_tool_ceiling
 from services.skills.context import instruction_message, model_messages
+from services.skills.discovery_policy import retired_platform_skill
 from services.skills.selection import SkillSelection
 from services.skills.coordination import (
     ActionContext, Composition, CompositionConflict, Participant, build_composition, method_for,
 )
-from services.skills.workflow_contracts import contract_for, required_protocol_tools, incompatible_protocol_tools
+from services.skills.workflow_contracts import (
+    contract_for, required_protocol_tools, incompatible_protocol_tools, image_planning_participants,
+)
 
 
 ACTIVATE_SKILL = "activate_skill"
@@ -170,6 +173,10 @@ class SkillRuntime:
 
     def set_action(self, action: ActionContext):
         composition = self._compose(action=action)
+        if self.allows_dynamic_activation and action.action == 'plan':
+            planners = image_planning_participants(composition.participants)
+            if len(planners) > 1:
+                raise CompositionConflict(planners)
         if not required_protocol_tools(composition) <= self.effective_allowed_tool_names:
             raise SkillError('SKILL_REQUIRED_CAPABILITY_UNAVAILABLE')
         self.action_context, self.composition = action, composition
@@ -319,6 +326,10 @@ class SkillRuntime:
             if not result['ok']:
                 return result
         staged.composition = staged._compose()
+        if self.allows_dynamic_activation and self.action_context.action == 'plan':
+            planners = image_planning_participants(staged.composition.participants)
+            if len(planners) > 1:
+                return control_result('SKILL_WORKFLOW_CONFLICT', conflicting_skills=sorted(planners), state_unchanged=True)
         self.adopt(staged)
         return control_result('SKILL_REQUIRED_SET_ACTIVATED', ok=True)
 
@@ -338,6 +349,14 @@ class SkillRuntime:
             for c in candidates
         ])
 
+    def _retired(self, key):
+        candidate = self.directory.get(key)
+        return candidate is not None and retired_platform_skill(key, candidate.scope_kind)
+
+    def model_candidates(self):
+        return [c for c in self.directory.values()
+                if c.catalog_metadata.model_selectable and not self._retired(c.skill_key)]
+
     async def initialize(self, checkpoint: dict | None = None, selection: SkillSelection | None = None,
                          *, load_session_bindings: bool = True, discover_catalog: bool = True):
         self._check_cancelled()
@@ -349,6 +368,7 @@ class SkillRuntime:
         except Exception:
             raise SkillBindingError("无法加载会话固定的 Skill，请检查会话设置后重试。") from None
         self._check_cancelled()
+        bindings = [c for c in bindings if not retired_platform_skill(c.skill_key, c.scope_kind)]
         if len(bindings) > MAX_ACTIVE_SKILLS or len({c.skill_key for c in bindings}) != len(bindings):
             raise SkillBindingError("会话固定的 Skill 超过容量或配置无效，请检查会话设置。")
         self.session_skill_ids = tuple(c.skill_key for c in bindings)
@@ -368,6 +388,8 @@ class SkillRuntime:
                 or len(encoded([c.model_dump(mode="json") for c in selected]).encode("utf-8")) > 65_536):
             raise SkillBindingError("会话固定的 Skill 超过容量，请减少绑定后重试。")
         for candidate in candidates:
+            if retired_platform_skill(candidate.skill_key, candidate.scope_kind):
+                continue
             if candidate.skill_key in self.session_skill_ids:
                 continue
             if not candidate.catalog_metadata.model_selectable and candidate.skill_key != self.manual_skill_id:
@@ -407,28 +429,34 @@ class SkillRuntime:
 
     def messages(self) -> list[dict[str, str]]:
         messages = []
-        advertised = [c for c in self.directory.values() if c.catalog_metadata.model_selectable and self.allows_dynamic_activation]
+        advertised = self.model_candidates() if self.allows_dynamic_activation else []
         if advertised:
             messages.append({"role": "system", "content": self._directory_text(advertised)})
         for active in self.active.values():
+            if self._retired(active.skill_key):
+                continue
             messages.append(instruction_message(
                 active, self.directory[active.skill_key],
                 manual=active.skill_key == self.manual_skill_id, context_version=self.context_version,
                 session=active.skill_key in self.session_skill_ids,
                 scheduled=self.scheduled_snapshot is not None,
             ))
-        if self.composition and any(p.contract for p in self.composition.participants):
+        if self.composition and any(p.contract and not self._retired(p.skill_key)
+                                    for p in self.composition.participants):
             messages.append({'role': 'system', 'content': '[Current Skill composition]\n' + encoded({
                 'action': self.action_context.action, 'stage': self.action_context.stage,
-                'owners': self.composition.owners,
+                'owners': {scope: key for scope, key in self.composition.owners.items() if not self._retired(key)},
                 'instruction': '只执行当前动作适用的方法段。已加载或会话固定不等于必须重跑完整流程；解释问题不启动制作。',
             })})
         return messages
 
     def ensure_messages(self, messages: list[dict[str, Any]]):
-        if self.checkpoint_version == 2:
+        has_retired = any(self._retired(key) for key in self.directory)
+        if self.checkpoint_version == 2 or has_retired:
             current = self.messages()
             prefixes = ('[Turn Skill instructions:', '[Current Skill composition]')
+            if has_retired:
+                prefixes += ('[Turn Skill catalog]',)
             messages[:] = [m for m in messages if not (
                 m.get('role') == 'system' and isinstance(m.get('content'), str)
                 and m['content'].startswith(prefixes) and m not in current)]
@@ -469,6 +497,7 @@ class SkillRuntime:
                             "reasons": [r.model_dump(mode="json") for r in c.reasons]}
                            for c in self.recommendation_batch.candidates
                            if c.skill_id not in self.active and c.skill_id in self.directory
+                           and not self._retired(c.skill_id)
                            and self.directory[c.skill_id].revision == c.revision
                            and self.directory[c.skill_id].catalog_metadata.model_selectable]
             if suggestions:
@@ -480,9 +509,10 @@ class SkillRuntime:
         # Rebuild from current filtered schemas; do not persist stale capabilities.
         if self.context_version == 1:
             return messages
-        if not self.has_active_skills:
+        visible_active = [a for a in self.active.values() if not self._retired(a.skill_key)]
+        if not visible_active and not self.resident:
             names = [tool['function']['name'] for tool in tools]
-            advertised = [c for c in self.directory.values() if c.catalog_metadata.model_selectable]
+            advertised = self.model_candidates()
             if not self.allows_dynamic_activation or ACTIVATE_SKILL not in names or not advertised:
                 return messages
             catalog = self._directory_text(advertised)
@@ -491,7 +521,7 @@ class SkillRuntime:
             content = ('[Current Skill selection]\n'
                        + encoded({'active_skills': [], 'available_tools': names})
                        + '\n当前轮尚未激活 Skill。历史“已启用”不是当前轮的激活状态。'
-                       '先理解用户当前动作；仅在确需某方法时调用 activate_skill，普通工具能完成时无需为命中目录而加载。未明确电商用途默认普通图片；已有提示词要求生成时使用图片编排，不调用电商策划。'
+                       '先理解用户当前动作；仅在确需某方法时调用 activate_skill。已有提示词或已保存方案时直接使用通用图片工具。'
                        '用户确认或继续上一轮 Skill 任务时，先从下面当前目录选择匹配方法并调用 activate_skill，'
                        '读取正文后在下一轮按实际提供的 tools schema 处理当前请求。'
                        '准备或列出工具参数也应先加载该方法，不能从历史代码块猜参数。'
@@ -505,12 +535,12 @@ class SkillRuntime:
             {'skill_id': a.skill_key, 'revision': a.revision,
              'selection': ('scheduled' if self.scheduled_snapshot is not None else 'session' if a.skill_key in self.session_skill_ids
                            else 'user' if a.skill_key == self.manual_skill_id else 'model')}
-            for a in self.active.values()
+            for a in visible_active
         ], [instruction_message(
             a, self.directory[a.skill_key], manual=a.skill_key == self.manual_skill_id,
             context_version=self.context_version,
             session=a.skill_key in self.session_skill_ids, scheduled=self.scheduled_snapshot is not None,
-        ) for a in self.active.values()])
+        ) for a in visible_active])
 
     async def deactivate(self, raw_arguments: str) -> dict:
         self._check_cancelled()
@@ -560,8 +590,9 @@ class SkillRuntime:
             raise SkillBindingError("会话 Skill 配置无效，请检查会话设置。")
         return await self.activate(encoded({"skill_id": skill_id}), session=True)
 
-    async def activate(self, raw_arguments: str, *, manual: bool = False, session: bool = False, scheduled: bool = False) -> dict:
-        result = await self._activate(raw_arguments, manual=manual, session=session, scheduled=scheduled)
+    async def activate(self, raw_arguments: str, *, manual: bool = False, session: bool = False,
+                       scheduled: bool = False, action: ActionContext | None = None) -> dict:
+        result = await self._activate(raw_arguments, manual=manual, session=session, scheduled=scheduled, action=action)
         if (self.recommendation_batch is not None and not (manual or session or scheduled)
                 and isinstance(raw_arguments, str) and len(raw_arguments) <= MAX_ARGS_BYTES + 256):
             try:
@@ -575,8 +606,10 @@ class SkillRuntime:
                 await model_feedback(self, candidate, result["ok"])
         return result
 
-    async def _activate(self, raw_arguments: str, *, manual: bool = False, session: bool = False, scheduled: bool = False) -> dict:
+    async def _activate(self, raw_arguments: str, *, manual: bool = False, session: bool = False,
+                        scheduled: bool = False, action: ActionContext | None = None) -> dict:
         self._check_cancelled()
+        action = action or self.action_context
         if not self.allows_dynamic_activation and not (scheduled and self.scheduled_snapshot is not None):
             return control_result("SKILL_SCHEDULED_ACTIVATION_FORBIDDEN")
         try:
@@ -592,6 +625,8 @@ class SkillRuntime:
             if args:
                 raise SkillError('SKILL_TEMPLATE_ARGS_SERVER_ONLY')
             candidate = self.directory.get(request["skill_id"])
+            if self._retired(request["skill_id"]):
+                raise SkillError("SKILL_NOT_AVAILABLE")
             if candidate is None or (
                 not candidate.catalog_metadata.model_selectable
                 and not (manual and candidate.skill_key == self.manual_skill_id)
@@ -610,7 +645,7 @@ class SkillRuntime:
                     revision=candidate.revision, body_sha256='', sources=('model',),
                     contract=contract_for(candidate, ''))
                 from services.skills.coordination import owners_for
-                owners_for([*self._participants(), probe], self.action_context)
+                owners_for([*self._participants(), probe], action)
             validated = await self.source.load(candidate)
             self._check_cancelled()
             self._validate_identity(candidate, validated)
@@ -636,7 +671,17 @@ class SkillRuntime:
                 effective_allowed_tool_names=ceiling,
                 asset_manifest_sha256=asset_manifest_digest(validated.resources), loaded_asset_ids=ids,
             )
-            composition = self._compose(active=proposed, tools=ceiling)
+            if (self.checkpoint_version == 2 and action.action in {'plan', 'other'}
+                    and not (manual or session or scheduled)):
+                planners = image_planning_participants(self._participants(proposed))
+                if candidate.skill_key in planners:
+                    if len(planners) > 1:
+                        raise CompositionConflict(planners)
+                    if self.task_execution_state is not None and self.task_execution_state.model_directed:
+                        from services.task_execution.direct_loop import saved_image_plans
+                        if saved_image_plans(self.task_execution_state):
+                            raise SkillError('TASK_METHOD_PHASE_COMPLETED')
+            composition = self._compose(active=proposed, tools=ceiling, action=action)
             for key in proposed:
                 skill_tool_ceiling(self.directory[key].catalog_metadata, self.platform_tool_names, ceiling,
                                    available_tool_names=self.available_tool_names)
@@ -644,7 +689,7 @@ class SkillRuntime:
                 raise SkillError('SKILL_REQUIRED_CAPABILITY_UNAVAILABLE')
             self.active = proposed
             self.effective_allowed_tool_names = ceiling
-            self.composition = composition
+            self.action_context, self.composition = action, composition
             return control_result("SKILL_ACTIVATED", ok=True, skill_id=candidate.skill_key,
                                   revision=candidate.revision,
                                   effective_allowed_tool_names=sorted(ceiling))
@@ -748,8 +793,9 @@ class SkillRuntime:
                     from services.task_execution.methods import profile_for
                     binding = completed_bindings.get(saved.skill_key)
                     if binding is None:
-                        from services.task_execution.methods import source_phase_binding
-                        binding = source_phase_binding(self.task_execution_state,candidate,validated)
+                        from services.task_execution.methods import direct_phase_binding, source_phase_binding
+                        binding = (direct_phase_binding(self.task_execution_state, candidate)
+                                   or source_phase_binding(self.task_execution_state, candidate, validated))
                     if (binding is None or str(candidate.package_id) != str(binding.package_id)
                             or (saved.revision, saved.body_sha256) != (binding.revision, binding.body_sha256)
                             or profile_for(candidate, validated) != (binding.profile_id, True, binding.contract_source)):

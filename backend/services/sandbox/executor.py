@@ -332,6 +332,12 @@ class SandboxExecutor:
                     f"[EMIT] {p.get('kind')} file 不存在 | path={rel_path}"
                 )
                 continue
+            expected = getattr(self, '_expected_document_text', None)
+            if expected is not None and name.lower().endswith('.docx'):
+                from docx import Document
+                document = Document(os.path.join(host_dir, name))
+                if '\n'.join(p.text for p in document.paragraphs) != expected or document.tables:
+                    raise ValueError('CHAT_SOURCE_DOCUMENT_MISMATCH')
             uploaded = await upload_to_payload(
                 name, size, host_dir, self._user_id, self._org_id,
             )

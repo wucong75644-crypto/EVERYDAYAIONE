@@ -50,7 +50,42 @@ class ImageMethodDocument(MethodDocumentFact):
     image_plans: tuple[ImageBrief, ...] = Field(min_length=1, max_length=100)
 
 
-OUTPUT_PROFILES = frozenset({'reference-prompts-v1', 'ecommerce-image-plan-v1'})
+REFERENCE_PROMPTS_PROFILE = 'reference-prompts-v1'
+REFERENCE_PROMPTS_PRESENTATION = (
+    '按当前参考图提示词方法保留全部原版展示结构。document.display_prefix写参考图判断及其完整条目。'
+    '每条items的display_prefix原样写该方案标题、方案内容、视觉设定、参考图使用方式；'
+    '每条body依次写独立的「## 完整生图提示词」和「## 负面提示词」，两段都必须有正文。'
+    '展示前缀和执行正文在同一次登记中各写一次，保留原版编号、标题、项目符号与分隔线。'
+)
+OUTPUT_PROFILES = frozenset({REFERENCE_PROMPTS_PROFILE, 'ecommerce-image-plan-v1'})
+
+
+REFERENCE_PROMPTS_BODY_HEADINGS = ('完整生图提示词', '负面提示词')
+
+
+def valid_reference_prompts_presentation(document):
+    """Check the pinned writing method's authored sections without transforming them."""
+    import re
+
+    def sections(markdown):
+        markdown = markdown or ''
+        headings = list(re.finditer(r'^#{1,6}[ \t]+([^\r\n]+)\r?$', markdown, re.MULTILINE))
+        boundaries = [header.start() for header in headings[1:]] + [len(markdown)]
+        return [(header[1].strip(), markdown[header.end():end].strip(' \r\n\t-'))
+                for header, end in zip(headings, boundaries)]
+
+    intro = sections(document.display_prefix)
+    if len(intro) != 1 or intro[0][0] != '参考图判断' or not intro[0][1]:
+        return False
+    for item in document.items:
+        prefix = sections(item.display_prefix)
+        body = sections(item.body)
+        if (len(prefix) != 4 or not prefix[0][0].startswith('方案')
+                or [name for name, _ in prefix[1:]] != ['方案内容', '视觉设定', '参考图使用方式']
+                or tuple(name for name, _ in body) != REFERENCE_PROMPTS_BODY_HEADINGS
+                or not all(text for _, text in [*prefix[1:], *body])):
+            return False
+    return True
 
 
 def profile_for(candidate, active):
@@ -221,6 +256,15 @@ def completed_phase_bindings(state):
     return tuple(result)
 
 
+def direct_phase_binding(state, candidate):
+    if not state.model_directed:
+        return None
+    completed = {artifact_id for result in state.results for artifact_id in result.artifact_ids}
+    return next((a.image_method for a in reversed(state.artifacts)
+        if a.id in completed and a.image_method is not None and a.image_method.retire_on_complete
+        and a.image_method.skill_key == candidate.skill_key), None)
+
+
 def source_phase_binding(state, candidate, active):
     from .image_sources import SOURCE_REQUIREMENT, has_source_handoff
     if (not has_source_handoff(state) or candidate.skill_key in state.applicable_method_ids
@@ -250,6 +294,10 @@ def retire_completed_methods(skills, state):
         proof=source_phase_binding(state,skills.directory[key],active)
         if key not in known and proof is not None:
             retiring.append(proof)
+    return retire_bound_methods(skills, state, retiring)
+
+
+def retire_bound_methods(skills, state, retiring):
     if not retiring:
         return skills
     if skills.execution_mode != 'interactive' or skills.checkpoint_version != 2:

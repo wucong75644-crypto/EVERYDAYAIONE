@@ -396,7 +396,7 @@ class ChatImageInputResolver:
                 **{key: dimensions[key] for key in ("width", "height", "aspect_ratio")}})
         return resolved
 
-    def size_context(self):
+    def size_context(self, *, use_previous=True, infer_attachment_canvas=True):
         from services.handlers.chat_context.image_sources import content_parts
         from services.handlers.image_size_requirements import user_size_intent
         def text(row):
@@ -406,9 +406,12 @@ class ChatImageInputResolver:
         if current.get("role") != "user":
             raise PermissionError("IMAGE_SOURCE_MESSAGE_DENIED")
         intent = user_size_intent(text(current))
-        if (any(isinstance(part, dict) and part.get("type") == "image" for part in content_parts(current.get("content")))
+        if (infer_attachment_canvas
+                and any(isinstance(part, dict) and part.get("type") == "image" for part in content_parts(current.get("content")))
                 and not any(key in intent for key in ("aspect_ratio", "mode", "width", "orientation"))):
             intent["mode"] = "inherit_reference"
+        if not use_previous:
+            return intent, {}
         # Prior requirements come only from user text within the closed anchor,
         # never an assistant's visual estimate or a concurrent newer message.
         rows = self.owner.db.table("messages").select(
@@ -487,9 +490,9 @@ class ChatImageInputResolver:
             raise ValueError("IMAGE_REFERENCE_CHANGED")
         return target
 
-    def verify(self, references: list[dict]) -> None:
+    def verify(self, references: list[dict], *, digest=True) -> None:
         for reference in references:
-            self._verify_reference(reference)
+            self._verify_reference(reference, digest=digest)
 
     def preview(self, reference):
         # Read-only display checks identity/current permission/file version.
@@ -499,7 +502,33 @@ class ChatImageInputResolver:
 
     def source_prompt(self, source: dict, prompt: str) -> dict:
         """A source is exact text and hash; no summary-based reconstruction."""
-        if isinstance(source,dict) and set(source)=={"task_id","sha256"}:
+        if isinstance(source,dict) and set(source)=={'content_object'}:
+            expected = self.verify_content_object(source['content_object'])
+            if expected.get('prompt') != prompt: raise ValueError('CONTENT_ARGUMENT_CHANGED')
+            return deepcopy(source)
+        if isinstance(source, dict) and set(source) == {'handoff'}:
+            outputs = self.verify_handoff(source['handoff'])
+            if outputs.get('prompt') != prompt:
+                raise ValueError('CHAT_INPUT_TARGET_CHANGED')
+            return deepcopy(source)
+        if isinstance(source, dict) and 'bundle' in source:
+            if (not {'message_id', 'content_index'} <= set(source)
+                    or set(source) - {'message_id', 'content_index', 'sha256', 'bundle', 'adaptation'}):
+                raise ValueError('IMAGE_SOURCE_PROMPT_INVALID')
+            from services.handlers.chat_context.image_sources import content_parts
+            from services.handlers.chat_content_bundle import verify
+            row = self._message(source['message_id'])
+            parts = content_parts(row['content'])
+            index = source['content_index']
+            if type(index) is not int or not 0 <= index < len(parts) or parts[index].get('type') != 'text':
+                raise ValueError('IMAGE_SOURCE_PROMPT_INVALID')
+            verify(parts[index]['text'], prompt, source['bundle'], adaptation=source.get('adaptation'))
+            digest = hashlib.sha256(prompt.encode()).hexdigest()
+            if source.get('sha256', digest) != digest:
+                raise ValueError('IMAGE_SOURCE_PROMPT_CHANGED')
+            return {**deepcopy(source), 'sha256': digest}
+        if isinstance(source, dict) and set(source) in ({"task_id"}, {"task_id", "sha256"}):
+            source = {"sha256": hashlib.sha256(prompt.encode()).hexdigest(), **source}
             row=self.owner.db.table("tasks").select("user_id,org_id,conversation_id,type,status,assistant_message_id,request_params").eq("id",source["task_id"]).single().execute().data
             if (row.get("user_id")!=self.owner.user_id or row.get("org_id")!=self.owner.org_id
                     or row.get("conversation_id")!=self.owner.conversation_id or row.get("type")!="image"
@@ -510,15 +539,13 @@ class ChatImageInputResolver:
             if snapshot.get("prompt")!=prompt or hashlib.sha256(prompt.encode()).hexdigest()!=source["sha256"]:
                 raise ValueError("IMAGE_SOURCE_PROMPT_CHANGED")
             return deepcopy(source)
-        if (not isinstance(source, dict) or set(source) != {"message_id", "content_index", "sha256"}):
+        if (not isinstance(source, dict) or set(source) not in
+                ({"message_id", "content_index"}, {"message_id", "content_index", "sha256"})):
             raise ValueError("IMAGE_SOURCE_PROMPT_INVALID")
+        source = {"sha256": hashlib.sha256(prompt.encode()).hexdigest(), **source}
         row = self._message(source["message_id"])
-        content = row["content"]
-        if isinstance(content, str):
-            try:
-                content = json.loads(content)
-            except json.JSONDecodeError:
-                content = [{"type": "text", "text": content}]
+        from services.handlers.chat_context.image_sources import content_parts
+        content = content_parts(row['content'])
         index = source["content_index"]
         if type(index) is not int or index < 0 or not isinstance(content, list) or index >= len(content):
             raise ValueError("IMAGE_SOURCE_PROMPT_INVALID")
@@ -529,6 +556,81 @@ class ChatImageInputResolver:
             raise ValueError("IMAGE_SOURCE_PROMPT_CHANGED")
         start=part["text"].index(prompt)
         return {**deepcopy(source),"start":start,"end":start+len(prompt)}
+
+    def complete_source_prompt(self, source: dict, prompt: str):
+        """Read-only verification of the supplied text; never expand or rewrite it."""
+        return prompt,self.source_prompt(source,prompt)
+
+    def verify_content_object(self,proof):
+        from services.task_execution.content_objects import compile_input
+        from services.task_execution.reducer import digest
+        if not isinstance(proof,dict) or set(proof)!={'version','source','tool','arguments','arguments_sha256'} or proof['version']!=1 or proof['tool']!='generate_image':
+            raise ValueError('CONTENT_PROOF_INVALID')
+        state=getattr(self.owner,'_task_execution_state',None)
+        if state is None: state=getattr(getattr(self.owner,'_actor_runtime',None),'task_execution_state',None)
+        if (state is None or str(state.actor_user_id)!=str(self.owner.user_id)
+                or str(state.conversation_id)!=str(self.owner.conversation_id)
+                or (str(state.org_id) if state.org_id else None)!=self.owner.org_id
+                or not getattr(self.owner,'personal_context_allowed',False)
+                or not state.execution_identity.personal_context_allowed
+                or state.execution_identity.context_scope!=getattr(self.owner,'context_scope','user')
+                or state.execution_identity.workspace_owner_id!=str(getattr(self.owner,'workspace_user_id',self.owner.user_id))):
+            raise PermissionError('CONTENT_SOURCE_DENIED')
+        expected,_=compile_input(state,'generate_image',proof['arguments'],proof['source'],allow_old=True)
+        if expected['source_prompt']['content_object']!=proof: raise ValueError('CONTENT_PROOF_CHANGED')
+        return {k:v for k,v in expected.items() if k!='source_prompt'}
+
+    def verify_handoff(self, proof):
+        from services.handlers.chat_input_handoff import assemble
+        from services.handlers.chat_context.image_sources import content_parts
+        from services.tools.catalog import build_tool_catalog
+        if not isinstance(proof, dict) or proof.get('version') != 2 or proof.get('tool') != 'generate_image':
+            raise ValueError('CHAT_INPUT_PROOF_INVALID')
+        if not getattr(self.owner, 'personal_context_allowed', True):
+            raise PermissionError('CHAT_INPUT_SOURCE_DENIED')
+        def read(source):
+            row = self._message(source['message_id'])
+            if row.get('role') not in {'user', 'assistant'}:
+                raise PermissionError('CHAT_INPUT_SOURCE_DENIED')
+            parts = content_parts(row['content'])
+            index = source['content_index']
+            if not 0 <= index < len(parts) or parts[index].get('type') != 'text':
+                raise ValueError('CHAT_INPUT_SOURCE_INVALID')
+            return {'text': parts[index]['text'], 'context_revision': row.get('context_revision')}
+        parameters = build_tool_catalog().require('generate_image').to_schema()['function']['parameters']
+        outputs, canonical = assemble(proof['mapping'], read, parameters, reserved=('source_prompt', 'plan_source'))
+        if {**canonical, 'tool': 'generate_image'} != proof:
+            raise ValueError('CHAT_INPUT_PROOF_CHANGED')
+        return outputs
+
+    def locate_source_prompt(self, prompt: str):
+        """Cover legacy direct calls which copied a quote but omitted its locator.
+
+        Search only the same bounded, closed history used for native discovery;
+        a match is a proposal and still goes through _message/source validation.
+        New prompts without historical matches retain their existing behavior.
+        """
+        from services.handlers.chat_context.image_sources import content_parts
+        rows = self.owner.db.table('messages').select(
+            'id,conversation_id,org_id,context_revision,content,status,role,message_kind'
+        ).eq('conversation_id', self.owner.conversation_id).lte('context_revision', self.base_revision).eq(
+            'message_kind', 'conversation').in_('status', ['completed', 'interrupted']).order(
+            'context_revision', desc=True).limit(100).execute().data or []
+        rows += list(self.legacy_sources.values())
+        matches = set()
+        for row in rows:
+            if (row.get('conversation_id') != self.owner.conversation_id or row.get('org_id') != self.owner.org_id
+                    or row.get('role') not in {'user', 'assistant'}):
+                continue
+            for index, part in enumerate(content_parts(row.get('content'))):
+                if part.get('type') == 'text' and isinstance(part.get('text'), str) and prompt in part['text']:
+                    matches.add((str(row['id']), index))
+        if len(matches) > 1:
+            raise ValueError('CHAT_SOURCE_UNAVAILABLE_OR_AMBIGUOUS')
+        if not matches:
+            return None
+        message_id, index = matches.pop()
+        return {'message_id': message_id, 'content_index': index}
 
     def validate_source_task(self, task_id: str) -> None:
         row = self.owner.db.table("tasks").select(

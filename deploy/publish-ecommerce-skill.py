@@ -1,4 +1,4 @@
-"""Explicit, release-lock-owned publication of the single main-image entry Skill.
+"""Explicit, release-lock-owned publication of approved platform image Skills.
 
 Run with the production backend Python. No credentials, alternate pool, browser
 session or database superuser is used. The three planner prompts are code assets.
@@ -14,6 +14,7 @@ import stat
 import sys
 
 APP = Path('/var/www/everydayai')
+BACKUP_ROOT = Path('/root')
 KEY = 'ecommerce-main-images'
 REVISION = 'v3'
 CONTENT_HASH = '38f0c363c1c4b93470f5c704763ce5d7a9922f044c01ba6038b0f25f7f294593'
@@ -47,9 +48,12 @@ def install(raw, root, alias, relative):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--source', required=True)
+    parser.add_argument('--chat-image-orchestration', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--apply', action='store_true')
     parser.add_argument('--lock-token')
     args = parser.parse_args()
+    if args.chat_image_orchestration:
+        parser.error('SKILL_PLATFORM_EXECUTION_RETIRED')
     os.chdir(APP / 'backend')
     sys.path.insert(0, str(APP / 'backend'))
     from core.config import get_settings
@@ -61,22 +65,26 @@ def main():
     from services.skills.resolver import SkillResolutionContext, SkillResolver
     from services.skills.storage import SkillStorage
 
+    key, revision, content_hash = KEY, REVISION, CONTENT_HASH
+    source, priority = 'approved-ecommerce-main-image-entry', 0
+
     raw = Path(args.source).read_bytes()
-    if hashlib.sha256(raw).hexdigest() != CONTENT_HASH:
+    if hashlib.sha256(raw).hexdigest() != content_hash:
         raise ValueError('SKILL_SOURCE_HASH_MISMATCH')
     body = raw.split(b'---\n', 2)[2]
-    publication = PublishRevision(revision=REVISION, content_sha256=CONTENT_HASH,
+    publication = PublishRevision(revision=revision, content_sha256=content_hash,
         body_sha256=hashlib.sha256(body).hexdigest())
-    package_input = PackageCreate(skill_key=KEY, source='approved-ecommerce-main-image-entry', scope_kind='platform')
+    package_input = PackageCreate(skill_key=key, source=source, scope_kind='platform')
     validated = SkillStorage.validate_bytes(package_input, publication, raw)
     settings = get_settings()
-    if not all((settings.skill_catalog_enabled, settings.skill_runtime_enabled,
-                settings.ecom_image_planning_enabled, settings.chat_image_async_enabled)):
+    required = [settings.skill_catalog_enabled, settings.skill_runtime_enabled,
+                settings.chat_image_async_enabled, settings.ecom_image_planning_enabled]
+    if not all(required):
         raise ValueError('SKILL_REQUIRED_FEATURE_DISABLED')
     storage = SkillStorage(settings.skill_storage_root, workspace_root=settings.file_workspace_root)
     if not validated.catalog_metadata.model_selectable:
         raise ValueError('SKILL_AUTO_SELECTION_REQUIRED')
-    request_id = 'ecommerce-skill-publication:' + (args.lock_token or 'check')
+    request_id = key + '-publication:' + (args.lock_token or 'check')
     scope = DatabaseScope(None, None, DatabaseAccessKind.RUNTIME_ADMIN, request_id)
     db = get_db()
     try:
@@ -97,7 +105,7 @@ def main():
 
             repository = SkillRepository(PinnedPool(), scope, owner_scope='platform')
             catalog = SkillCatalog(repository, settings)
-            packages = [p for p in catalog.list_packages() if p.skill_key == KEY and p.scope_kind == 'platform']
+            packages = [p for p in catalog.list_packages() if p.skill_key == key and p.scope_kind == 'platform']
             if args.apply:
                 token = args.lock_token or ''
                 if not re.fullmatch(r'[a-zA-Z0-9-]+', token):
@@ -106,10 +114,10 @@ def main():
                     raise ValueError('SKILL_RELEASE_LOCK_REQUIRED')
                 if (APP / '.release-provenance').exists():
                     raise ValueError('SKILL_RELEASE_CANDIDATE_MUST_BE_INVALIDATED')
-                backup = Path('/root') / ('everydayai-ecommerce-skill-' + token)
+                backup = BACKUP_ROOT / ('everydayai-' + key + '-' + token)
                 backup.mkdir(mode=0o700, exist_ok=True)
                 previous = connection.execute('''SELECT a.* FROM skill_assignments a JOIN skill_packages p ON p.id=a.package_id
-                    WHERE p.skill_key=%s AND p.scope_kind='platform' AND a.org_id IS NULL''', (KEY,)).fetchone()
+                    WHERE p.skill_key=%s AND p.scope_kind='platform' AND a.org_id IS NULL''', (key,)).fetchone()
                 before = backup / 'before.json'
                 if not before.exists():
                     before.write_text(json.dumps(dict(previous) if previous else None, default=str) + '\n')
@@ -118,15 +126,15 @@ def main():
                 connection.execute("SELECT set_config('app.skill_action', 'platform_publish', true)")
                 package = packages[0] if packages else catalog.create_package(package_input)
                 existing = connection.execute('SELECT * FROM skill_revisions WHERE package_id=%s AND revision=%s',
-                    (package.id, REVISION)).fetchone()
+                    (package.id, revision)).fetchone()
                 if existing:
-                    if (existing['content_sha256'] != CONTENT_HASH or existing['body_sha256'] != publication.body_sha256
+                    if (existing['content_sha256'] != content_hash or existing['body_sha256'] != publication.body_sha256
                             or existing['status'] != 'published'):
                         raise ValueError('SKILL_IMMUTABLE_REVISION_CONFLICT')
                     revision_id = existing['id']
                 else:
                     revision_id = catalog.publish_revision(package.id, publication).id
-                catalog.set_platform_assignment(package.id, revision_id, enabled=True)
+                catalog.set_platform_assignment(package.id, revision_id, enabled=True, priority=priority)
                 packages = [package]
 
             available = False
@@ -145,17 +153,19 @@ def main():
                     reader = SkillRepository(PinnedPool(), DatabaseScope(actor, org, DatabaseAccessKind.PROJECTION))
                     context = SkillResolutionContext(actor_user_id=actor, org_id=org, conversation_scope='user',
                         agent_domain='general', execution_mode='interactive', enabled_feature_flags=flags)
-                    matches = [c for c in SkillResolver().select(context, reader.catalog_candidates()) if c.package_id == package.id]
-                    if len(matches) != 1 or not matches[0].catalog_metadata.model_selectable:
+                    matches = [candidate for candidate in SkillResolver().select(context, reader.catalog_candidates())
+                               if candidate.skill_key == key]
+                    if (len(matches) != 1 or matches[0].package_id != package.id or matches[0].revision != revision
+                            or not matches[0].catalog_metadata.model_selectable):
                         raise ValueError('SKILL_PRODUCTION_DISCOVERY_FAILED')
-                    revision = reader.assigned_revision(package.id, REVISION)
-                    if revision.content_sha256 != CONTENT_HASH:
+                    resolved = reader.assigned_revision(package.id, revision)
+                    if resolved.content_sha256 != content_hash:
                         raise ValueError('SKILL_PRODUCTION_HASH_MISMATCH')
                     storage.validate(package, publication)
                 available = bool(contexts)
-            result = {'skill_key': KEY, 'revision': REVISION, 'published': bool(packages),
+            result = {'skill_key': key, 'revision': revision, 'published': bool(packages),
                 'available_to_all_active_contexts': available, 'registered_internal_prompts': 0,
-                'content_sha256': CONTENT_HASH}
+                'content_sha256': content_hash}
             if args.apply:
                 (backup / 'result.json').write_text(json.dumps(result) + '\n')
         print('ECOMMERCE_SKILL_RESULT ' + json.dumps(result))

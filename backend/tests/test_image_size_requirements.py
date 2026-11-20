@@ -98,6 +98,16 @@ def test_canvas_prompt_conflict_blocked_before_freeze():
         resolve(prompt="产品摄影，画布比例3:4")
 
 
+def test_complete_source_keeps_original_canvas_facts_without_overriding_output():
+    from services.handlers.image_size_requirements import selected_source_size
+    prompt = '原图画布比例为80:79。\n原图宽高比：80:79。\n输出比例1:1。'
+    args, _ = resolve('使用1:1', prompt=prompt)
+    assert args['aspect_ratio'] == '1:1' and args['prompt'] == prompt
+    assert selected_source_size(prompt)['aspect_ratio'] == '1:1'
+    with pytest.raises(ValueError, match='PROMPT_CONFLICT'):
+        resolve(prompt='保持原图比例3:4。输出比例1:1。')
+
+
 def test_frozen_target_does_not_change_with_user_next_turn():
     refs=[reference()]
     args,target=resolve("统一1:1、2K",refs=refs)
@@ -197,3 +207,10 @@ def test_current_unpersisted_image_also_gets_server_canvas_facts(tmp_path,monkey
     sources=discovered_image_sources({"role":"user","content":[{"type":"image","workspace_path":"original.png"}]},MagicMock(),org_id=None,owner_id=user)
     assert sources[0]["canvas"]["aspect_ratio"]=="1:1"
     assert "message_id" not in sources[0]["reference"]
+
+
+def test_verified_source_size_uses_explicit_output_labels_and_preserves_pixels():
+    from services.handlers.image_size_requirements import selected_source_size
+    assert selected_source_size('产品比例2:3，主体宽高比4:5。') == {}
+    assert selected_source_size('产品比例2:3，输出比例1:1。') == {'aspect_ratio': '1:1'}
+    assert selected_source_size('输出尺寸1254×1254像素。') == {'width': 1254, 'height': 1254}
