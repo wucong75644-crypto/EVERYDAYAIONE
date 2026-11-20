@@ -15,7 +15,9 @@ Tools:
 
 - `list_video_models`: eleven supported model IDs, selection guidance, per-model durations, resolutions, image modes and audio behavior.
 - `create_video`: submit one paid job, returning immediately with its task ID.
-- `get_video_task`: query progress and retrieve HTTPS output URLs. Poll no faster than every 10 seconds.
+- `get_video_task`: read cached durable progress and retrieve HTTPS output URLs; old provider IDs remain directly queryable.
+- `wait_video_task`: bounded automatic waiting; repeat while `continue_waiting=true`.
+- `list_video_tasks`: recover shared personal-account jobs from any authenticated device.
 
 ## Model selection and input mapping
 
@@ -143,3 +145,74 @@ codex mcp add kie_video -- /usr/bin/python3 /Users/wucong/.codex/mcp/kie-video/b
 
 After registration verify initialization, tools/list and list_video_models through
 the actual bridge; do not submit a paid generation during deployment checks.
+
+## Shared automatic completion flow (implementation, not yet deployed)
+
+Scope is **one personal identity across the owner's devices**, using the existing
+independent MCP credential and KIE balance. This is not multi-user registration or
+per-customer billing. The Mac, Windows and other compatible MCP clients access the
+same server records and results; no local polling daemon or scheduled task is needed.
+
+New server-side tools:
+
+- `wait_video_task(task_id, wait_seconds=40)`: read/wait only, never creates or charges.
+  On `continue_waiting=true`, GPT should automatically call it again in the current
+  turn. A bounded wait timeout does not mean provider failure. Show the returned
+  video URL when complete; report failures and persistent query outages honestly.
+- `list_video_tasks(before, limit=20)`: list the personal account's durable tasks,
+  including local/provider IDs, model, prompt preview, status and result links.
+  Resume from another device using an existing ID, never by recreating a video.
+
+`create_video` now inserts a durable PostgreSQL record **before** the paid POST.
+Each local UUID is sent in a unique callback URL. The request fingerprint and unique
+request key prevent duplicate dispatch. The old Redis guards remain in place for
+rolling upgrades; legacy uncertain requests are not silently recreated. An uncertain
+new POST returns its local task ID so automatic follow-up can continue. Older jobs
+remain queryable by provider ID but are not automatically imported into the new list.
+
+`POST /api/kie-mcp-callback/{local_id}` is a bounded, untrusted wake-up hint, **not an
+authoritative completion or video URL**. It accepts no request to create a video and
+returns no task details. The server verifies results through authenticated KIE
+`recordInfo`. For a response-lost submission it binds a callback candidate only if
+the provider's stored model, input fields and exact callback URL match the pre-saved
+request. The provider task ID must also match the requested ID. An unrelated or
+forged callback cannot publish its body/result links. No credential is placed in the
+callback URL and no supplier account HMAC setup is required for this verification
+strategy. The callback's caller identity itself is not claimed as authenticated.
+
+Two bounded background workers per backend process claim due rows using PostgreSQL
+`FOR UPDATE SKIP LOCKED`, a 180-second lease and a fencing token. Work is bounded to
+150 seconds; expired/stale workers cannot publish. The workers only query/archive,
+never resubmit provider jobs. Missing callbacks are recovered by polling every ten
+seconds. Unknown submissions without a verifiable callback stay unknown rather than
+being automatically billed again. A process restart releases work via lease expiry.
+
+Successful videos use the existing guarded downloader and verified native video OSS
+persistence with a dedicated synthetic personal-MCP owner and deterministic object
+keys. They are not added to website user tasks, assets or credit ledgers. If storage
+fails, provider success and temporary URLs remain visible with a warning; only
+storage is retried. A storage retry never regenerates or charges for another video.
+Media bytes and receipt checks use the existing `native_video_storage.persist` path.
+
+Schema: `backend/migrations/379_kie_mcp_video_tasks.sql`. Apply via the controlled
+release migration ledger before restarting the new backend. The additive table is
+owned by the existing backend role; no public grants. Do not drop it on application
+rollback: it preserves pending work, outcomes and request guards. Old code can keep
+using the legacy tools; upgrading again resumes saved rows.
+
+Callback origin defaults to `https://everydayai.com.cn`; override
+`KIE_MCP_CALLBACK_BASE_URL` for another deployment. The backend lifespan owns the
+worker jobs and cancels them on shutdown. Clients do not need a new bridge or token;
+after server deployment refresh/reconnect their MCP tools once to discover the two
+new tools and updated automatic-follow-up instructions. Normal cross-device task
+state/result synchronization then stays entirely server-side.
+
+A closed or interrupted generic MCP chat cannot be forcibly awakened by this server.
+The job and archival continue, and the next client session can recover it from the
+list. In-turn automatic display depends on the compatible client's model following
+the MCP automatic-wait instructions; this does not promise OS push notifications.
+
+Validation uses a fresh local PostgreSQL instance bound only to a private Unix socket;
+no production database or paid KIE generation is used. Checks cover concurrent
+reservation/lease fencing, callback association/forgery rejection, missing callbacks,
+response-lost recovery, archive-only retries, cross-device paging, and bounded waits.

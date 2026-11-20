@@ -14,7 +14,7 @@ from services import kie_video_mcp as service
 
 @pytest.fixture(autouse=True)
 def settings(monkeypatch):
-    config = SimpleNamespace(kie_api_key="vendor-secret", kie_mcp_token="x" * 40)
+    config = SimpleNamespace(kie_api_key="vendor-secret", kie_mcp_token="x" * 40, kie_mcp_callback_base_url="https://example.com")
     monkeypatch.setattr(service, "get_settings", lambda: config)
     return config
 
@@ -45,7 +45,7 @@ def test_auth_and_protocol(settings, monkeypatch, redis):
         response = client.post('/api/kie-mcp/', headers=headers, json={
             "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
         tools = response.json()['result']['tools']
-        assert {t['name'] for t in tools} == {'list_video_models', 'create_video', 'get_video_task'}
+        assert {t['name'] for t in tools} == {'list_video_models', 'create_video', 'get_video_task', 'wait_video_task', 'list_video_tasks'}
         create = next(t for t in tools if t['name'] == 'create_video')
         assert 'request_key' in create['inputSchema']['required']
         for sound in (False, True):
@@ -61,6 +61,48 @@ def test_auth_and_protocol(settings, monkeypatch, redis):
             assert upstream.call_args.kwargs['json']['input']['audio'] is sound
         settings.kie_mcp_token = None
         assert client.post('/api/kie-mcp/', headers=headers, json={}).status_code == 401
+
+
+class FakeStore:
+    def __init__(self):
+        self.rows = {}
+
+    async def by_key(self, key):
+        return self.rows.get(key)
+
+    async def reserve(self, key, fingerprint, payload, callback_base):
+        from datetime import datetime, timezone
+        from uuid import uuid4
+        if key in self.rows:
+            row = self.rows[key]
+            if row['fingerprint'] != fingerprint:
+                raise ValueError('request_key already belongs to a different request')
+            return row, False
+        local_id = uuid4()
+        row = dict(id=local_id, request_key=key, fingerprint=fingerprint,
+                   payload={**payload, 'callBackUrl': callback_base+'/api/kie-mcp-callback/'+str(local_id)},
+                   provider_task_id=None, callback_candidate=None, state='submission_unknown',
+                   source_urls=[], archived_urls=[], storage_state='pending', created_at=datetime.now(timezone.utc))
+        self.rows[key] = row
+        return row, True
+
+    async def bind(self, local_id, provider_id):
+        row = next(r for r in self.rows.values() if r['id'] == local_id)
+        row.update(provider_task_id=provider_id, state='waiting')
+        return row
+
+    async def get(self, reference):
+        return next((r for r in self.rows.values() if str(r['id']) == reference or r['provider_task_id'] == reference), None)
+
+    async def listing(self, before, limit):
+        return list(self.rows.values())[:limit]
+
+
+@pytest.fixture(autouse=True)
+def durable_store(monkeypatch):
+    fake = FakeStore()
+    monkeypatch.setattr(service, 'store', fake)
+    return fake
 
 
 class FakeRedis:
@@ -101,10 +143,12 @@ async def test_create_deduplicates_and_rejects_changed_payload(monkeypatch, redi
 async def test_ambiguous_creation_never_retries(monkeypatch, redis):
     upstream = AsyncMock(side_effect=ValueError('unknown'))
     monkeypatch.setattr(service, 'kie_request', upstream)
-    with pytest.raises(ValueError):
-        await service.create_video('uncertain-request', 'A pencil')
-    with pytest.raises(ValueError, match='uncertain'):
-        await service.create_video('uncertain-request', 'A pencil')
+    first = await service.create_video('uncertain-request', 'A pencil')
+    assert first['state'] == 'submission_unknown'
+    assert first['local_task_id']
+    repeated = await service.create_video('uncertain-request', 'A pencil')
+    assert repeated['reused'] is True
+    assert repeated['local_task_id'] == first['local_task_id']
     assert upstream.await_count == 1
 
 
@@ -163,7 +207,8 @@ async def test_each_model_provider_contract(monkeypatch, redis, model, kwargs, e
     upstream = AsyncMock(return_value={'taskId': 'contract-task'})
     monkeypatch.setattr(service, 'kie_request', upstream)
     await service.create_video('contract-request', 'A pencil rolls across a wooden desk', model=model, **kwargs)
-    sent = upstream.call_args.kwargs['json']
+    sent = dict(upstream.call_args.kwargs['json'])
+    assert '/api/kie-mcp-callback/' in sent.pop('callBackUrl')
     assert sent == {'model': model, 'input': {'prompt': 'A pencil rolls across a wooden desk', **expected}}
 
 
@@ -236,7 +281,9 @@ async def test_new_provider_contracts(monkeypatch, redis, model, kwargs, expecte
     upstream = AsyncMock(return_value={'taskId': 'new-model-task'})
     monkeypatch.setattr(service, 'kie_request', upstream)
     await service.create_video('new-model-request', 'A pencil rolls on a desk', model=model, **kwargs)
-    assert upstream.call_args.kwargs['json'] == {'model': model, 'input': {'prompt': 'A pencil rolls on a desk', **expected}}
+    sent = dict(upstream.call_args.kwargs['json'])
+    assert '/api/kie-mcp-callback/' in sent.pop('callBackUrl')
+    assert sent == {'model': model, 'input': {'prompt': 'A pencil rolls on a desk', **expected}}
 
 
 @pytest.mark.asyncio
@@ -285,4 +332,32 @@ async def test_new_model_invalid_inputs_do_not_spend(monkeypatch, redis, model, 
     with pytest.raises(ValueError):
         await service.create_video('invalid-new-model', 'A pencil rolling', model=model, **kwargs)
     assert not redis.data
+    upstream.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cached_legacy_receipt_failure_does_not_hide_durable_provider_id(monkeypatch, redis):
+    original_set = redis.set
+    async def flaky_set(key, value, nx=False):
+        if not nx:
+            raise ConnectionError('cache unavailable')
+        return await original_set(key, value, nx=nx)
+    monkeypatch.setattr(redis, 'set', flaky_set)
+    monkeypatch.setattr(service, 'kie_request', AsyncMock(return_value={'taskId': 'durable-task-123'}))
+    created = await service.create_video('cache-outage-request', 'A pencil rolling')
+    assert created['task_id'] == 'durable-task-123'
+    assert (await service.get_video_task('durable-task-123'))['state'] == 'waiting'
+
+
+@pytest.mark.asyncio
+async def test_old_redis_uncertain_guard_is_never_recreated(monkeypatch, redis):
+    import hashlib
+    payload = {'model': 'kling-2.6/text-to-video', 'input': {'prompt': 'A pencil rolling',
+               'duration': '5', 'sound': False, 'aspect_ratio': '16:9'}}
+    fingerprint = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+    await redis.set('kie:personal-mcp:create:legacy-unknown-request', json.dumps({'fingerprint': fingerprint, 'state': 'submission_unknown'}))
+    upstream = AsyncMock()
+    monkeypatch.setattr(service, 'kie_request', upstream)
+    with pytest.raises(ValueError, match='Previous submission'):
+        await service.create_video('legacy-unknown-request', 'A pencil rolling')
     upstream.assert_not_awaited()
