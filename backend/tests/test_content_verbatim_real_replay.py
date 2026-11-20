@@ -485,3 +485,47 @@ async def test_recorded_omitted_fields_save_once_but_empty_catalog_cannot_enable
     assert 'SKILL_NOT_AVAILABLE' in str(p.messages[-1])
     from services.task_execution.direct_loop import schemas
     assert co.SCHEMA in schemas(r)
+
+
+@pytest.mark.asyncio
+async def test_recorded_quoted_reply_compiles_to_original_prompt_and_origin():
+    """Replay the two captured authoring messages directly through the streaming loop."""
+    from dataclasses import replace
+    from uuid import UUID
+    from schemas.message import ImagePart, TextPart
+    from services.adapters.types import StreamChunk
+    from services.handlers.chat_image_request import validate_single_image_request
+    from tests.test_content_objects import run_content_loop
+
+    path = os.getenv('CHAT_IMAGE_REFERENCE_INCIDENT')
+    if not path:
+        pytest.skip('Private authoring turn with original numbered quotations required')
+    origin, reply = [json.loads(line) for line in Path(path).read_text().splitlines()]
+    original = next(part['text'] for part in reply['content'] if part['type'] == 'text')
+    expected = [line[2:] for line in original.splitlines() if line.startswith('> ')]
+    assert len(expected) == 4
+    runtime, prepared, handler, request = case()
+    runtime.task_bootstrap = replace(runtime.task_bootstrap, input_message_id=UUID(origin['id']))
+    request = replace(request, content=[
+        TextPart(text=part['text']) if part['type'] == 'text'
+        else ImagePart(name=part['name'], workspace_path='uploads/' + part['name'])
+        for part in origin['content']
+    ], context_anchor=SimpleNamespace(base_revision=0, input_message_id=origin['id']))
+
+    async def recorded_output(**kwargs):
+        yield StreamChunk(content=original)
+        yield StreamChunk(finish_reason='stop')
+
+    _, blocks, _ = await run_content_loop(runtime, prepared, handler, request, recorded_output)
+    part, = [part for part in blocks if part['type'] == 'text']
+    assert part['text'] == original
+    row, = co.catalog(runtime.task_execution_state)
+    assert part['content_artifact_id'] == row['artifact_id']
+    for index, prompt in enumerate(expected, 1):
+        args, _ = co.compile_input(runtime.task_execution_state, 'generate_image', {}, ref(row, index))
+        assert args['prompt'].encode() == prompt.encode()
+        assert args['references'] == [{'message_id': origin['id'], 'content_index': 1, 'role': '原图参考'}]
+        spec = validate_single_image_request(args, len(args['references']))
+        assert (spec['mode'], spec['aspect_ratio'], spec['resolution'], spec['output_format']) == (
+            'image_to_image', '1:1', '1K', 'png')
+    handler._execute_tool_calls.assert_not_awaited()

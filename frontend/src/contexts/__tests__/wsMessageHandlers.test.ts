@@ -119,7 +119,7 @@ describe('independent chat image delivery', () => {
   beforeEach(() => vi.clearAllMocks());
   const replayDir = process.env.CHAT_EXECUTION_WS_REPLAY_DIR;
   const scenarios = ['recorded-first', 'recorded-fifth', 'text-to-image', 'image-to-image'];
-  for (const scenario of ['recorded-write-once', 'recorded-retired', 'recorded-third-output',
+  for (const scenario of ['recorded-write-once', 'recorded-retired', 'recorded-third-output', 'recorded-quoted-output',
     'new-third-output', 'recorded-third-history', 'new-third-history',
     'continuity-ordinary-1', 'continuity-ordinary-2', 'continuity-ordinary-3',
     'continuity-ordinary-4', 'continuity-ordinary-5', 'continuity-ordinary-6',

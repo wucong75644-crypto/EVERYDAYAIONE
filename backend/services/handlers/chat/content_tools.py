@@ -44,6 +44,29 @@ def visual_author_request(request, indexed):
     return None
 
 
+def selects_previous_item(request):
+    """An explicit pointer in an execution request cannot authorize a fresh draft."""
+    text = ' '.join(part.text for part in request.content if part.type == 'text')
+    number = r'[零〇一二两三四五六七八九十百0-9]+'
+    item = r'(?:方案|稿件|提示词|脚本|文案|条目)'
+    # A bare ordinal is a pointer only when the following words concern execution.
+    # “第二条鱼” and “第一张图” are not saved documents.
+    pointer = re.search(
+        rf'第\s*{number}\s*(?:个|条|项|版|套)(?:{item}|(?=\s*(?:和原图|带原图|帮我|做|生成|出图|执行|$)))'
+        rf'|{item}\s*[#＃]?\s*{number}'
+        rf'|(?:之前|刚才|上面|旧|原来|已保存)的?{item}', text)
+    if not pointer:
+        return False
+    if (re.search(r'(?:不用|别用|不要用|舍弃|忽略|取消)\s*$', text[:pointer.start()])
+            or re.match(r'\s*(?:不要了|不用了|先不做)', text[pointer.end():])):
+        return False
+    # Revising/authoring and then executing is a compound task. Keep both actions available.
+    if re.search(rf'(?:写|设计|拟|整理|列出).{{0,24}}{item}', text[:pointer.start()]):
+        return False
+    return image_execution_request(request) or bool(re.search(
+        r'(?:导出|做成|制成|生成|转成)(?:一份|一个|一段)?(?:视频|文件|文档|Word|PDF)', text, re.I))
+
+
 def unconfirmed_image_reply(text, has_calls):
     if has_calls:
         return ''
@@ -109,12 +132,55 @@ SCHEMAS = (
 )
 
 
-def model_tools(tools, *, selectable_source_images=False, server_image_plan=False):
+def model_tools(tools, *, selectable_source_images=False, server_image_plan=False, reuse_source=False, first_delivery=False):
     """Project the one entry contract selected by the current workflow."""
     from services.task_execution.content_objects import ContentReference, ImageContentReference, selection_parameters
     result=[]
     for original in tools:
         name=original.get('function',{}).get('name')
+        if name == 'save_task_text' and not server_image_plan and (reuse_source or first_delivery):
+            # Project the same backend action. The first turn has no historical
+            # source to recover; an explicit follow-up already has its source.
+            tool = copy.deepcopy(original)
+            function = tool['function']
+            parameters = function['parameters']
+            excluded = {'document', 'new_content'} if reuse_source else {'base', 'updates', 'message_source', 'new_content'}
+            for key in excluded:
+                parameters['properties'].pop(key, None)
+            forms = [form for form in parameters.pop('oneOf') if excluded.isdisjoint(form['required'])]
+            if len(forms) == 1:
+                parameters['required'] = forms[0]['required']
+            else:
+                parameters['oneOf'] = forms
+            if reuse_source:
+                function['description'] = ('执行已保存的条目直接调用目标工具。仅恢复历史正文时用message_source和'
+                                           'continue_execution=true；修订用base和updates。')
+            else:
+                # Preserve authoring Skill presentation requirements in the prefix.
+                from services.task_execution.content_objects import SCHEMA
+                description = function['description'].removesuffix(SCHEMA['function']['description'])
+                function['description'] = description + (
+                    '写方案、提示词或脚本时只交付一次document。每条body保留完整原文和限制，'
+                    '页面直接展示；后台关联当前原图。同时要求执行时设continue_execution=true。')
+            # Definitions for other forms can include long reference/patch schemas.
+            # Only publish definitions reachable from the advertised arguments.
+            definitions = parameters.pop('$defs', {})
+            pending = [parameters]
+            reachable = {}
+            while pending:
+                node = pending.pop()
+                if isinstance(node, dict):
+                    ref = node.get('$ref', '').removeprefix('#/$defs/')
+                    if ref in definitions and ref not in reachable:
+                        reachable[ref] = definitions[ref]
+                        pending.append(definitions[ref])
+                    pending.extend(node.values())
+                elif isinstance(node, list):
+                    pending.extend(node)
+            if reachable:
+                parameters['$defs'] = reachable
+            result.append(tool)
+            continue
         if name=='image_agent':continue
         if name not in INPUT_TOOLS:
             result.append(original);continue
@@ -357,7 +423,8 @@ def message_source_images(db, task_id, context, message_id):
 def prepare_message_content(db, task_id, context, source, observed):
     """Copy authorized completed message ranges and their authoritative original images."""
     from services.handlers.chat_input_handoff import _range
-    from services.task_execution.content_objects import ContentDocument, image_materials
+    from services.task_execution.content_objects import ContentDocument, source_images_from_message
+    from services.handlers.chat_context.image_sources import content_parts
 
     message_id = str(source.message_id)
     query = {'message_id': message_id, '_full': True, '_for_execution': True}
@@ -376,39 +443,29 @@ def prepare_message_content(db, task_id, context, source, observed):
     if (source.items or key in observed) and observed.get(key) != {k: part[k] for k in ('sha256', 'context_revision')}:
         raise ValueError('CONTENT_MESSAGE_SOURCE_UNAVAILABLE_OR_CHANGED')
     text = part['text']
-    if not source.items:
-        from services.task_execution.content_objects import source_images_from_message
+    items, ranges, gaps = [], [], ()
+    if source.items:
+        for item in source.items:
+            start, end = _range(text, {'first_line': item.first_line, 'last_line': item.last_line})
+            if ranges and start < ranges[-1][1]:
+                raise ValueError('CONTENT_MESSAGE_SOURCE_OVERLAP')
+            ranges.append((start, end))
+            items.append({'title': item.title, 'body': text[start:end]})
+        document = ContentDocument.model_validate({'title': source.title, 'items': items})
+    else:
         group = index_document(text)
         if group is None:
             raise ValueError('CONTENT_MESSAGE_SOURCE_BOUNDARIES_REQUIRED')
-        origin = _author_input(db, task_id, context, message_id)
-        images = source_images_from_message(origin)
-        from services.handlers.chat_context.image_sources import content_parts
-        question = '\n'.join(p.get('text', '') for p in content_parts(origin['content']) if p.get('type') == 'text')
-        document = bind_group(group.document, images, question, source.source_image_indices)
-        proof = {'message_id': message_id, 'content_index': part['content_index'], 'ranges': group.ranges,
-                 'sha256': part['sha256'], 'context_revision': part['context_revision']}
-        document = document.model_copy(update={'notes': json.dumps({'message_source': proof}, ensure_ascii=False)})
-        return document, images, {**proof, 'display_gaps': group.gaps}
-    items, ranges = [], []
-    for item in source.items:
-        start, end = _range(text, {'first_line': item.first_line, 'last_line': item.last_line})
-        if ranges and start < ranges[-1][1]:
-            raise ValueError('CONTENT_MESSAGE_SOURCE_OVERLAP')
-        ranges.append((start, end))
-        items.append({'title': item.title, 'body': text[start:end]})
+        document, ranges, gaps = group.document, group.ranges, group.gaps
 
-    images = message_source_images(db, task_id, context, message_id)
-    materials = image_materials(images, source.source_image_indices or ())
-    for item in items:
-        item['materials'] = materials
     proof = {'message_id': message_id, 'content_index': part['content_index'], 'ranges': ranges,
              'sha256': part['sha256'], 'context_revision': part['context_revision']}
-    document = ContentDocument.model_validate({
-        'title': source.title, 'items': items,
-        'notes': json.dumps({'message_source': proof}, ensure_ascii=False),
-    })
-    return document, images, proof
+    origin = _author_input(db, task_id, context, message_id)
+    images = source_images_from_message(origin)
+    question = '\n'.join(p.get('text', '') for p in content_parts(origin['content']) if p.get('type') == 'text')
+    document = bind_group(document, images, question, source.source_image_indices)
+    document = document.model_copy(update={'notes': json.dumps({'message_source': proof}, ensure_ascii=False)})
+    return document, images, {**proof, 'display_gaps': gaps}
 
 
 def inject_source_code(code, text):

@@ -181,7 +181,7 @@ async def test_direct_content_selection_adopts_saved_task_before_business_dispat
 @pytest.mark.asyncio
 @pytest.mark.parametrize('scenario', [
     'text-to-image', 'image-to-image', 'recorded-first', 'recorded-fifth', 'recorded-write-once', 'recorded-retired',
-    'recorded-third-output', 'new-third-output',
+    'recorded-third-output', 'new-third-output', 'recorded-quoted-output',
     'recorded-third-history', 'new-third-history',
 ])
 async def test_chat_executes_from_registration_to_page_receipt(content_db, monkeypatch, tmp_path, scenario):
@@ -240,19 +240,36 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
     history_import = scenario.endswith('-history')
     recorded_output = scenario in {'recorded-third-output', 'recorded-third-history'}
     new_output = scenario in {'new-third-output', 'new-third-history'}
-    automatic_output = recorded_output or new_output
+    quoted = scenario == 'recorded-quoted-output'
+    automatic_output = recorded_output or new_output or quoted
     followup = recorded or automatic_output
     fifth = scenario == 'recorded-fifth'
     write_once = scenario == 'recorded-write-once'
     retired = scenario == 'recorded-retired'
-    item_index = 3 if automatic_output else 2 if write_once else 5 if fifth else 1
+    item_index = 3 if recorded_output or new_output else 2 if write_once else 5 if fifth else 1
     body = '  纸品封面，保留细纹理。\n避免改变装订孔及商标。  '
     ratio = '3:4' if scenario == 'image-to-image' or new_output else '1:1'
     resolution = '2K' if new_output else '1K'
     question = '参考这张原图修改封面，只生成一张' if with_original else '帮我直接生成一张纸品封面图'
     first_document = None
     first_arguments = None
-    if recorded_output:
+    if quoted:
+        path, archive = os.getenv('CHAT_IMAGE_REFERENCE_INCIDENT'), os.getenv('CHAT_THIRD_PLAN_RECORD')
+        if not path or not archive:
+            pytest.skip('Private numbered reply and local product image required')
+        author, reply = [json.loads(line) for line in Path(path).read_text().splitlines()]
+        question = author['content'][0]['text']
+        first_output = reply['content'][0]['text']
+        later_question = '第一个方案帮我做成图片'
+        # Expected results only. The unmodified reply is streamed below.
+        output_items = [{'body': line[2:]} for line in first_output.splitlines() if line.startswith('> ')]
+        assert len(output_items) == 4
+        body = output_items[item_index-1]['body']
+        archived = json.loads((Path(archive) / 'record.json').read_text())
+        image = json.loads(archived['messages'][0]['content'])[1]
+        assert image['name'] == author['content'][1]['name']
+        original = (Path(archive) / 'original.png').read_bytes()
+    elif recorded_output:
         evidence = os.getenv('CHAT_THIRD_PLAN_RECORD')
         if not evidence:
             pytest.skip('Private third-plan conversation and original image required')
@@ -461,7 +478,8 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
             r, p, h, q = runtime_case([TextPart(text=later_question)])
             row = selection = None
         else:
-            assert saved_block['text'].count(body) == 1 and not registered_sink.text
+            assert saved_block['text'].count(body) == 1
+            assert registered_sink.text == (first_output if quoted else '')
             assert saved_block['content_delivery_final'] and registration_rounds == 1
             if automatic_output:
                 assert p.messages[-1] == {'role': 'assistant', 'content': saved_block['text']}
@@ -478,7 +496,7 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
                 artifact, saved_doc, saved_item = co.load(r.task_execution_state, selection)
                 saved = co.ContentRecord.model_validate_json(artifact.inline_text)
                 assert saved_block['content_artifact_id'] == artifact.id
-                assert saved_block['text'] == co.render(saved_doc)
+                assert saved_block['text'] == co.render(saved_doc, saved.display_gaps)
                 assert saved_item.body == body
                 if saved_item.materials:
                     assert all(m.reference.message_id == original_message and m.usage == 'input' for m in saved_item.materials)
@@ -620,7 +638,7 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
                 yield tool_chunk(co.SAVE, arguments=json.dumps(arguments))
             elif seen == 3:
                 row, = co.catalog(r.task_execution_state)
-                selection = {'artifact_id': row['artifact_id'], 'item_index': 1, 'source_image_indices': [1]}
+                selection = {'artifact_id': row['artifact_id'], 'item_index': 1}
                 artifact, selected_document, item = co.load(r.task_execution_state, ref(row))
                 assert item.body == body
                 record = co.ContentRecord.model_validate_json(artifact.inline_text)
@@ -628,6 +646,8 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
                 assert proof['message_id'] == history_message
                 assert proof['sha256'] == hashlib.sha256(first_output.encode()).hexdigest()
                 assert record.source_images[0].reference.message_id == original_message
+                assert [material.reference for material in item.materials if material.usage == 'input'] == [
+                    record.source_images[0].reference]
                 yield tool_chunk('generate_image', arguments=json.dumps({'content_source': selection}))
             else:
                 assert receipts and seen == 4

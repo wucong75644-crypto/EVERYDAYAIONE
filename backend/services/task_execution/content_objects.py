@@ -273,7 +273,7 @@ def selection_parameters(model=ContentReference):
 
 
 SCHEMA = {'type': 'function', 'function': {'name': SAVE,
-    'description': '用于修订已登记内容，或在本轮执行前登记输入。只交付新写的文稿时直接写入聊天，后台保存消息。'
+    'description': '交付可供后续选择的方案、提示词或脚本：只提交一次document，每条写title和body，页面直接展示这份原文。普通问答直接回复。'
         '已有成果直接选条目。未登记的分条正文用message_source指定原回复消息，后台定位整组原文；continue_execution=true。'
         '仅后台无法识别边界时才按已核实的完整行范围指定条目。'
         '已有历史稿件或图片时，只有用户明确开启独立制作才可用document和new_content=true交接全新内容。'
@@ -495,8 +495,6 @@ def save(runtime, call, registry, *, has_image_attachments=False, source_images=
     elif (document is not None and value.continue_execution and has_image_attachments
             and any(not item.materials for item in document.items)):
         raise TaskError(ATTACHMENT_USAGE_REQUIRED)
-    if value.continue_execution and value.message_source is None:
-        source_images = ()
     identity = message_identity(message_proof) if message_proof is not None else [str(runtime.task_id), call['id']]
     object_key = 'object-'+digest(identity)[:32]
     revision = 1
@@ -640,8 +638,9 @@ def compile_input(state, name, arguments, reference, *, allow_old=False):
             if inputs:
                 selection = selection.model_copy(update={'source_image_indices': None})
             inputs = selected
-        elif record.source_images and not inputs and not allow_old and result.get('mode') != 'text_to_image':
-            if not any(material.usage == 'analysis' for material in item.materials):
+        elif record.source_images and not inputs and not allow_old:
+            analysis = [material.reference for material in item.materials if material.usage == 'analysis']
+            if not all(image.reference in analysis for image in record.source_images):
                 raise TaskError('CONTENT_SOURCE_IMAGE_SELECTION_REQUIRED')
         mode='image_to_image' if inputs else 'text_to_image'
         if result.get('mode',mode)!=mode: raise TaskError('CONTENT_ARGUMENT_CONFLICT')

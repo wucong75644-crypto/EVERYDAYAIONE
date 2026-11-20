@@ -908,7 +908,10 @@ async def _run_loop(
             server_image_plan = content_tools.uses_server_image_plan(prepared)
             tools = [*content_tools.model_tools(
                 tools, selectable_source_images=content_objects.has_selectable_source_images(content_state),
-                server_image_plan=server_image_plan,
+                server_image_plan=server_image_plan, reuse_source=content_tools.selects_previous_item(request),
+                first_delivery=(getattr(request.context_anchor, 'base_revision', None) == 0
+                                and not content_objects.objects(content_state)
+                                and not getattr(runtime, 'task_content_groups', ())),
             ), *content_tools.SCHEMAS]
             prepared.content_output_available = not server_image_plan
         prepared.content_visible_tool_names = {tool['function']['name'] for tool in tools if 'function' in tool}
@@ -1670,6 +1673,9 @@ async def _execute_tools_impl(
                         if turn_text.strip() and (not save_value.continue_execution or save_value.show_content):
                             raise TaskError(content_objects.DRAFT_CONFLICT)
                         related_state = candidate or content_followup_state(runtime)
+                        if (save_value.document is not None and not server_image_plan
+                                and content_tools.selects_previous_item(request)):
+                            raise TaskError('CONTENT_EXECUTION_SOURCE_REQUIRED')
                         if (save_value.document is not None and save_value.continue_execution
                                 and not save_value.new_content and not server_image_plan):
                             existing = candidate is None and bool(content_objects.objects(related_state))

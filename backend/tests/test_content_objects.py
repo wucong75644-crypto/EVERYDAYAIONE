@@ -611,3 +611,83 @@ async def test_image_submission_narration_requires_receipt():
     shown, = [block['text'] for block in blocks if block['type'] == 'text']
     assert shown == totals.text == sink.text == '本轮尚未收到图片任务的受理回执。'
     h._execute_tool_calls.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_existing_item_execution_rejects_a_rewritten_new_document_before_dispatch():
+    from dataclasses import replace
+    from schemas.message import TextPart
+    from services.handlers.chat import content_tools
+
+    runtime, prepared, handler, request, row = await registered()
+    request = replace(request, content=[TextPart(text='第一个方案帮我做成图片')])
+    assert content_tools.selects_previous_item(request)
+    schema, = content_tools.model_tools([co.SCHEMA], reuse_source=True)
+    assert 'document' not in schema['function']['parameters']['properties']
+    await execute(runtime, prepared, handler, request, [call(co.SAVE, {
+        'document': {'title': '新名称', 'items': [{'title': '转写', 'body': '模型重写了已选原文'}]},
+        'new_content': True, 'continue_execution': True,
+    }, 'relabel')])
+    assert json.loads(prepared.messages[-1]['content'])['code'] == 'CONTENT_EXECUTION_SOURCE_REQUIRED'
+    assert co.catalog(runtime.task_execution_state) == [row]
+    handler._execute_tool_calls.assert_not_awaited()
+    for independent in ('画一张有第二条鱼的图片', '写四条方案，再把第二条做成图片', '只改第二条文案'):
+        assert not content_tools.selects_previous_item(replace(request, content=[TextPart(text=independent)]))
+
+
+@pytest.mark.asyncio
+async def test_author_contract_keeps_user_format_and_original_when_model_omits_optional_fields():
+    from dataclasses import replace
+    from schemas.message import TextPart, ImagePart
+    from services.adapters.types import StreamChunk
+
+    runtime, prepared, handler, request = case()
+    source = str(runtime.task_bootstrap.input_message_id)
+    request = replace(request, content=[TextPart(text='参考这张图写两条提示词，不要改变原图结构'),
+                                        ImagePart(name='产品.png', workspace_path='product.png')],
+                      context_anchor=SimpleNamespace(base_revision=0, input_message_id=source))
+    original = '正向\r\n 保留封面。\n负面\n禁止透视变形。'
+    doc = {'title': '设计', 'items': [{'title': '甲', 'body': '第一份原文。'}, {'title': '乙', 'body': original}]}
+
+    async def model(**kwargs):
+        offered = next(t['function'] for t in kwargs['tools'] if t['function']['name'] == co.SAVE)
+        assert offered['parameters']['required'] == ['document']
+        assert 'message_source' not in offered['parameters']['properties']
+        yield model_save_chunk(doc)
+        yield StreamChunk(finish_reason='tool_calls')
+
+    _, blocks, _ = await run_content_loop(runtime, prepared, handler, request, model)
+    part, = [b for b in blocks if b['type'] == 'text']
+    assert part['text'].count(original) == 1
+    row, = co.catalog(runtime.task_execution_state)
+    args, _ = co.compile_input(runtime.task_execution_state, 'generate_image', {}, ref(row, 2))
+    assert args['prompt'].encode() == original.encode() and args['mode'] == 'image_to_image'
+    assert args['references'] == [{'message_id': source, 'content_index': 1, 'role': '原图参考'}]
+    with pytest.raises(TaskError, match='CONTENT_ARGUMENT_CONFLICT'):
+        co.compile_input(runtime.task_execution_state, 'generate_image', {}, {**ref(row, 2), 'without_reference': True})
+
+
+def test_quoted_source_never_omits_an_additional_unscoped_constraint():
+    from services.task_execution.content_groups import index_document
+
+    for suffix in ('\n禁止出现水印。', '\n---\n负面提示词：禁止出现水印。', '\n> 另一个候选'):
+        assert index_document('### 方案 1\n\n> 执行原文。' + suffix) is None
+
+
+@pytest.mark.asyncio
+async def test_unresolved_product_image_cannot_be_silently_omitted_by_mode_option():
+    from dataclasses import replace
+    from schemas.message import TextPart, ImagePart
+
+    r, p, h, q = case()
+    q = replace(q, content=[TextPart(text='写两个提示词'), ImagePart(name='A.png', workspace_path='a.png'),
+                            ImagePart(name='B.png', workspace_path='b.png')],
+                context_anchor=SimpleNamespace(input_message_id=str(r.task_bootstrap.input_message_id)))
+    draft = {'title': '方案', 'items': [{'title': '一', 'body': '保持构图',
+        'materials': [{'reference': {'message_id': str(r.task_bootstrap.input_message_id), 'content_index': 1},
+                       'usage': 'analysis', 'role': '分析 A'}], 'options': {'mode': 'text_to_image'}}]}
+    await execute(r, p, h, q, [call(co.SAVE, {'document': draft}, 'save')])
+    row, = co.catalog(r.task_execution_state)
+    with pytest.raises(TaskError, match='CONTENT_SOURCE_IMAGE_SELECTION_REQUIRED'):
+        co.compile_input(r.task_execution_state, 'generate_image', {}, ref(row))
+    h._execute_tool_calls.assert_not_awaited()

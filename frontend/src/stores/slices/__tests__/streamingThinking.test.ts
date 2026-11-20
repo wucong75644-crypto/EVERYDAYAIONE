@@ -33,6 +33,17 @@ describe('streamingSlice - thinking methods', () => {
     expect(store.getState().optimisticMessages.get('conv_1')?.[0].content).toEqual([{ type: 'text', text: '' }, block]);
   });
 
+  it('promotes the identical streamed draft to the saved item once', () => {
+    const state = store.getState();
+    state.startStreaming('conv_1', 'msg_1');
+    state.appendStreamingContent('conv_1', '原文');
+    state.appendStreamingContent('conv_1', '与限制。');
+    const saved = { type: 'text' as const, content_artifact_id: 'content-1', text: '原文与限制。' };
+    state.appendContentBlock('conv_1', saved);
+    state.appendContentBlock('conv_1', saved);
+    expect(store.getState().optimisticMessages.get('conv_1')?.[0].content).toEqual([saved]);
+  });
+
   it('keeps saved content separate from later progress and deduplicates replay', () => {
     const state = store.getState();
     state.startStreaming('conv_1', 'msg_1');

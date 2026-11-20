@@ -19,7 +19,7 @@ class IndexedGroup:
 
 
 def index_document(text: str) -> IndexedGroup | None:
-    """Accept numbered peers with one explicit text fence or a validated Skill layout."""
+    """Use explicit execution blocks in numbered peers, preserving their original spans."""
     if not text or len(text.encode()) > 100000:
         return None
     fences = []
@@ -60,6 +60,24 @@ def index_document(text: str) -> IndexedGroup | None:
             if tail and not _RULE.match(tail):
                 return None
             kind = 'fence'
+        elif not contained and (quote := re.search(r'^> ([^>\s][^\r\n]*)\r?$', text[h.end():end], re.M)):
+            # A single Markdown quotation can delimit a literal just like a fence.
+            # Only accept a heading, optional labelled presentation note, and one
+            # quoted paragraph. Separate restrictions or additional quotes need
+            # the original-author/range contract to identify the complete input.
+            start, stop = (h.end() + pos for pos in quote.span(1))
+            lead = text[h.end():h.end() + quote.start()].strip()
+            tail = text[stop:end].strip()
+            if lead and not re.fullmatch(r'\*\*差异化\*\*[：:][^\r\n]+', lead):
+                return None
+            if tail:
+                rule = _RULE.match(tail)
+                if not rule:
+                    return None
+                footer = tail[rule.end():].strip()
+                if footer and (h != numbered[-1][0] or not footer.startswith('**使用建议**\n')):
+                    return None
+            kind = 'quote'
         elif not contained:
             children = [other for other in headings if h.end() < other.start() < end]
             body_sections = children[-len(REFERENCE_PROMPTS_BODY_HEADINGS):]
@@ -95,7 +113,7 @@ def bind_group(document, images, request_text, selected=None):
     # A single explicitly referenced product for image prompts has an unambiguous origin.
     # For a collection, or an explicit analysis-only request, keep the existing selection protocol.
     unique = len(images) == 1
-    analysis_only = bool(re.search(r'(?:仅|只)(?:作|供|用于|用来).{0,8}(?:分析|理解)|(?:不要|不用|不使用|不作为).{0,5}(?:原图|参考图|执行参考)', request_text))
+    analysis_only = bool(re.search(r'(?:仅|只)(?:作|供|用于|用来).{0,8}(?:分析|理解)|(?:不要(?:使用|用|带)|不用|不使用|不带)(?:该|这张|任何)?(?:原图|参考图)|不作为(?:执行|生图)参考', request_text))
     shared = selected
     if shared is None and unique and not analysis_only and re.search(
             r'参考.{0,12}(图|产品)|(?:用|沿用).{0,8}(?:原图|新图)', request_text):
@@ -107,7 +125,17 @@ def bind_group(document, images, request_text, selected=None):
                 r'(?:以|使用|沿用).{0,28}(?:上传的|原图|参考图).{0,12}(?:作为|保持|保留)', item.body):
             indices = (1,)
         materials = item.materials or tuple(image_materials(images, indices or ()))
-        if analysis_only and not item.materials and selected is None:
+        if unique and selected is None and (analysis_only or shared):
+            # Preserve explicitly different per-item assets; the known original has
+            # one host-resolved role regardless of how the author spelled its role.
+            usage = 'analysis' if analysis_only else 'input'
+            if not materials:
+                materials = tuple(image_materials(images, (1,)))
+            materials = tuple(material.model_copy(update={'usage': usage})
+                              if material.reference == images[0].reference else material
+                              for material in materials)
+        elif analysis_only and not item.materials and selected is None and re.search(
+                r'(?:都|均|全部|所有图.{0,3})(?:仅|只)', request_text):
             materials = tuple(material.model_copy(update={'usage': 'analysis'})
                               for material in image_materials(images, range(1, len(images) + 1)))
         specs = selected_source_size(item.body)
