@@ -19,13 +19,13 @@ from tests.test_task_execution_followup_reuse_postgres import (followup_db,new_t
 def content_db(dispatch_db):
     root=__import__('pathlib').Path(__file__).parents[1]
     with psycopg.connect(dispatch_db) as c:
-        for migration in ('376_agent_task_image_method_handoff','377_agent_task_content_objects','378_agent_content_followup_groups'):
+        for migration in ('347_agent_task_image_reconciliation','376_agent_task_image_method_handoff','377_agent_task_content_objects','378_agent_content_followup_groups'):
             c.execute((root/f'migrations/{migration}.sql').read_text())
     yield dispatch_db
     with psycopg.connect(dispatch_db) as c:
         c.execute("DELETE FROM conversation_turn_checkpoints WHERE state ? '_task_execution'")
         c.execute('DELETE FROM agent_task_events');c.execute('DELETE FROM agent_task_states');c.execute('SET CONSTRAINTS ALL IMMEDIATE')
-        for migration in ('378_agent_content_followup_groups','377_agent_task_content_objects','376_agent_task_image_method_handoff'):
+        for migration in ('378_agent_content_followup_groups','377_agent_task_content_objects','376_agent_task_image_method_handoff','347_agent_task_image_reconciliation'):
             c.execute((root/f'migrations/rollback/{migration}_rollback.sql').read_text())
 
 @pytest.mark.asyncio
@@ -180,7 +180,7 @@ async def test_direct_content_selection_adopts_saved_task_before_business_dispat
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('scenario', [
-    'text-to-image', 'image-to-image', 'recorded-first', 'recorded-fifth', 'recorded-write-once', 'recorded-retired',
+    'text-to-image', 'image-to-image', 'inline-text-to-image', 'inline-image-to-image', 'inline-resume-before-reserve', 'inline-resume-after-acceptance', 'recorded-first', 'recorded-fifth', 'recorded-write-once', 'recorded-retired',
     'recorded-third-output', 'new-third-output', 'recorded-quoted-output',
     'recorded-third-history', 'new-third-history',
 ])
@@ -235,7 +235,10 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
     monkeypatch.setattr('api.deps.get_task_limit_service', AsyncMock(return_value=limiter))
     monkeypatch.setattr(FileExecutor, 'get_cdn_url', lambda self, path: 'https://local.invalid/' + path)
 
-    with_original = scenario != 'text-to-image'
+    inline = scenario.startswith('inline-')
+    interrupted = scenario.startswith('inline-resume-')
+    crashed = False
+    with_original = scenario not in {'text-to-image', 'inline-text-to-image'} and not interrupted
     recorded = scenario.startswith('recorded-')
     history_import = scenario.endswith('-history')
     recorded_output = scenario in {'recorded-third-output', 'recorded-third-history'}
@@ -248,7 +251,7 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
     retired = scenario == 'recorded-retired'
     item_index = 3 if recorded_output or new_output else 2 if write_once else 5 if fifth else 1
     body = '  纸品封面，保留细纹理。\n避免改变装订孔及商标。  '
-    ratio = '3:4' if scenario == 'image-to-image' or new_output else '1:1'
+    ratio = '3:4' if scenario in {'image-to-image', 'inline-image-to-image'} or new_output else '1:1'
     resolution = '2K' if new_output else '1K'
     question = '参考这张原图修改封面，只生成一张' if with_original else '帮我直接生成一张纸品封面图'
     first_document = None
@@ -371,7 +374,12 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
     file_path = 'original/product.png'
     if with_original:
         source_name = 'product.png'
-        if not automatic_output:
+        if scenario in {'image-to-image', 'inline-image-to-image'}:
+            from io import BytesIO
+            fixture = BytesIO()
+            Image.new('RGB', (1254, 1254), 'white').save(fixture, format='PNG')
+            original = fixture.getvalue()
+        elif not automatic_output:
             evidence = os.getenv('REAL_INPUT_RETEST_DIR') if fifth or write_once else os.getenv('CHAT_CONTENT_DUPLICATE_RECORD')
             if not evidence:
                 pytest.skip('Original image for private replay is unavailable')
@@ -396,12 +404,22 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
         connection.execute("UPDATE messages SET status='completed', context_revision=0, turn_id=%s, content=%s WHERE id=%s",
             (f['turn'], json.dumps([p.model_dump(mode='json', exclude_none=True) for p in parts]), f['message']))
 
+    class RestartTest(Exception):
+        pass
+
     async def checkpoint(point, payload):
+        nonlocal crashed
         with connect(f) as connection:
             if '_task_execution' in payload:
-                return save(connection, f, payload, expected=payload['_task_execution_expected_revision'])
-            return connection.execute('SELECT save_generation_checkpoint(%s,%s,%s,%s)',
-                (f['task'], f['token'], point.value, Jsonb({**payload, 'safe_point': point.value}))).fetchone()[0]
+                result = save(connection, f, payload, expected=payload['_task_execution_expected_revision'])
+            else:
+                result = connection.execute('SELECT save_generation_checkpoint(%s,%s,%s,%s)',
+                    (f['task'], f['token'], point.value, Jsonb({**payload, 'safe_point': point.value}))).fetchone()[0]
+        if scenario == 'inline-resume-before-reserve' and payload.get('_inline_media_action') and not crashed:
+            assert result['outcome'] == 'saved' and not payload['_task_execution']['operations']
+            crashed = True
+            raise RestartTest
+        return result
 
     def runtime_case(request_parts):
         r, p, h, q = case(checkpoint)
@@ -563,6 +581,7 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
     receipts = []
 
     async def dispatch(calls, *args, task_image_operations, **kwargs):
+        nonlocal crashed
         assert len(calls) == 1
         raw = calls[0]
         native = json.loads(raw['arguments'])
@@ -575,6 +594,16 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
             assert raw['id'].endswith(':continued') != history_import
         parsed = ToolCall(raw['id'], raw['name'], native)
         binding = task_image_operations.bindings[raw['id']]
+        if kwargs.get('recovery_only'):
+            assert scenario == 'inline-resume-after-acceptance' and crashed
+            context = replace(p.execution_context, call_id=parsed.call_id)
+            actor = SimpleNamespace(_actor_enabled=True, _actor_invocation_store=object(),
+                                    _actor_turn_id=f['turn'], _actor_execution_token=f['token'])
+            lifecycle = task_image_operations.lifecycle(actor, context, parsed.call_id, recovery_only=True)
+            replay = await lifecycle.replay(parsed, context, ToolPolicy(store.registry).decide(parsed.name, context, native))
+            assert replay.metadata.get('reconciled') and replay.execution.replayed
+            receipts.append(replay.metadata)
+            return [(raw, replay, False, '原任务已受理')]
         result = await store.begin(r.task_execution_state, step_id=binding.step_id, effect_key=binding.effect_key,
                                    effect_version=binding.effect_version, call=parsed)
         assert result.outcome == 'execute'
@@ -593,6 +622,10 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
                     await ImageHandler(scoped).accept_chat_image(owner, {**native, 'prompt': '不完整'})
             result_from_tool = await MediaToolMixin._generate_image(owner, native)
             receipt = result_from_tool.metadata
+            if scenario == 'inline-resume-after-acceptance' and not crashed:
+                assert receipt['accepted'] is True
+                crashed = True
+                raise RestartTest
             repeated = await ImageHandler(scoped).accept_chat_image(owner, native)
         finally:
             _dispatch_call_id.reset(token)
@@ -655,12 +688,18 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
         elif followup:
             assert receipts and seen == 1, 'A checked selection should resume before asking the model again'
             yield StreamChunk(content='图片任务已受理。')
+        elif inline:
+            if seen == 1:
+                offered = next(tool['function']['parameters'] for tool in kwargs['tools']
+                               if tool['function']['name'] == 'generate_image')
+                assert 'draft' in offered['properties']
+                assert offered['$defs']
+                yield tool_chunk('generate_image', arguments=json.dumps({'draft': doc['items'][0]}, ensure_ascii=False))
+            else:
+                assert receipts and seen == 2, kwargs['messages'][-4:]
+                yield StreamChunk(content='图片任务已受理。')
         elif seen == 1:
             args = {'document':copy.deepcopy(doc),'continue_execution':True}
-            if scenario == 'image-to-image':
-                # The live request supplies the original; the model supplies only the authored text.
-                for item in args['document']['items']:
-                    item.pop('materials', None)
             yield StreamChunk(tool_calls=[ToolCallDelta(index=0,id='save',name=co.SAVE,
                                                         arguments_delta=json.dumps(args, ensure_ascii=False))])
         elif seen == 2:
@@ -674,8 +713,38 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
             yield StreamChunk(content='图片任务已受理。')
 
     try:
-        sink, blocks, _ = await run_content_loop(r, p, h, q, model)
-        assert seen == (4 if history_import else 1 if followup else 3) and len(receipts) == 1, blocks
+        if interrupted:
+            with pytest.raises(RestartTest):
+                await run_content_loop(r, p, h, q, model)
+            assert crashed and seen == 1 and not receipts
+            with psycopg.connect(content_db) as connection:
+                restored = connection.execute('SELECT state FROM conversation_turn_checkpoints WHERE task_id=%s',
+                    (f['task'],)).fetchone()[0]
+            r, p, h, q = runtime_case(parts)
+            r.checkpoint_base = copy.deepcopy(restored)
+            r.task_execution_state = TaskState.model_validate(restored['_task_execution'])
+            r.committed_task_execution_revision = r.task_execution_state.revision
+            p.messages = copy.deepcopy(restored['messages'])
+            h.db = scoped
+            h._actor_runtime = r
+            r.task_image_resource_resolver = create_resolver(h, q, p.execution_context)
+            r.task_operation_store = store
+            h._execute_tool_calls.side_effect = dispatch
+            monkeypatch.setattr(settings, 'chat_inline_image_enabled', False)
+        else:
+            restored = {}
+        sink, blocks, _ = await run_content_loop(r, p, h, q, model, blocks=copy.deepcopy(restored.get('content_blocks', [])))
+        assert seen == (4 if history_import else 1 if followup else 2 if inline else 3) and len(receipts) == 1, blocks
+        if inline:
+            from services.task_execution.inline_image_action import read_record
+            from services.task_execution.pending_batch import pending_calls
+            record = read_record(r)
+            saved, = co.objects(r.task_execution_state)
+            assert saved.id == record.reference.artifact_id and saved.source_call_id == record.save_id
+            assert not pending_calls(p.messages)[0]
+            external_calls = [c for msg in p.messages for c in msg.get('tool_calls') or []]
+            assert [item['function']['name'] for item in external_calls] == ['generate_image']
+            assert json.loads(external_calls[0]['function']['arguments']) == {'draft': doc['items'][0]}
         assert body not in sink.text and not any(body in block.get('text','') for block in blocks)
         receipt = receipts[0]
         assert receipt['accepted'] is True and receipt['completed'] is False
@@ -753,6 +822,11 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
             assert prompt == body and metadata['request_hash'] == snapshot['request_hash']
             assert connection.execute('SELECT count(*) FROM credit_transactions WHERE task_id=%s',
                 (receipt['task_id'],)).fetchone()[0] == 1
+            if inline:
+                assert connection.execute(
+                    "SELECT count(*) FROM tasks WHERE type='image' AND user_id=%s",
+                    (f['user'],),
+                ).fetchone()[0] == 1
     finally:
         database.pool.close()
 
@@ -1162,3 +1236,88 @@ async def test_real_remaining_plans_keep_original_and_new_upload_can_replace_it(
     finally:
         await client._client.aclose()
         database.pool.close()
+
+
+@pytest.mark.asyncio
+async def test_tool_argument_failure_checkpoint_survives_actor_replacement(content_db, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from uuid import uuid4
+
+    from psycopg.types.json import Jsonb
+    from services.conversation_commands import SafePoint
+    from services.handlers.chat import tool_argument_repairs as repairs
+    from services.handlers.chat.execution_engine import _run_loop
+    from services.handlers.chat.execution_sink import CollectingExecutionSink
+    from services.handlers.chat.stream_session import StreamTotals
+    from services.task_execution.pending_batch import pending_calls
+    from tests.test_chat_tool_argument_repairs import error_code, setup
+
+    facts = seed(content_db)
+    monkeypatch.setattr('services.handlers.chat.execution_engine.compact_tool_context', AsyncMock())
+
+    class Interrupted(Exception):
+        pass
+
+    crash_at_next_validated_batch = False
+
+    async def checkpoint(point, payload):
+        with connect(facts) as connection:
+            result = connection.execute('SELECT save_generation_checkpoint(%s,%s,%s,%s)',
+                (facts['task'], facts['token'], point.value, Jsonb(payload))).fetchone()[0]
+        assert result['outcome'] == 'saved'
+        if crash_at_next_validated_batch and point == SafePoint.BEFORE_TOOL:
+            raise Interrupted
+        return result
+
+    def owner():
+        runtime, prepared, handler, request = setup(checkpoint)
+        runtime.task_id, runtime.turn_id, runtime.conversation_id = facts['task'], facts['turn'], facts['conv']
+        runtime.task_bootstrap = None
+        request = replace(request, task_id=facts['task'], conversation_id=facts['conv'], user_id=facts['user'],
+                          context_anchor=SimpleNamespace(input_message_id=UUID(facts['message'])))
+        return runtime, prepared, handler, request
+
+    runtime, prepared, handler, request = owner()
+    for number in range(2):
+        await execute(runtime, prepared, handler, request, [call('web_search', {f'invalid{number}': True},
+                                                                 f'miss-{number}')])
+    crash_at_next_validated_batch = True
+    final = call('web_search', {'query': 42}, 'last-miss')
+    with pytest.raises(Interrupted):
+        await execute(runtime, prepared, handler, request, [final])
+    handler._execute_tool_calls.assert_not_awaited()
+
+    previous_token = facts['token']
+    facts['token'] = str(uuid4())
+    with psycopg.connect(content_db) as connection:
+        connection.execute('UPDATE tasks SET execution_token=%s WHERE id=%s', (facts['token'], facts['task']))
+    with connect(facts) as connection:
+        lost = connection.execute('SELECT save_generation_checkpoint(%s,%s,%s,%s)',
+            (facts['task'], previous_token, 'before_model', Jsonb({'messages': []}))).fetchone()[0]
+        assert lost['outcome'] == 'ownership_lost'
+        loaded = connection.execute('SELECT load_generation_checkpoint(%s,%s)',
+            (facts['task'], facts['token'])).fetchone()[0]
+        assert loaded['outcome'] == 'loaded' and loaded['safe_point'] == 'before_tool'
+        saved = loaded['state']
+        assert error_code(saved['messages'], 'last-miss') == repairs.EXHAUSTED
+        assert not pending_calls(saved['messages'])[0]
+
+    crash_at_next_validated_batch = False
+    restarted, prepared, handler, request = owner()
+    restarted.checkpoint_base = saved
+    prepared.messages = copy.deepcopy(saved['messages'])
+    resumed_blocks = copy.deepcopy(saved['content_blocks'])
+    sample = AsyncMock(side_effect=AssertionError('exhausted target must not sample again'))
+    monkeypatch.setattr('services.handlers.chat.execution_engine._read_turn', sample)
+    await _run_loop(
+        prepared=prepared, runtime=restarted, request=request, handler=handler,
+        sink=CollectingExecutionSink(), totals=StreamTotals(), blocks=resumed_blocks,
+        cancellation_event=restarted.cancellation_event,
+    )
+    assert resumed_blocks[-1]['text'] == repairs.STOP
+    sample.assert_not_awaited()
+    assert error_code(prepared.messages, 'last-miss') == repairs.EXHAUSTED
+    assert repairs.stopped(restarted, request)
+    assert list(repairs.read(restarted).counts.values()) == [3]
+    handler._execute_tool_calls.assert_not_awaited()

@@ -1,5 +1,6 @@
 """T5: 真实 RetryContext + Gateway attempt 的失败、取消、用量安全边界。"""
 import asyncio
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock
 
@@ -11,7 +12,7 @@ from core.exceptions import InsufficientCreditsError, ValidationError
 from schemas.message import GenerationType, TextPart
 from services.adapters.types import ModelProvider, ProviderUnavailableError, StreamChunk, ToolCallDelta
 from services.adapters.kie.client import KieAPIError, KieRateLimitError, KieInsufficientBalanceError
-from services.adapters.dashscope.chat_adapter import DashScopeAPIError
+from services.adapters.dashscope.chat_adapter import DashScopeAPIError, DashScopeChatAdapter
 from services.adapters.openrouter.chat_adapter import OpenRouterAPIError
 from services.adapters.google.models import GoogleAPIError, GoogleRateLimitError, GoogleContentFilterError
 from services.handlers.chat_handler import ChatHandler
@@ -37,12 +38,13 @@ def adapter(*steps):
     return SimpleNamespace(stream_chat=Mock(side_effect=stream), close=AsyncMock())
 
 
-def setup(*adapters, smart=True, cancel=None, context=None, on_retry=None):
+def setup(*adapters, smart=True, cancel=None, context=None, on_retry=None, models=(A, B)):
+    primary, fallback = models
     handler = ChatHandler(MagicMock())
     handler._send_retry_notification = AsyncMock()
     handler._record_breaker_result = Mock()
     handler._route_retry = AsyncMock(return_value=RoutingDecision(
-        generation_type=GenerationType.CHAT, recommended_model=B,
+        generation_type=GenerationType.CHAT, recommended_model=fallback,
     ))
     policy = handler._build_model_retry_policy(
         params={"_is_smart_mode": smart}, content=[TextPart(text="hello")],
@@ -53,7 +55,7 @@ def setup(*adapters, smart=True, cancel=None, context=None, on_retry=None):
     factory = Mock(side_effect=adapters)
     gateway = ModelGateway(adapter_factory=factory, event_publisher=SimpleNamespace(publish=events.append))
     session = gateway.open_chat(ModelCallRequest(
-        model_id=A, task_id="task", request_id="request", retry_policy=policy,
+        model_id=primary, task_id="task", request_id="request", retry_policy=policy,
         timeout=1.0, cancel_token=cancel,
     ))
     return session, handler, factory, events
@@ -103,6 +105,41 @@ async def test_network_rate_limit_and_provider_failures_retry(error):
     assert {e.request_index for e in events} == {0}
     failed_breaker = [c for c in handler._record_breaker_result.call_args_list if not c.kwargs["success"]]
     assert len(failed_breaker) == (0 if isinstance(error, ProviderUnavailableError) else 1)
+
+
+@pytest.mark.asyncio
+async def test_hosted_search_failure_preserves_filtered_local_tool_for_retry():
+    requests = []
+
+    def transport(request):
+        requests.append((request.url.path, json.loads(request.content)))
+        if request.url.path.endswith("/responses"):
+            raise httpx.ReadError("provider disconnected before output", request=request)
+        chunk = {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}
+        return httpx.Response(200, text=f"data: {json.dumps(chunk)}\n\ndata: [DONE]\n\n")
+
+    models = (B, "deepseek-v4-pro")
+    adapters = [DashScopeChatAdapter("test", model) for model in models]
+    for instance in adapters:
+        instance._client = httpx.AsyncClient(
+            base_url="https://example.com/v1", transport=httpx.MockTransport(transport),
+        )
+    session, _, _, _ = setup(*adapters, models=models)
+    search = {"type": "function", "function": {
+        "name": "web_search", "parameters": {"type": "object", "properties": {"query": {"type": "string"}}},
+    }}
+    try:
+        chunks = [chunk async for chunk in session.stream_chat(
+            messages=[{"role": "user", "content": "查最新信息"}],
+            tools=[search], enable_builtin_tools=True, thinking_mode="disabled",
+        )]
+    finally:
+        await session.close()
+
+    assert any(chunk.content == "ok" for chunk in chunks)
+    assert [path for path, _ in requests] == ["/v1/responses", "/v1/chat/completions"]
+    assert requests[0][1]["tools"] == [{"type": "web_search"}]
+    assert requests[1][1]["tools"] == [search]
 
 
 @pytest.mark.asyncio

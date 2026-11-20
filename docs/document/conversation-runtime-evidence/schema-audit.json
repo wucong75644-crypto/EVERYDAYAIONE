@@ -1,0 +1,1997 @@
+{
+  "source_commit": "c0a8defaef1b7aea5d565b60d1e47d0fcbd4297e",
+  "comparison_base": "4ca37b6703aef49147bec23a533ebb2acc769cc0",
+  "scope": "local ref reachability, explicit required/property consistency, tested DashScope transformation; not a full JSON Schema conformance check",
+  "entries": [
+    {
+      "variant": "catalog",
+      "name": "erp_info_query",
+      "bytes": 1553,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "catalog",
+      "name": "erp_product_query",
+      "bytes": 4553,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "catalog",
+      "name": "erp_trade_query",
+      "bytes": 4728,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "catalog",
+      "name": "erp_aftersales_query",
+      "bytes": 2309,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "catalog",
+      "name": "erp_warehouse_query",
+      "bytes": 4394,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "catalog",
+      "name": "erp_purchase_query",
+      "bytes": 4570,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "catalog",
+      "name": "erp_taobao_query",
+      "bytes": 1077,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "catalog",
+      "name": "erp_execute",
+      "bytes": 7876,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "catalog",
+      "name": "local_data",
+      "bytes": 4420,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "catalog",
+      "name": "local_product_stats",
+      "bytes": 898,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "catalog",
+      "name": "local_stock_query",
+      "bytes": 845,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "catalog",
+      "name": "local_product_identify",
+      "bytes": 957,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "catalog",
+      "name": "local_platform_map_query",
+      "bytes": 810,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "catalog",
+      "name": "local_compare_stats",
+      "bytes": 2941,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "catalog",
+      "name": "local_shop_list",
+      "bytes": 736,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "catalog",
+      "name": "local_warehouse_list",
+      "bytes": 623,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "catalog",
+      "name": "local_supplier_list",
+      "bytes": 808,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "catalog",
+      "name": "trigger_erp_sync",
+      "bytes": 900,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "catalog",
+      "name": "social_crawler",
+      "bytes": 1297,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "catalog",
+      "name": "file_search",
+      "bytes": 1533,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "catalog",
+      "name": "file_analyze",
+      "bytes": 2096,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "catalog",
+      "name": "file_delete",
+      "bytes": 978,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "catalog",
+      "name": "restore_file",
+      "bytes": 601,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "catalog",
+      "name": "code_execute",
+      "bytes": 6057,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "catalog",
+      "name": "erp_agent",
+      "bytes": 5962,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "catalog",
+      "name": "erp_analyze",
+      "bytes": 869,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "catalog",
+      "name": "erp_api_search",
+      "bytes": 643,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "catalog",
+      "name": "search_knowledge",
+      "bytes": 813,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "catalog",
+      "name": "web_search",
+      "bytes": 999,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "catalog",
+      "name": "plan_ecommerce_images",
+      "bytes": 2964,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "catalog",
+      "name": "generate_image",
+      "bytes": 6746,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "catalog",
+      "name": "agent_reach",
+      "bytes": 5387,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "catalog",
+      "name": "generate_video",
+      "bytes": 649,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "catalog",
+      "name": "image_agent",
+      "bytes": 1419,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "catalog",
+      "name": "manage_scheduled_task",
+      "bytes": 6351,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "catalog",
+      "name": "fetch_all_pages",
+      "bytes": 1296,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "catalog",
+      "name": "list_personal_skills_for_edit",
+      "bytes": 1209,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "catalog",
+      "name": "get_personal_skill_for_edit",
+      "bytes": 1150,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "catalog",
+      "name": "prepare_skill_draft",
+      "bytes": 4772,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "catalog",
+      "name": "knowledge_outline",
+      "bytes": 538,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "catalog",
+      "name": "knowledge_search",
+      "bytes": 976,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "catalog",
+      "name": "knowledge_read",
+      "bytes": 987,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "catalog",
+      "name": "knowledge_follow_reference",
+      "bytes": 364,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "catalog",
+      "name": "knowledge_discover",
+      "bytes": 541,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "catalog",
+      "name": "mcp_test_lookup",
+      "bytes": 301,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "controls",
+      "name": "update_task_plan",
+      "bytes": 2755,
+      "refs": 1,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "controls",
+      "name": "save_task_text",
+      "bytes": 657,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "controls",
+      "name": "complete_task_step",
+      "bytes": 1125,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "controls",
+      "name": "find_task_text",
+      "bytes": 622,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "controls",
+      "name": "reuse_task_text",
+      "bytes": 1004,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "controls",
+      "name": "reuse_task_image",
+      "bytes": 814,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "controls",
+      "name": "import_task_source",
+      "bytes": 1431,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "controls",
+      "name": "read_task_text",
+      "bytes": 597,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "controls",
+      "name": "bind_task_image_sources",
+      "bytes": 1752,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "controls",
+      "name": "review_task_plan",
+      "bytes": 1004,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "controls",
+      "name": "import_task_result",
+      "bytes": 1199,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "controls",
+      "name": "read_task_result",
+      "bytes": 758,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "controls",
+      "name": "read_task_write_result",
+      "bytes": 761,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "controls",
+      "name": "import_task_receipt",
+      "bytes": 833,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "controls",
+      "name": "read_task_scheduled_result",
+      "bytes": 719,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "controls",
+      "name": "read_task_code_result",
+      "bytes": 657,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "controls",
+      "name": "import_task_code_result",
+      "bytes": 875,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "extra",
+      "name": "find_available_tools",
+      "bytes": 413,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "extra",
+      "name": "read_conversation_text",
+      "bytes": 647,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "extra",
+      "name": "save_task_text",
+      "bytes": 10274,
+      "refs": 9,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "extra",
+      "name": "resume_task_execution",
+      "bytes": 582,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "extra",
+      "name": "update_task_plan",
+      "bytes": 1897,
+      "refs": 1,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "extra",
+      "name": "start_task_execution",
+      "bytes": 3168,
+      "refs": 1,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "extra",
+      "name": "activate_skill",
+      "bytes": 454,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "extra",
+      "name": "deactivate_skill",
+      "bytes": 391,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "first",
+      "name": "erp_info_query",
+      "bytes": 1553,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "first",
+      "name": "erp_product_query",
+      "bytes": 4553,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "first",
+      "name": "erp_trade_query",
+      "bytes": 4728,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "first",
+      "name": "erp_aftersales_query",
+      "bytes": 2309,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "first",
+      "name": "erp_warehouse_query",
+      "bytes": 4394,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "first",
+      "name": "erp_purchase_query",
+      "bytes": 4570,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "first",
+      "name": "erp_taobao_query",
+      "bytes": 1077,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "first",
+      "name": "erp_execute",
+      "bytes": 7876,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "first",
+      "name": "local_data",
+      "bytes": 4420,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "first",
+      "name": "local_product_stats",
+      "bytes": 898,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "first",
+      "name": "local_stock_query",
+      "bytes": 845,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "first",
+      "name": "local_product_identify",
+      "bytes": 957,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "first",
+      "name": "local_platform_map_query",
+      "bytes": 810,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "first",
+      "name": "local_compare_stats",
+      "bytes": 2941,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "first",
+      "name": "local_shop_list",
+      "bytes": 736,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "first",
+      "name": "local_warehouse_list",
+      "bytes": 623,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "first",
+      "name": "local_supplier_list",
+      "bytes": 808,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "first",
+      "name": "trigger_erp_sync",
+      "bytes": 900,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "first",
+      "name": "social_crawler",
+      "bytes": 1297,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "first",
+      "name": "file_search",
+      "bytes": 1533,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "first",
+      "name": "file_analyze",
+      "bytes": 2096,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "first",
+      "name": "file_delete",
+      "bytes": 978,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "first",
+      "name": "restore_file",
+      "bytes": 601,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "first",
+      "name": "code_execute",
+      "bytes": 6566,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "first",
+      "name": "erp_agent",
+      "bytes": 5962,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "first",
+      "name": "erp_analyze",
+      "bytes": 869,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "first",
+      "name": "erp_api_search",
+      "bytes": 643,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "first",
+      "name": "search_knowledge",
+      "bytes": 813,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "first",
+      "name": "web_search",
+      "bytes": 999,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "first",
+      "name": "plan_ecommerce_images",
+      "bytes": 2964,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "first",
+      "name": "generate_image",
+      "bytes": 1577,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "first",
+      "name": "agent_reach",
+      "bytes": 5387,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "first",
+      "name": "generate_video",
+      "bytes": 829,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "first",
+      "name": "manage_scheduled_task",
+      "bytes": 6351,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "first",
+      "name": "fetch_all_pages",
+      "bytes": 1296,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "first",
+      "name": "list_personal_skills_for_edit",
+      "bytes": 1209,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "first",
+      "name": "get_personal_skill_for_edit",
+      "bytes": 1150,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "first",
+      "name": "prepare_skill_draft",
+      "bytes": 4772,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "first",
+      "name": "knowledge_outline",
+      "bytes": 538,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "first",
+      "name": "knowledge_search",
+      "bytes": 976,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "first",
+      "name": "knowledge_read",
+      "bytes": 987,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "first",
+      "name": "knowledge_follow_reference",
+      "bytes": 364,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "first",
+      "name": "knowledge_discover",
+      "bytes": 541,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "first",
+      "name": "mcp_test_lookup",
+      "bytes": 301,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "first",
+      "name": "save_task_text",
+      "bytes": 4090,
+      "refs": 3,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "reuse",
+      "name": "erp_info_query",
+      "bytes": 1553,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "reuse",
+      "name": "erp_product_query",
+      "bytes": 4553,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "reuse",
+      "name": "erp_trade_query",
+      "bytes": 4728,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "reuse",
+      "name": "erp_aftersales_query",
+      "bytes": 2309,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "reuse",
+      "name": "erp_warehouse_query",
+      "bytes": 4394,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "reuse",
+      "name": "erp_purchase_query",
+      "bytes": 4570,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "reuse",
+      "name": "erp_taobao_query",
+      "bytes": 1077,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "reuse",
+      "name": "erp_execute",
+      "bytes": 7876,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "reuse",
+      "name": "local_data",
+      "bytes": 4420,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "reuse",
+      "name": "local_product_stats",
+      "bytes": 898,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "reuse",
+      "name": "local_stock_query",
+      "bytes": 845,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "reuse",
+      "name": "local_product_identify",
+      "bytes": 957,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "reuse",
+      "name": "local_platform_map_query",
+      "bytes": 810,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "reuse",
+      "name": "local_compare_stats",
+      "bytes": 2941,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "reuse",
+      "name": "local_shop_list",
+      "bytes": 736,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "reuse",
+      "name": "local_warehouse_list",
+      "bytes": 623,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "reuse",
+      "name": "local_supplier_list",
+      "bytes": 808,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "reuse",
+      "name": "trigger_erp_sync",
+      "bytes": 900,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "reuse",
+      "name": "social_crawler",
+      "bytes": 1297,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "reuse",
+      "name": "file_search",
+      "bytes": 1533,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "reuse",
+      "name": "file_analyze",
+      "bytes": 2096,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "reuse",
+      "name": "file_delete",
+      "bytes": 978,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "reuse",
+      "name": "restore_file",
+      "bytes": 601,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "reuse",
+      "name": "code_execute",
+      "bytes": 6566,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "reuse",
+      "name": "erp_agent",
+      "bytes": 5962,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "reuse",
+      "name": "erp_analyze",
+      "bytes": 869,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "reuse",
+      "name": "erp_api_search",
+      "bytes": 643,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "reuse",
+      "name": "search_knowledge",
+      "bytes": 813,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "reuse",
+      "name": "web_search",
+      "bytes": 999,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "reuse",
+      "name": "plan_ecommerce_images",
+      "bytes": 2964,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "reuse",
+      "name": "generate_image",
+      "bytes": 1577,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "reuse",
+      "name": "agent_reach",
+      "bytes": 5387,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "reuse",
+      "name": "generate_video",
+      "bytes": 829,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "reuse",
+      "name": "manage_scheduled_task",
+      "bytes": 6351,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "reuse",
+      "name": "fetch_all_pages",
+      "bytes": 1296,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "reuse",
+      "name": "list_personal_skills_for_edit",
+      "bytes": 1209,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "reuse",
+      "name": "get_personal_skill_for_edit",
+      "bytes": 1150,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "reuse",
+      "name": "prepare_skill_draft",
+      "bytes": 4772,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "reuse",
+      "name": "knowledge_outline",
+      "bytes": 538,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "reuse",
+      "name": "knowledge_search",
+      "bytes": 976,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "reuse",
+      "name": "knowledge_read",
+      "bytes": 987,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "reuse",
+      "name": "knowledge_follow_reference",
+      "bytes": 364,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "reuse",
+      "name": "knowledge_discover",
+      "bytes": 541,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "reuse",
+      "name": "mcp_test_lookup",
+      "bytes": 301,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "reuse",
+      "name": "save_task_text",
+      "bytes": 5197,
+      "refs": 5,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "source_images",
+      "name": "erp_info_query",
+      "bytes": 1553,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "source_images",
+      "name": "erp_product_query",
+      "bytes": 4553,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "source_images",
+      "name": "erp_trade_query",
+      "bytes": 4728,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "source_images",
+      "name": "erp_aftersales_query",
+      "bytes": 2309,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "source_images",
+      "name": "erp_warehouse_query",
+      "bytes": 4394,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "source_images",
+      "name": "erp_purchase_query",
+      "bytes": 4570,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "source_images",
+      "name": "erp_taobao_query",
+      "bytes": 1077,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "source_images",
+      "name": "erp_execute",
+      "bytes": 7876,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "source_images",
+      "name": "local_data",
+      "bytes": 4420,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "source_images",
+      "name": "local_product_stats",
+      "bytes": 898,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "source_images",
+      "name": "local_stock_query",
+      "bytes": 845,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "source_images",
+      "name": "local_product_identify",
+      "bytes": 957,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "source_images",
+      "name": "local_platform_map_query",
+      "bytes": 810,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "source_images",
+      "name": "local_compare_stats",
+      "bytes": 2941,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "source_images",
+      "name": "local_shop_list",
+      "bytes": 736,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "source_images",
+      "name": "local_warehouse_list",
+      "bytes": 623,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "source_images",
+      "name": "local_supplier_list",
+      "bytes": 808,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "source_images",
+      "name": "trigger_erp_sync",
+      "bytes": 900,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "source_images",
+      "name": "social_crawler",
+      "bytes": 1297,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "source_images",
+      "name": "file_search",
+      "bytes": 1533,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "source_images",
+      "name": "file_analyze",
+      "bytes": 2096,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "source_images",
+      "name": "file_delete",
+      "bytes": 978,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "source_images",
+      "name": "restore_file",
+      "bytes": 601,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "source_images",
+      "name": "code_execute",
+      "bytes": 6566,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "source_images",
+      "name": "erp_agent",
+      "bytes": 5962,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "source_images",
+      "name": "erp_analyze",
+      "bytes": 869,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "source_images",
+      "name": "erp_api_search",
+      "bytes": 643,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "source_images",
+      "name": "search_knowledge",
+      "bytes": 813,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "source_images",
+      "name": "web_search",
+      "bytes": 999,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "source_images",
+      "name": "plan_ecommerce_images",
+      "bytes": 2964,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "source_images",
+      "name": "generate_image",
+      "bytes": 2116,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "source_images",
+      "name": "agent_reach",
+      "bytes": 5387,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "source_images",
+      "name": "generate_video",
+      "bytes": 829,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "source_images",
+      "name": "manage_scheduled_task",
+      "bytes": 6351,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "source_images",
+      "name": "fetch_all_pages",
+      "bytes": 1296,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "source_images",
+      "name": "list_personal_skills_for_edit",
+      "bytes": 1209,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "source_images",
+      "name": "get_personal_skill_for_edit",
+      "bytes": 1150,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "source_images",
+      "name": "prepare_skill_draft",
+      "bytes": 4772,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "source_images",
+      "name": "knowledge_outline",
+      "bytes": 538,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "source_images",
+      "name": "knowledge_search",
+      "bytes": 976,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "source_images",
+      "name": "knowledge_read",
+      "bytes": 987,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "source_images",
+      "name": "knowledge_follow_reference",
+      "bytes": 364,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "source_images",
+      "name": "knowledge_discover",
+      "bytes": 541,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "source_images",
+      "name": "mcp_test_lookup",
+      "bytes": 301,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "server_plan",
+      "name": "erp_info_query",
+      "bytes": 1553,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "server_plan",
+      "name": "erp_product_query",
+      "bytes": 4553,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "server_plan",
+      "name": "erp_trade_query",
+      "bytes": 4728,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "server_plan",
+      "name": "erp_aftersales_query",
+      "bytes": 2309,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "server_plan",
+      "name": "erp_warehouse_query",
+      "bytes": 4394,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "server_plan",
+      "name": "erp_purchase_query",
+      "bytes": 4570,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "server_plan",
+      "name": "erp_taobao_query",
+      "bytes": 1077,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "server_plan",
+      "name": "erp_execute",
+      "bytes": 7876,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "server_plan",
+      "name": "local_data",
+      "bytes": 4420,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "server_plan",
+      "name": "local_product_stats",
+      "bytes": 898,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "server_plan",
+      "name": "local_stock_query",
+      "bytes": 845,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "server_plan",
+      "name": "local_product_identify",
+      "bytes": 957,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "server_plan",
+      "name": "local_platform_map_query",
+      "bytes": 810,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "server_plan",
+      "name": "local_compare_stats",
+      "bytes": 2941,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "server_plan",
+      "name": "local_shop_list",
+      "bytes": 736,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "server_plan",
+      "name": "local_warehouse_list",
+      "bytes": 623,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "server_plan",
+      "name": "local_supplier_list",
+      "bytes": 808,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "server_plan",
+      "name": "trigger_erp_sync",
+      "bytes": 900,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "server_plan",
+      "name": "social_crawler",
+      "bytes": 1297,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "server_plan",
+      "name": "file_search",
+      "bytes": 1533,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "server_plan",
+      "name": "file_analyze",
+      "bytes": 2096,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "server_plan",
+      "name": "file_delete",
+      "bytes": 978,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "server_plan",
+      "name": "restore_file",
+      "bytes": 601,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "server_plan",
+      "name": "code_execute",
+      "bytes": 6566,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "server_plan",
+      "name": "erp_agent",
+      "bytes": 5962,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "server_plan",
+      "name": "erp_analyze",
+      "bytes": 869,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "server_plan",
+      "name": "erp_api_search",
+      "bytes": 643,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "server_plan",
+      "name": "search_knowledge",
+      "bytes": 813,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "server_plan",
+      "name": "web_search",
+      "bytes": 999,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "server_plan",
+      "name": "plan_ecommerce_images",
+      "bytes": 2964,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "server_plan",
+      "name": "generate_image",
+      "bytes": 620,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "server_plan",
+      "name": "agent_reach",
+      "bytes": 5387,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "server_plan",
+      "name": "generate_video",
+      "bytes": 829,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "server_plan",
+      "name": "manage_scheduled_task",
+      "bytes": 6351,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "server_plan",
+      "name": "fetch_all_pages",
+      "bytes": 1296,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "server_plan",
+      "name": "list_personal_skills_for_edit",
+      "bytes": 1209,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "server_plan",
+      "name": "get_personal_skill_for_edit",
+      "bytes": 1150,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "server_plan",
+      "name": "prepare_skill_draft",
+      "bytes": 4772,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "server_plan",
+      "name": "knowledge_outline",
+      "bytes": 538,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "server_plan",
+      "name": "knowledge_search",
+      "bytes": 976,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "server_plan",
+      "name": "knowledge_read",
+      "bytes": 987,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "server_plan",
+      "name": "knowledge_follow_reference",
+      "bytes": 364,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "server_plan",
+      "name": "knowledge_discover",
+      "bytes": 541,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "server_plan",
+      "name": "mcp_test_lookup",
+      "bytes": 301,
+      "refs": 0,
+      "issues": [],
+      "wire_schema_identical": true
+    },
+    {
+      "variant": "extra",
+      "name": "propose_task_revision",
+      "refs": 2,
+      "issues": []
+    }
+  ]
+}

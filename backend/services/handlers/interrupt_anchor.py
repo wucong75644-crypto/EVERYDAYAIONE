@@ -14,17 +14,41 @@ from typing import Any, Dict, List, Set, Tuple
 from loguru import logger
 
 
-INTERRUPTED_TOOL_RESULT = (
-    "[系统: 用户在工具 '{tool_name}' 执行完成前中断了对话。"
-    "该工具结果未知，请视为未成功。]"
-)
-
-
-TASK_RESUMPTION_TEMPLATE = (
-    "[任务恢复] 此任务在 {ago_text} 被用户中断。可能未完成，请重新评估任务上下文。\n\n"
+_INTERRUPTED_TOOL_PREFIX = "[系统: 用户在工具 '"
+_INTERRUPTED_RESULT_UNKNOWN = "原操作状态待核实，先查原调用或回执。]"
+_LEGACY_INTERRUPTED_RESULT = "该工具结果未知，请视为未成功。]"
+_RESUMPTION_PREFIX = "[任务恢复] 此任务在 "
+_LEGACY_RESUMPTION_SUFFIX = (
+    " 被用户中断。可能未完成，请重新评估任务上下文。\n\n"
     "注意：如果之前调用的工具没有收到结果，请假设该工具未成功执行；"
     "根据当前需要判断是否重试。"
 )
+INTERRUPTED_TOOL_RESULT = (
+    _INTERRUPTED_TOOL_PREFIX + "{tool_name}' 执行完成前中断了对话。" + _INTERRUPTED_RESULT_UNKNOWN
+)
+TASK_RESUMPTION_TEMPLATE = (
+    _RESUMPTION_PREFIX + "{ago_text} 被用户中断。用原调用或回执核实工具状态。"
+    "已受理的操作沿用原任务查询或等待，状态不明时不重复提交。"
+    "确认未派发且用户仍要求继续时，按当前权限恢复执行。"
+)
+
+
+def project_interrupt_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Upgrade old host notices in the outbound view without rewriting saved history."""
+    projected = []
+    for message in messages:
+        role, content = message.get("role"), message.get("content")
+        if isinstance(content, str):
+            if (role == "tool" and content.startswith(_INTERRUPTED_TOOL_PREFIX)
+                    and content.endswith(_LEGACY_INTERRUPTED_RESULT)):
+                content = content.removesuffix(_LEGACY_INTERRUPTED_RESULT) + _INTERRUPTED_RESULT_UNKNOWN
+                message = {**message, "content": content}
+            elif (role == "system" and content.startswith(_RESUMPTION_PREFIX)
+                    and content.endswith(_LEGACY_RESUMPTION_SUFFIX)):
+                ago_text = content.removeprefix(_RESUMPTION_PREFIX).removesuffix(_LEGACY_RESUMPTION_SUFFIX)
+                message = {**message, "content": TASK_RESUMPTION_TEMPLATE.format(ago_text=ago_text)}
+        projected.append(message)
+    return projected
 
 
 def find_orphan_tool_calls(

@@ -1,4 +1,4 @@
-/** Local native MessageItem acceptance. All API responses are fixtures.
+/** Local ConversationTasks and MessageItem acceptance. All API responses are fixtures.
  * No provider, backend, production credential, or installation is used.
  */
 import { createRequire } from 'node:module';
@@ -46,6 +46,7 @@ const assert=(ok,label)=>{if(!ok)throw new Error(label);};
  const previous=await (await page.request.get(base+'/__local_state?mode=paused')).json();
  const start=previous.calls.length;
  await page.goto(base+'/__task_page_acceptance');
+ await page.getByRole('button',{name:'查看任务',exact:true}).click();
  await page.getByRole('button',{name:'继续任务',exact:true}).waitFor();
  await page.getByRole('button',{name:'继续任务',exact:true}).click();
  await page.getByText('继续请求已受理，保留原成果等待接续。',{exact:true}).waitFor();
@@ -91,6 +92,6 @@ const assert=(ok,label)=>{if(!ok)throw new Error(label);};
  assert(!facts.calls.some(c=>/generate|regenerate|replay|messages.*POST/.test(c.path)),'unexpected generation');
  assert(errors.length===0,errors.join('\n'));
  assert(blocked.length===0,'unexpected external request');
- const evidence={passed:true,checks:['actual MessageItem render','logical resume accepted once','old plan and two image resources retained','pause and stop via original endpoints','mobile width','closed root follow-up refresh','revocation clears progress controls'],facts,blockedOrigins:blocked,pageErrors:errors,screenshots:[join(output,'desktop.png'),join(output,'mobile.png')]};
+ const evidence={passed:true,checks:['actual ConversationTasks and MessageItem render','logical resume accepted once','old plan and two image resources retained','pause and stop via original endpoints','mobile width','closed root follow-up refresh','revocation clears progress controls'],facts,blockedOrigins:blocked,pageErrors:errors,screenshots:[join(output,'desktop.png'),join(output,'mobile.png')]};
  await writeFile(join(output,'evidence.json'),JSON.stringify(evidence,null,2));console.log(JSON.stringify({passed:true,requests:facts.calls.length,blockedOrigins:blocked.length,pageErrors:errors.length}));
 } finally {await browser?.close();await server.close();}

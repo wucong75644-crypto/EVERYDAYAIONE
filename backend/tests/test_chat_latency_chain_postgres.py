@@ -171,7 +171,7 @@ async def test_native_delivery_without_answer_review(latency_db, private_redis, 
                     yield SimpleNamespace(content=text, thinking_content=None, tool_calls=None,
                         prompt_tokens=1,completion_tokens=1,credits_consumed=None,finish_reason=None)
                 if scenario == 'tools' and rounds == 1:
-                    yield SimpleNamespace(content=None,thinking_content=None,tool_calls=[SimpleNamespace(index=0,id='read-local',name='file_search',arguments_delta='{"query":"controlled"}')],
+                    yield SimpleNamespace(content=None,thinking_content=None,tool_calls=[SimpleNamespace(index=0,id='read-local',name='file_search',arguments_delta='{"keyword":"controlled"}')],
                         prompt_tokens=0,completion_tokens=0,credits_consumed=None,finish_reason='tool_calls')
             async def prepare_stream(**kwargs):
                 from services.agent.observability.chat_lifecycle import chat_phase
@@ -220,7 +220,7 @@ async def test_native_delivery_without_answer_review(latency_db, private_redis, 
                 conn=await receiver.connect(Socket(),user,org_id=None)
                 await receiver.subscribe_task(conn,external)
                 monkeypatch.setattr('services.handlers.chat.actor_enqueue._publish_wakeup', lambda cid,org:RedisConversationWakeup(redis_factory=lambda:asyncio.sleep(0,result=redis)).publish(cid,org))
-                if browser: await browser.prepare(mode=mode,scenario=scenario,task_id=external,message_id=output,conversation_id=conv,batch_size=1 if external_result else 2)
+                if browser: await browser.prepare(mode=mode,scenario=scenario,task_id=external,message_id=output,conversation_id=conv,batch_size=1)
                 with capture_chat_lifecycle(trace):
                     if not live:
                         from services.conversation_worker import ConversationWorker

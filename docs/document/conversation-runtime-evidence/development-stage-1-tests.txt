@@ -1,0 +1,47 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.14.2, pytest-9.0.3, pluggy-1.6.0
+rootdir: /Users/wucong/EVERYDAYAIONE-worktrees/20261120175146-conversation-runtime-diagnosis/backend
+configfile: pytest.ini
+plugins: cov-7.1.0, asyncio-1.3.0, time-machine-3.5.1, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collected 1365 items
+
+tests/test_content_objects.py .....................................      [  2%]
+tests/test_chat_content_bundle.py ...................................... [  5%]
+                                                                         [  5%]
+tests/test_tool_args_validator.py ...................................    [  8%]
+tests/test_model_directed_loop.py ...............ssss.......             [  9%]
+tests/test_task_execution_pending_batch.py ............                  [ 10%]
+tests/test_tool_registry.py ............................................ [ 14%]
+.................................................................        [ 18%]
+tests/test_tool_definitions_07.py ...................................... [ 21%]
+........................................................................ [ 26%]
+........................................................................ [ 32%]
+........................................................................ [ 37%]
+...............................................................          [ 42%]
+tests/test_content_objects_postgres.py ....sssss.ss.ss....sssss.ss.ss    [ 44%]
+tests/test_image_argument_correction.py ................................ [ 46%]
+............                                                             [ 47%]
+tests/test_tool_policy.py .............................................. [ 50%]
+........................................................................ [ 56%]
+........................................................................ [ 61%]
+........................................................................ [ 66%]
+........................................................................ [ 71%]
+........................................................................ [ 77%]
+........................................................................ [ 82%]
+........................................................................ [ 87%]
+.............................                                            [ 89%]
+tests/test_chat_image_reference_continuity.py .............              [ 90%]
+tests/test_tool_production_integration.py .............................. [ 93%]
+........................................................................ [ 98%]
+.......................                                                  [100%]
+
+=========================== short test summary info ============================
+SKIPPED [4] tests/test_model_directed_loop.py:318: Requires private original published Skill inputs
+SKIPPED [4] tests/test_content_objects_postgres.py:353: Private failure records required
+SKIPPED [2] tests/test_content_objects_postgres.py:317: Private latest prompt request required
+SKIPPED [2] tests/test_content_objects_postgres.py:331: Private online orchestration failure required
+SKIPPED [4] tests/test_content_objects_postgres.py:275: Private third-plan conversation and original image required
+SKIPPED [2] tests/test_content_objects_postgres.py:259: Private numbered reply and local product image required
+SKIPPED [4] tests/test_content_objects_postgres.py:804: Private conversation and original image required
+====================== 1343 passed, 22 skipped in 12.46s =======================

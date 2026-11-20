@@ -249,6 +249,7 @@ class ChatToolMixin(ChatToolResultMixin):
         from dataclasses import replace
 
         from services.task_execution.native_results import lifecycle_for
+        from services.tools.model_contracts import REVIEWED_MODEL_TOOLS, decode_model_arguments
         started_at = time.monotonic()
         args = {}
         result_ctx = ToolResultContext(
@@ -258,9 +259,12 @@ class ChatToolMixin(ChatToolResultMixin):
         )
         try:
             runtime = executor.tool_runtime
+            recovery_only = getattr(executor, '_task_recovery_only', False)
             if tc["name"] == "generate_image" and runtime.context(tc["id"]).entrypoint == "model":
                 from services.tools.argument_validation import parse_model_image_arguments
                 args = parse_model_image_arguments(runtime.registry.require(tc["name"]), tc.get("arguments"))
+            elif not recovery_only and tc["name"] in REVIEWED_MODEL_TOOLS:
+                args = decode_model_arguments(tc["name"], tc.get("arguments"))
             else:
                 try:
                     args = json.loads(tc["arguments"]) if tc.get("arguments") else {}
@@ -269,8 +273,6 @@ class ChatToolMixin(ChatToolResultMixin):
             if not isinstance(args, dict):
                 raise ValueError("工具参数必须是 JSON 对象")
             result_ctx = replace(result_ctx, args=args)
-            runtime = executor.tool_runtime
-            recovery_only = getattr(executor, '_task_recovery_only', False)
             lifecycle = (executor._task_image_operations.lifecycle(self, runtime.context(tc['id']), tc['id'],
                     recovery_only=recovery_only)
                 if getattr(executor, '_task_image_operations', None) is not None

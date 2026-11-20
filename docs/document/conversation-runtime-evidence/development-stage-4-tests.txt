@@ -1,0 +1,44 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.14.2, pytest-9.0.3, pluggy-1.6.0
+rootdir: /Users/wucong/EVERYDAYAIONE-worktrees/20261120175146-conversation-runtime-diagnosis/backend
+configfile: pytest.ini
+plugins: cov-7.1.0, asyncio-1.3.0, time-machine-3.5.1, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collected 599 items
+
+tests/test_content_objects.py .......................................... [  7%]
+.                                                                        [  7%]
+tests/test_content_objects_postgres.py ........sssss.ss.ss........sssss. [ 12%]
+ss.ss                                                                    [ 13%]
+tests/test_chat_content_bundle.py ...................................... [ 19%]
+                                                                         [ 19%]
+tests/test_model_directed_loop.py ...............ssss.......             [ 24%]
+tests/test_task_execution_pending_batch.py ............                  [ 26%]
+tests/test_task_execution_image_operations.py ......                     [ 27%]
+tests/test_task_execution_operations_postgres.py ....................... [ 31%]
+...............................                                          [ 36%]
+tests/test_task_execution_reconciliation_postgres.py ................... [ 39%]
+.                                                                        [ 39%]
+tests/test_task_execution_followup_reuse_postgres.py ................... [ 42%]
+...............................                                          [ 47%]
+tests/test_task_execution_requirement_changes_postgres.py .............. [ 50%]
+..............................                                           [ 55%]
+tests/test_task_execution_continuation_postgres.py ..................... [ 58%]
+.................................                                        [ 64%]
+tests/test_skill_composition_postgres.py ........                        [ 65%]
+tests/test_image_argument_correction.py ................................ [ 70%]
+............                                                             [ 72%]
+tests/test_dashscope_responses.py ......................                 [ 76%]
+tests/test_tool_production_integration.py .............................. [ 81%]
+........................................................................ [ 93%]
+......................................                                   [100%]
+
+=========================== short test summary info ============================
+SKIPPED [4] tests/test_content_objects_postgres.py:356: Private failure records required
+SKIPPED [2] tests/test_content_objects_postgres.py:320: Private latest prompt request required
+SKIPPED [2] tests/test_content_objects_postgres.py:334: Private online orchestration failure required
+SKIPPED [4] tests/test_content_objects_postgres.py:278: Private third-plan conversation and original image required
+SKIPPED [2] tests/test_content_objects_postgres.py:262: Private numbered reply and local product image required
+SKIPPED [4] tests/test_content_objects_postgres.py:872: Private conversation and original image required
+SKIPPED [4] tests/test_model_directed_loop.py:318: Requires private original published Skill inputs
+======================= 577 passed, 22 skipped in 19.53s =======================

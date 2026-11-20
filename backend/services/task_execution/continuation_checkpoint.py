@@ -6,6 +6,7 @@ from .contracts import ContinuationInput,TaskError
 
 def build_context(checkpoint,source,candidate,*,task,claim,message,content_blocks,event_artifact_ids=()):
     payload = copy.deepcopy(checkpoint)
+    payload.pop('_inline_media_action', None)
     from .user_changes import restore
     changes = restore(checkpoint, root_task_id=source.root_task_id, owner_task_id=task['id'],
         inherited_root_task_id=source.root_task_id)

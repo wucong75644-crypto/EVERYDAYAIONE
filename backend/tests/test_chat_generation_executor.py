@@ -557,3 +557,20 @@ async def test_executor_diagnostics_error_preserves_original_generation_error(mo
         await executor.execute(_task(), _claim(), asyncio.Event())
     assert caught.value is failure
     sink.finish_diagnostics.assert_called_once_with("failed")
+
+
+@pytest.mark.asyncio
+async def test_executor_reconciles_lost_argument_repair_checkpoint_ack():
+    from services.conversation_commands import SafePoint
+    from services.handlers.chat.tool_argument_repairs import KEY
+    store = _ReplayCheckpointStore()
+    store.write = AsyncMock(side_effect=ConnectionError('local response lost'))
+    payload = {'messages': [], KEY: {'version': 1, 'stopped': True}}
+    store.read_result = {'outcome': 'found', 'payload': {**payload, 'safe_point': 'before_tool'}}
+    executor = ChatGenerationExecutor(_DB({}), replay_checkpoint_store=store)
+
+    callback = executor._build_replay_checkpoint_callback(_claim())
+    assert await callback(SafePoint.BEFORE_TOOL, payload) == {'outcome': 'saved', 'reconciled': True}
+    store.read_result = {'outcome': 'found', 'payload': {'messages': [], 'safe_point': 'before_tool'}}
+    with pytest.raises(RuntimeError, match='TOOL_ARGUMENT_REPAIR_SAVE_UNCONFIRMED'):
+        await callback(SafePoint.BEFORE_TOOL, payload)

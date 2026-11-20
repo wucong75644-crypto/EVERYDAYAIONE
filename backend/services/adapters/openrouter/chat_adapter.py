@@ -7,8 +7,10 @@ API 与 OpenAI 完全兼容，额外返回 usage.cost（USD）用于精确计费
 积分公式：ceil(cost_usd × 200) + 1
 """
 
+import hashlib
 import json
 import math
+import re
 from decimal import Decimal
 from typing import Any, AsyncIterator, Dict, List, Optional
 
@@ -21,6 +23,7 @@ from ..base import (
     CostEstimate as BaseCostEstimate,
     ModelProvider,
     StreamChunk,
+    ToolCallDelta,
 )
 
 # 默认超时（秒）— 当工厂未传入 stream_timeout 时的兜底值
@@ -87,10 +90,25 @@ class OpenRouterChatAdapter(BaseChatAdapter):
     # ============================================================
 
     @staticmethod
-    def _chat_messages(messages):
-        """Translate Responses content parts without editing text or image order."""
+    def _provider_call_id(call_id: str) -> str:
+        # Actor checkpoint IDs contain colons. Anthropic tool use accepts only
+        # letters, digits, underscores and hyphens in the provider transcript.
+        if re.fullmatch(r"[A-Za-z0-9_-]+", call_id):
+            return call_id
+        return "call_" + hashlib.sha256(call_id.encode()).hexdigest()[:32]
+
+    @classmethod
+    def _chat_messages(cls, messages):
+        """Project compatible tool IDs and Responses content into chat messages."""
         result = []
         for message in messages:
+            if message.get("role") == "assistant" and message.get("tool_calls"):
+                message = {**message, "tool_calls": [
+                    {**call, "id": cls._provider_call_id(call["id"])}
+                    for call in message["tool_calls"]
+                ]}
+            elif message.get("role") == "tool" and message.get("tool_call_id"):
+                message = {**message, "tool_call_id": cls._provider_call_id(message["tool_call_id"])}
             content = message.get("content")
             if not isinstance(content, list):
                 result.append(message)
@@ -125,10 +143,19 @@ class OpenRouterChatAdapter(BaseChatAdapter):
             "stream": True,
             "stream_options": {"include_usage": True},
         }
+        tools = kwargs.get("tools")
+        if tools:
+            request_body["tools"] = tools
+            request_body["provider"] = {"require_parameters": True}
+            if kwargs.get("tool_choice") is not None:
+                request_body["tool_choice"] = kwargs["tool_choice"]
+        if kwargs.get("max_tokens") is not None:
+            request_body["max_tokens"] = kwargs["max_tokens"]
         if reasoning_effort is not None:
             request_body["reasoning"] = {"effort": reasoning_effort}
         require_completed = kwargs.get("require_completed", False)
         received_done = False
+        received_tool_calls = False
         terminal_reason = None
         received_usage = False
 
@@ -173,6 +200,7 @@ class OpenRouterChatAdapter(BaseChatAdapter):
                     content = None
                     thinking_content = None
                     finish_reason = None
+                    tool_calls = None
                     choices = chunk.get("choices", [])
                     if choices:
                         delta = choices[0].get("delta", {})
@@ -180,6 +208,18 @@ class OpenRouterChatAdapter(BaseChatAdapter):
                         thinking_content = delta.get("reasoning_content") or delta.get("reasoning")
                         finish_reason = choices[0].get("finish_reason")
                         terminal_reason = finish_reason or terminal_reason
+                        raw_calls = delta.get("tool_calls")
+                        if raw_calls:
+                            received_tool_calls = True
+                            tool_calls = []
+                            for raw in raw_calls:
+                                function = raw.get("function") or {}
+                                tool_calls.append(ToolCallDelta(
+                                    index=raw["index"],
+                                    id=raw.get("id"),
+                                    name=function.get("name"),
+                                    arguments_delta=function.get("arguments"),
+                                ))
 
                     # 提取 usage（通常在最后一个 chunk）
                     usage = chunk.get("usage") or {}
@@ -204,8 +244,12 @@ class OpenRouterChatAdapter(BaseChatAdapter):
                         prompt_tokens=prompt_tokens,
                         completion_tokens=completion_tokens,
                         credits_consumed=credits_consumed,
+                        tool_calls=tool_calls,
                     )
-                if require_completed and not (received_done and terminal_reason == "stop" and received_usage):
+                if received_tool_calls or terminal_reason == "tool_calls":
+                    if not (received_tool_calls and received_done and terminal_reason == "tool_calls"):
+                        raise OpenRouterAPIError("OPENROUTER_TOOL_STREAM_INCOMPLETE")
+                if require_completed and not (received_done and terminal_reason in {"stop", "tool_calls"} and received_usage):
                     raise OpenRouterAPIError("OPENROUTER_STREAM_INCOMPLETE")
 
         except OpenRouterAPIError:

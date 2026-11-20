@@ -112,7 +112,8 @@ async def test_all_entrypoints_new_and_legacy_reach_dispatcher_once(setup, entry
     executor.handler.return_value = AgentResult(summary="原返回", status="success")
     dispatch = AsyncMock(wraps=executor.tool_runtime.service.dispatcher.dispatch)
     monkeypatch.setattr(executor.tool_runtime.service.dispatcher, "dispatch", dispatch)
-    output = await invoke(entry, executor, [tc(name, {"query": "x"})], monkeypatch)
+    arguments = {"keyword": "x"} if name == "file_search" else {"query": "x"}
+    output = await invoke(entry, executor, [tc(name, arguments)], monkeypatch)
     assert output and executor.handler.await_count == dispatch.await_count == 1
 
 
@@ -311,7 +312,8 @@ async def test_scheduled_scope_intersection(setup, mode, scope, monkeypatch):
     if scope == "empty": allowed, snapshot = set(), {"version": 1, "allowed_tools": []}
     executor = MockHandlerExecutor(agent_domain="general", task_id="schedule", execution_mode=mode,
                                   allowed_tool_names=allowed, tool_policy_snapshot=snapshot)
-    await invoke("loop", executor, [tc(name, {"query": "x", "files": ["x"]})], monkeypatch)
+    arguments = {"files": ["x"]} if scope == "dangerous" else {"query": "x"}
+    await invoke("loop", executor, [tc(name, arguments)], monkeypatch)
     assert executor.handler.await_count == (1 if scope == "valid" else 0)
 
 
@@ -667,7 +669,9 @@ async def test_real_erp_action_route(setup, monkeypatch, entry, kind):
     executor.tool_confirmer = AsyncMock(return_value=True)
     action = next(name for name, rule in TRADE_REGISTRY.items() if rule.is_write == (kind != "read"))
     name = "erp_trade_query" if kind in {"read", "query_write"} else "erp_execute"
-    args = {"category": "not_known" if kind == "unknown_category" else "trade", "action": action, "params": {}}
+    args = {"action": action, "params": {}}
+    if name == "erp_execute":
+        args["category"] = "not_known" if kind == "unknown_category" else "trade"
     await invoke(entry, executor, [tc(name, args)], monkeypatch)
     assert executor.handler.await_count == (1 if kind in {"read", "write"} else 0)
     assert executor.tool_confirmer.await_count == (1 if kind == "write" else 0)
@@ -810,3 +814,72 @@ async def test_actor_skill_candidate_result_does_not_enter_mcp_checkpoint(setup,
     assert output[0].status == 'success', repr(output[0])
     assert prepare.await_count == 1
     assert harness._actor_runtime.mcp_invocations == {}
+
+
+@pytest.mark.parametrize("entry", ["chat", "loop"])
+@pytest.mark.parametrize(("tool", "raw", "issue_path"), [
+    ("file_search", '{"scope":"current","file_filter":"*.xlsx"}', "$.file_filter"),
+    ("file_search", '{"scope":"current","scope":"workspace"}', "$"),
+    ("file_delete", '{"files":["test.txt"],"keep_backup":false}', "$.keep_backup"),
+    ("manage_scheduled_task", '{"action":"create","definition":{"notification_policy":{"threshold":"15"}}}',
+     "$.definition.notification_policy.threshold"),
+    ("erp_trade_query", '{"action":"list","params":{"shop_id":4},"platform":"taobao"}', "$.platform"),
+])
+async def test_reviewed_model_arguments_fail_without_dispatch(setup, entry, tool, raw, issue_path, monkeypatch):
+    _, root = setup
+    existing_files(root, "test.txt")
+    executor = MockHandlerExecutor(
+        agent_domain="erp" if tool.startswith("erp_") else "general", tool_entrypoint="model")
+    executor.tool_confirmer = AsyncMock(return_value=True)
+    if tool == "erp_trade_query":
+        from services.kuaimai.registry import TRADE_REGISTRY
+
+        arguments = json.loads(raw)
+        arguments["action"] = next(name for name, rule in TRADE_REGISTRY.items() if not rule.is_write)
+        raw = json.dumps(arguments)
+    call = {"id": "invalid", "name": tool, "arguments": raw}
+    result, = await invoke(entry, executor, [call], monkeypatch)
+
+    content = result if isinstance(result, str) else result.model_content("chat")
+    assert "MODEL_TOOL_ARGUMENTS_INVALID" in content
+    assert issue_path in content
+    executor.handler.assert_not_awaited()
+    executor.tool_confirmer.assert_not_awaited()
+
+
+@pytest.mark.parametrize("entry", ["chat", "loop"])
+async def test_erp_model_contract_preserves_action_params(setup, entry, monkeypatch):
+    from services.kuaimai.registry import TRADE_REGISTRY
+
+    executor = MockHandlerExecutor(agent_domain="erp", tool_entrypoint="model")
+    action = next(name for name, rule in TRADE_REGISTRY.items() if not rule.is_write)
+    arguments = {"action": action, "params": {"shop_id": 3, "start_date": "2026-11-01"}, "page": 2}
+    await invoke(entry, executor, [tc("erp_trade_query", arguments)], monkeypatch)
+    executor.handler.assert_awaited_once_with("erp_trade_query", arguments)
+
+
+async def test_recorded_result_replays_before_new_model_contract(setup):
+    from services.tools import ToolResult
+
+    executor = MockHandlerExecutor(agent_domain="general", tool_entrypoint="model")
+    runtime = executor.tool_runtime
+    legacy = {"query": "完整搜索条件", "legacy_hint": "原调用保留"}
+    context = runtime.context("old")
+    call = ToolCall("old", "web_search", legacy)
+    receipt = ToolResult.wrap("原结果", call=call, context=context, decision=runtime.policy.decide(call.name, context, call.arguments))
+    lifecycle = Mock()
+    lifecycle.replay = AsyncMock(return_value=receipt)
+    lifecycle.begin = AsyncMock(side_effect=AssertionError("replay must not reserve a new invocation"))
+    replay = await runtime.execute(call.name, legacy, call_id=call.call_id, lifecycle=lifecycle)
+    assert replay is receipt
+    assert thaw(lifecycle.replay.await_args.args[0].arguments) == legacy
+    lifecycle.begin.assert_not_awaited()
+    executor.handler.assert_not_awaited()
+
+
+@pytest.mark.parametrize("entry", ["chat", "loop"])
+async def test_erp_model_contract_accepts_legacy_query_without_changing_arguments(setup, entry, monkeypatch):
+    executor = MockHandlerExecutor(agent_domain="general", tool_entrypoint="model")
+    arguments = {"query": "查询上周订单，按店铺分组"}
+    await invoke(entry, executor, [tc("erp_agent", arguments)], monkeypatch)
+    executor.handler.assert_awaited_once_with("erp_agent", arguments)

@@ -36,6 +36,7 @@ def image_sources(row, org_id=None, visible_indices=()):
         if row.get("role") == "user" and part.get("source_message_id"):
             source = "quoted_pending_verification"
         item = {"name": str(part.get("name") or "图片"), "source": source,
+                "image_index": len(result) + 1,
                 "available": available, "visually_present": index in visible_indices}
         if row.get("id"):
             item.update(message_id=str(row["id"]), content_index=index)
@@ -48,6 +49,12 @@ def image_sources(row, org_id=None, visible_indices=()):
         else:
             item["unavailable_reason"] = "IMAGE_FAILED" if part.get("failed") else "IMAGE_ORIGINAL_UNAVAILABLE"
         if row.get("role") == "assistant":
+            generation = row.get("generation_params") or {}
+            if isinstance(generation, dict) and generation.get("origin") == "chat_image":
+                if generation.get("task_id"):
+                    item["task_id"] = str(generation["task_id"])
+                if generation.get("submission_state"):
+                    item["submission_state"] = generation["submission_state"]
             for key in ("task_id", "asset_id"):
                 if part.get(key):
                     item[key] = part[key]
@@ -55,17 +62,23 @@ def image_sources(row, org_id=None, visible_indices=()):
     return result
 
 
+def model_image_sources(sources):
+    # Quoted provenance may point outside this conversation. Only the verified
+    # current message reference is selectable.
+    return [{key: value for key, value in source.items()
+             if key not in {'quoted_message_id', 'quoted_content_index', 'quoted_task_id'}}
+            for source in sources]
+
+
 def format_image_sources(sources, *, include_size_guidance=True):
     if not sources:
         return ""
     from services.handlers.image_size_requirements import SIZE_GUIDANCE
     return ("对话图片定位（不是自动选定的生图参考）。只写文字时，后台会记录本轮原图。"
-            "实际执行用图时按用户要求选择reference或file_id；"
+            "image_index是所属消息中的图片序号，content_index是执行引用位置。实际用图时复制reference；"
             "visually_present=false 仅为来源元数据。canvas 是原图画布，输出规格在执行时确定。"
             + (SIZE_GUIDANCE if include_size_guidance else "") + "\n"
-            + json.dumps([{key: value for key, value in source.items()
-                           if key not in {'quoted_message_id', 'quoted_content_index', 'quoted_task_id'}}
-                          for source in sources], ensure_ascii=False))
+            + json.dumps(model_image_sources(sources), ensure_ascii=False))
 
 
 def legacy_catalog(parent):
@@ -140,7 +153,7 @@ def registered_original(db, part, *, org_id, owner_id, scope="user"):
     return asset["workspace_path"], asset
 
 
-def discovered_image_sources(row, db, *, org_id, owner_id, scope="user", visible_indices=()):
+def discovered_image_sources(row, db, *, org_id, owner_id, scope="user", visible_indices=(), include_dimensions=True):
     """Shared display of registered originals; no untrusted upstream assertions."""
     sources = image_sources(row, org_id, visible_indices)
     if not sources:
@@ -170,6 +183,8 @@ def discovered_image_sources(row, db, *, org_id, owner_id, scope="user", visible
                 item.pop("reference", None)
             else:
                 item.update({key: value for key, value in origin.items() if key != "source_content_sha256"})
+    if not include_dimensions or not paths:
+        return sources
     from services.handlers.image_dimensions import read_image_dimensions
     from services.file_executor import FileExecutor
     from core.config import get_settings

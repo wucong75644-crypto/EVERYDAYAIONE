@@ -1,0 +1,19 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.14.2, pytest-9.0.3, pluggy-1.6.0
+rootdir: /Users/wucong/EVERYDAYAIONE-worktrees/20261120175146-conversation-runtime-diagnosis/backend
+configfile: pytest.ini
+plugins: cov-7.1.0, asyncio-1.3.0, time-machine-3.5.1, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collected 144 items
+
+tests/test_skill_composition_postgres.py ........                        [  5%]
+tests/test_chat_image_lifecycle_postgres.py .........ssss............... [ 25%]
+..........sssss.ssss.....                                                [ 42%]
+tests/test_chat_image_retry_in_place.py .......                          [ 47%]
+tests/test_chat_image_slot_recovery_postgres.py ssssssssss               [ 54%]
+tests/test_image_argument_correction.py ................................ [ 76%]
+............                                                             [ 84%]
+tests/test_chat_image_reference_continuity.py .............              [ 93%]
+tests/test_chat_stream_scope.py .........                                [100%]
+
+======================= 121 passed, 23 skipped in 4.30s ========================

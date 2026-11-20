@@ -371,3 +371,109 @@ def test_exact_history_over_response_budget_requires_smaller_selection(context):
     row['content'][4]['text'] = text
     with pytest.raises(ValueError, match='IMAGE_HISTORY_SELECTION_TOO_LARGE_SELECT_FEWER_FRAGMENTS'):
         read({'message_ids': [row['id']], 'text_exact': text})
+
+
+def test_history_visual_budget_tracks_actual_parts_and_preserves_failed_slot_positions():
+    from services.handlers.chat_context.history_loader import _row_to_oai_messages
+    import json
+
+    generated = {'id': 'generated', 'role': 'assistant', 'content': [
+        {'type': 'image', 'url': 'https://images.invalid/generated.png', 'workspace_path': 'result.png'},
+    ], 'generation_params': {'origin': 'chat_image', 'task_id': 'generated-task', 'submission_state': 'published'}}
+    user = {'id': 'uploaded', 'role': 'user', 'content': [
+        {'type': 'image', 'url': 'https://images.invalid/failed.png', 'failed': True},
+        {'type': 'text', 'text': '请处理第二张图'},
+        {'type': 'image', 'url': 'https://images.invalid/selected.png', 'workspace_path': 'input.png'},
+    ]}
+    user['_trusted_image_sources'] = image_sources(user)
+
+    history, used = _row_to_oai_messages(generated, 1)
+    assert used == 0
+    assert 'generated-task' in history[-1]['content']
+    messages, used = _row_to_oai_messages(user, 1)
+    parts = messages[0]['content']
+    assert used == 1
+    assert [part['image_url']['url'] for part in parts if part['type'] == 'image_url'] == [
+        'https://images.invalid/selected.png',
+    ]
+    refs = json.loads(parts[-1]['text'].splitlines()[-1])
+    assert [(item['image_index'], item['content_index'], item['visually_present']) for item in refs] == [
+        (1, 0, False), (2, 2, True),
+    ]
+
+
+def test_recipe_keeps_original_input_separate_from_selected_generated_result(context, monkeypatch):
+    from uuid import uuid4
+    from services.handlers.chat import content_tools
+    from services.handlers.chat_image_request import REQUEST_KEY
+
+    row, owner, files, current = context
+    native = resolver(context)
+    source = {'message_id': row['id'], 'content_index': 3}
+    original = native.resolve([{**source, 'role': '编辑底图'}])
+    task_id = str(uuid4())
+    owner.db.set_table_data('messages', [row, current, {
+        **row, 'id': 'generated', 'role': 'assistant', 'content': [
+            {'type': 'image', 'workspace_path': 'A.png', 'task_id': task_id},
+        ],
+    }])
+    owner.db.set_table_data('tasks', [{
+        'id': task_id, 'user_id': owner.user_id, 'org_id': owner.org_id, 'conversation_id': owner.conversation_id,
+        'type': 'image', 'status': 'completed', 'assistant_message_id': 'generated',
+        'request_params': {REQUEST_KEY: {'prompt': '原始完整编辑说明', 'references': original, 'aspect_ratio': '1:1'}},
+    }])
+    facts = SimpleNamespace(actor_user_id=owner.user_id, workspace_owner_id=owner.workspace_user_id,
+                            org_id=owner.org_id, conversation_id=owner.conversation_id)
+    monkeypatch.setattr(content_tools, 'check_source_scope', lambda *_: None)
+    monkeypatch.setattr('services.task_execution.image_resources.native_resolver', lambda *_: native)
+    recipe = content_tools.read_image_recipe(owner, SimpleNamespace(), facts, task_id)
+    assert recipe['prompt'] == '原始完整编辑说明'
+    assert recipe['original_inputs'] == [{'role': '编辑底图', 'available': True, 'reference': source}]
+    files.resolve_safe_path('B.png').unlink()
+    assert content_tools.read_image_recipe(owner, SimpleNamespace(), facts, task_id)['original_inputs'] == [
+        {'role': '编辑底图', 'available': False},
+    ]
+
+
+def test_view_reads_selected_history_image_and_refuses_future_revision(context, monkeypatch):
+    from uuid import uuid4
+    from services.handlers.chat import content_tools
+
+    row, owner, files, current = context
+    row['id'] = str(uuid4())
+    future = {**row, 'id': str(uuid4()), 'context_revision': 2}
+    owner.db.set_table_data('messages', [row, current, future])
+    native = resolver(context)
+    monkeypatch.setattr(content_tools, 'check_source_scope', lambda *_: None)
+    monkeypatch.setattr('services.task_execution.image_resources.native_resolver', lambda *_: native)
+    monkeypatch.setattr(files, 'get_cdn_url', lambda path: 'https://image.invalid/' + path)
+
+    ref = {'message_id': row['id'], 'content_index': 3}
+    result, preview = content_tools.read_image_view(owner, SimpleNamespace(), SimpleNamespace(), ref)
+    assert result == {'reference': ref, 'visually_present': True}
+    assert preview == 'https://image.invalid/B.png'
+    with pytest.raises(PermissionError, match='IMAGE_SOURCE_REVISION_DENIED'):
+        content_tools.read_image_view(owner, SimpleNamespace(), SimpleNamespace(),
+                                     {**ref, 'message_id': future['id']})
+
+
+def test_list_image_groups_preserves_positions_without_loading_pixels(context, monkeypatch):
+    from services.handlers.chat import content_tools
+
+    row, owner, _, _ = context
+    row['message_kind'] = 'conversation'
+    owner.db.set_table_data('tasks', [{
+        'id': 'chat-task', 'user_id': owner.user_id, 'org_id': owner.org_id,
+        'conversation_id': owner.conversation_id, 'base_context_revision': 1,
+    }])
+    facts = SimpleNamespace(actor_user_id=owner.user_id, workspace_owner_id=owner.workspace_user_id,
+                            org_id=owner.org_id, conversation_id=owner.conversation_id, context_scope='user')
+    monkeypatch.setattr(content_tools, 'check_source_scope', lambda *_: None)
+    monkeypatch.setattr('services.handlers.image_dimensions.read_image_dimensions',
+                        Mock(side_effect=AssertionError('Metadata search must not open image bytes')))
+    result = content_tools.source_text(owner.db, 'chat-task', facts, {'list_images': True})
+    group, = result['image_groups']
+    assert group['message_id'] == row['id']
+    assert [(img['image_index'], img['content_index']) for img in group['images']] == [(1, 1), (2, 3)]
+    assert all(not img['visually_present'] for img in group['images'])
+    assert 'messages' not in result

@@ -31,7 +31,7 @@ def payload(source,current,*,task_id,turn_id,model_round,usage,observation):
     updated=TaskState.model_validate({**old.model_dump(),'revision':old.revision+1,'status':'active',
         'model_rounds_used':old.model_rounds_used+(max(1,int(current.get('next_model_round',1))) if old.model_directed else 1)})
     result=copy.deepcopy(previous)
-    for key in ('checkpoint_kind','result_content','usage','credits_cost','tool_digest','_task_bootstrap','_task_read_arguments','_task_usage','_continuation_input'):
+    for key in ('checkpoint_kind','result_content','usage','credits_cost','tool_digest','_task_bootstrap','_task_read_arguments','_task_usage','_continuation_input','_inline_media_action','tool_argument_repairs'):
         result.pop(key,None)
     if '_task_followup_input_checkpoint' in result:
         result['_task_followup_window_history']=[*result.get('_task_followup_window_history',[]),

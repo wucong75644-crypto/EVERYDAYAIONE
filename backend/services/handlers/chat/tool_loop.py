@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Collection
 
 from loguru import logger
 
@@ -157,6 +157,7 @@ def apply_tool_results(
     content_blocks: list[dict[str, Any]],
     start_times: dict[str, float],
     tool_context: Any,
+    recorded_tool_call_ids: Collection[str] = (),
 ) -> list[str]:
     """把工具结果写回模型消息和 tool_step，返回待注入的图片 URL。"""
     image_urls: list[str] = []
@@ -171,13 +172,12 @@ def apply_tool_results(
             and result.image_url
         ):
             image_urls.append(result.image_url)
-        messages.append(
-            {
+        if call["id"] not in recorded_tool_call_ids:
+            messages.append({
                 "role": "tool",
                 "tool_call_id": call["id"],
                 "content": unpack_tool_result(result),
-            }
-        )
+            })
         _complete_tool_step(
             content_blocks,
             call["id"],

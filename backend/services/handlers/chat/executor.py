@@ -425,16 +425,21 @@ class ChatGenerationExecutor:
         except Exception:
             # An acknowledgement can be lost after commit. Reconcile the whole
             # checkpoint, not merely a matching composition ID, before proceeding.
-            if not any(key in payload for key in ('_skill_composition', '_task_execution', '_task_bootstrap')):
+            from services.handlers.chat.tool_argument_repairs import KEY as ARGUMENT_REPAIRS
+            task_checkpoint = any(key in payload for key in ('_task_execution', '_task_bootstrap'))
+            if not task_checkpoint and '_skill_composition' not in payload and ARGUMENT_REPAIRS not in payload:
                 raise
             read = getattr(self._replay_checkpoint_store, 'read_latest', None)
             if read is None:
                 raise
             expected = dict(payload)
             expected.setdefault('safe_point', boundary.value)
-            unconfirmed = ('TASK_EXECUTION_SAVE_UNCONFIRMED' if any(
-                key in payload for key in ('_task_execution', '_task_bootstrap'))
-                           else 'SKILL_COMPOSITION_SAVE_UNCONFIRMED')
+            if task_checkpoint:
+                unconfirmed = 'TASK_EXECUTION_SAVE_UNCONFIRMED'
+            elif '_skill_composition' in payload:
+                unconfirmed = 'SKILL_COMPOSITION_SAVE_UNCONFIRMED'
+            else:
+                unconfirmed = 'TOOL_ARGUMENT_REPAIR_SAVE_UNCONFIRMED'
             try:
                 saved = await read(task_id=claim.task_id, execution_token=claim.execution_token,
                                    boundary=boundary)

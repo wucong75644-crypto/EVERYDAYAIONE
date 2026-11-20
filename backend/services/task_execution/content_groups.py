@@ -105,15 +105,15 @@ def index_document(text: str) -> IndexedGroup | None:
     return IndexedGroup(document, tuple(gaps), tuple(spans))
 
 
-def bind_group(document, images, request_text, selected=None):
+def bind_group(document, images, request_text, selected=None, *, infer_materials=True):
     """Keep unknown/analysis-only provenance available without creating an execution input."""
     from .content_objects import image_materials
     from services.handlers.image_size_requirements import selected_source_size
 
     # A single explicitly referenced product for image prompts has an unambiguous origin.
     # For a collection, or an explicit analysis-only request, keep the existing selection protocol.
-    unique = len(images) == 1
-    analysis_only = bool(re.search(r'(?:仅|只)(?:作|供|用于|用来).{0,8}(?:分析|理解)|(?:不要(?:使用|用|带)|不用|不使用|不带)(?:该|这张|任何)?(?:原图|参考图)|不作为(?:执行|生图)参考', request_text))
+    unique = infer_materials and len(images) == 1
+    analysis_only = infer_materials and bool(re.search(r'(?:仅|只)(?:作|供|用于|用来).{0,8}(?:分析|理解)|(?:不要(?:使用|用|带)|不用|不使用|不带)(?:该|这张|任何)?(?:原图|参考图)|不作为(?:执行|生图)参考', request_text))
     shared = selected
     if shared is None and unique and not analysis_only and re.search(
             r'参考.{0,12}(图|产品)|(?:用|沿用).{0,8}(?:原图|新图)', request_text):
@@ -125,9 +125,8 @@ def bind_group(document, images, request_text, selected=None):
                 r'(?:以|使用|沿用).{0,28}(?:上传的|原图|参考图).{0,12}(?:作为|保持|保留)', item.body):
             indices = (1,)
         materials = item.materials or tuple(image_materials(images, indices or ()))
-        if unique and selected is None and (analysis_only or shared):
-            # Preserve explicitly different per-item assets; the known original has
-            # one host-resolved role regardless of how the author spelled its role.
+        if unique and not item.materials and selected is None and (analysis_only or shared):
+            # Legacy text without explicit materials can retain its inferred group role.
             usage = 'analysis' if analysis_only else 'input'
             if not materials:
                 materials = tuple(image_materials(images, (1,)))

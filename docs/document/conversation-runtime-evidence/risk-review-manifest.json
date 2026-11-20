@@ -1,0 +1,28 @@
+{
+  "source_commit": "4ca37b6703aef49147bec23a533ebb2acc769cc0",
+  "business_code_changed": false,
+  "environment": "fresh PostgreSQL 17 cluster; dedicated Unix socket Redis; placeholder application configuration",
+  "runs": [
+    {
+      "log": "risk-review-tests.txt",
+      "collected": 144,
+      "passed": 121,
+      "skipped": 23,
+      "skip_reason": "Redis socket not configured in first run"
+    },
+    {
+      "log": "risk-storage-tests.txt",
+      "collected": 67,
+      "passed": 67,
+      "skipped": 0,
+      "covers_first_run_skips": true
+    }
+  ],
+  "limitations": [
+    "Overlapping tests; pass counts must not be summed",
+    "No real model/provider requests",
+    "No production database verification",
+    "No browser acceptance",
+    "Proposed adapters and new protocol are not implemented or tested"
+  ]
+}

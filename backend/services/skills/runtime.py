@@ -521,11 +521,8 @@ class SkillRuntime:
             content = ('[Current Skill selection]\n'
                        + encoded({'active_skills': [], 'available_tools': names})
                        + '\n当前轮尚未激活 Skill。历史“已启用”不是当前轮的激活状态。'
-                       '先理解用户当前动作；仅在确需某方法时调用 activate_skill。已有提示词或已保存方案时直接使用通用图片工具。'
-                       '用户确认或继续上一轮 Skill 任务时，先从下面当前目录选择匹配方法并调用 activate_skill，'
-                       '读取正文后在下一轮按实际提供的 tools schema 处理当前请求。'
-                       '准备或列出工具参数也应先加载该方法，不能从历史代码块猜参数。'
-                       '新请求与旧方法无关时不继续旧任务；目录不授予工具权限。\n' + catalog)
+                       '按平台 Skill 规则判断当前请求是否仍需要某方法。需要时先从下面当前目录选择该方法并调用 activate_skill。'
+                       '只有加载成功后才按正文推进。确需该方法才能确定参数时也先加载，再查看当轮工具定义。\n' + catalog)
             view = [message for message in messages
                     if message != {'role': 'system', 'content': catalog}]
             boundary = next((i for i in range(len(view) - 1, -1, -1)

@@ -107,14 +107,17 @@ def test_sources_reject_unsafe_urls():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model,enabled,thinking,path,expected", [
-    ("qwen3.8-max", True, "enabled", "/v1/responses", {"function", "web_search", "web_extractor"}),
-    ("qwen3.8-flash", True, "disabled", "/v1/responses", {"function", "web_search"}),
-    ("kimi-k3", True, "enabled", "/v1/responses", {"function", "web_search"}),
-    ("deepseek-v4-pro", True, "enabled", "/v1/chat/completions", {"function"}),
-    ("qwen3.8-max", False, "enabled", "/v1/chat/completions", {"function"}),
+@pytest.mark.parametrize("model,enabled,thinking,path,expected,search_offered", [
+    ("qwen3.8-max", True, "enabled", "/v1/responses", {"function", "web_search", "web_extractor"}, True),
+    ("qwen3.8-flash", True, "disabled", "/v1/responses", {"function", "web_search"}, True),
+    ("kimi-k3", True, "enabled", "/v1/responses", {"function", "web_search"}, True),
+    ("deepseek-v4-pro", True, "enabled", "/v1/chat/completions", {"function"}, True),
+    ("qwen3.8-max", False, "enabled", "/v1/chat/completions", {"function"}, True),
+    ("qwen3.8-max", True, "enabled", "/v1/chat/completions", {"function"}, False),
 ])
-async def test_protocol_selection_cache_header_and_offline_aux_calls(model, enabled, thinking, path, expected):
+async def test_protocol_selection_cache_header_and_offline_aux_calls(
+    model, enabled, thinking, path, expected, search_offered,
+):
     captured = []
     def handle(request):
         captured.append(request)
@@ -123,13 +126,22 @@ async def test_protocol_selection_cache_header_and_offline_aux_calls(model, enab
     adapter = DashScopeChatAdapter(api_key="test", model=model, base_url="https://example.com/v1")
     adapter._client = httpx.AsyncClient(base_url="https://example.com/v1", transport=httpx.MockTransport(handle))
     try:
-        _ = [c async for c in adapter.stream_chat([{"role": "user", "content": "test"}], tools=[FUNCTION], enable_builtin_tools=enabled, thinking_mode=thinking)]
+        offered = [FUNCTION, SEARCH] if search_offered else [FUNCTION]
+        _ = [c async for c in adapter.stream_chat(
+            [{"role": "user", "content": "test"}], tools=offered,
+            enable_builtin_tools=enabled, thinking_mode=thinking,
+        )]
         request = captured[-1];body = json.loads(request.content)
         assert request.url.path == path
         assert {t["type"] for t in body["tools"]} == expected
         if path.endswith("responses"):
+            assert [t["name"] for t in body["tools"] if t["type"] == "function"] == ["lookup"]
             assert request.headers["x-dashscope-session-cache"] == "enable"
             assert body["store"] is False and "previous_response_id" not in body
+        else:
+            assert {t["function"]["name"] for t in body["tools"]} == (
+                {"lookup", "web_search"} if search_offered else {"lookup"}
+            )
         # No agent opt-in: summaries and extraction always use the offline Chat path.
         _ = [c async for c in adapter.stream_chat([{"role": "user", "content": "summarize"}])]
         assert captured[-1].url.path.endswith("chat/completions")
@@ -143,7 +155,7 @@ async def test_truncated_sse_is_an_error_not_a_completed_business_call():
     adapter._client = httpx.AsyncClient(base_url="https://example.com", transport=httpx.MockTransport(lambda r: httpx.Response(200, text='data: {"type":"response.created"}\n\n')))
     try:
         with pytest.raises(DashScopeAPIError, match="terminal"):
-            _ = [c async for c in adapter.stream_chat([], enable_builtin_tools=True)]
+            _ = [c async for c in adapter.stream_chat([], tools=[SEARCH], enable_builtin_tools=True)]
     finally:
         await adapter.close()
 
@@ -201,7 +213,7 @@ async def test_explicit_no_reasoning_wins_over_thinking_mode_for_extractor():
     adapter = DashScopeChatAdapter(api_key="test", model="qwen3.8-flash")
     adapter._client = httpx.AsyncClient(base_url="https://example.com", transport=httpx.MockTransport(handle))
     try:
-        _ = [c async for c in adapter.stream_chat([], enable_builtin_tools=True, thinking_mode="enabled", reasoning_effort="none")]
+        _ = [c async for c in adapter.stream_chat([], tools=[SEARCH], enable_builtin_tools=True, thinking_mode="enabled", reasoning_effort="none")]
         assert captured[0]["reasoning"] == {"effort": "none"}
         assert {t["type"] for t in captured[0]["tools"]} == {"web_search"}
     finally:
@@ -232,7 +244,7 @@ async def test_http_200_error_frame_preserves_provider_error():
         lambda r: httpx.Response(200, text="data: " + json.dumps(error) + "\n\n")))
     try:
         with pytest.raises(DashScopeAPIError, match="Invalid output type") as raised:
-            _ = [c async for c in adapter.stream_chat([], enable_builtin_tools=True)]
+            _ = [c async for c in adapter.stream_chat([], tools=[SEARCH], enable_builtin_tools=True)]
         assert raised.value.error_code == "InvalidParameter"
         assert raised.value.request_id == "provider-123"
         assert not raised.value.request_rejected

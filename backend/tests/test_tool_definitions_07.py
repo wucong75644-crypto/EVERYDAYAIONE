@@ -23,7 +23,16 @@ TASK_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/scheduled_task_stru
 SMART_IMAGE_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/smart_image_25_config_upgrade.json').read_text())
 WEB_SEARCH_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/web_search_protocol_01_schema.json').read_text())
 # The approved knowledge retirement changes only this routing reference.
-WEB_SEARCH_UPGRADE['function']['description'] = WEB_SEARCH_UPGRADE['function']['description'].replace('查询企业知识库 → search_knowledge', '查询知识库 → knowledge_search')
+WEB_SEARCH_UPGRADE['function']['description'] = (
+    WEB_SEARCH_UPGRADE['function']['description']
+    .replace('查询企业知识库 → search_knowledge', '查询知识库 → knowledge_search')
+    .replace('爬取社交平台内容（小红书/抖音帖子）→ social_crawler。',
+             '读取指定平台的帖子、网页正文或视频字幕时，按本轮可用能力选择专用工具。')
+)
+WEB_SEARCH_UPGRADE['function']['parameters']['properties']['query']['description'] = (
+    WEB_SEARCH_UPGRADE['function']['parameters']['properties']['query']['description']
+    .replace('搜索关键词，简洁精准。', '完整的搜索问题，保留用户给出的来源、时间和其他查询条件。')
+)
 ERP_SCOPE_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/erp_order_scope_schema_upgrade.json').read_text())
 ERP_CALCULATE_WRITE_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/erp_purchase_calculate_write_upgrade.json').read_text())
 # Existing calculation starts a remote job. Its reviewed write classification
