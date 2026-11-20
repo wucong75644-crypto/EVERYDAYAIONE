@@ -10,7 +10,7 @@ from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
 import httpx
-from mcp.server.fastmcp import FastMCP
+from services.kie_mcp_player import PlayerMCP, PLAYER_URI, playable_urls
 from mcp.types import ToolAnnotations
 from pydantic import Field
 from loguru import logger
@@ -21,9 +21,9 @@ from core.redis import RedisClient
 from services.kie_mcp_task_flow import store, task_view
 from services.kie_video_models import MODELS, VideoModel, build_video_input, public_catalog
 
-mcp = FastMCP(
+mcp = PlayerMCP(
     "KIE Video",
-    instructions="Personal KIE account. create_video spends KIE credits. Submit once, then AUTOMATICALLY call wait_video_task repeatedly until success/failure without asking the user to remind you. Show a playable/downloadable video link on completion. A bounded wait timing out does not mean generation failed. On disconnection use list_video_tasks to resume by saved ID; never resubmit. If repeated wait calls report query errors, report the outage instead of claiming success. Never retry an uncertain submission with a new request_key. Audio is OFF by default (sound=false). When the user requests speech, narration, dialogue, music, sound effects or ambient sound, set sound=true and describe the desired audio and exact spoken lines in prompt. Keep sound=false for silent videos or when audio is not requested. Enabling sound can increase KIE charges. Call list_video_models before choosing a model: each model has different durations, resolutions and image inputs. Respect user model choices; do not silently fall back or generate multiple paid candidates.",
+    instructions="Personal KIE account. create_video spends KIE credits. Submit once, then AUTOMATICALLY call wait_video_task repeatedly until success/failure without asking the user to remind you. On success call show_video with the saved task_id to display the player. Never embed MP4 using Markdown image syntax. If the client does not render MCP Apps, provide its video URL as a normal link and state that inline playback is unavailable. A bounded wait timing out does not mean generation failed. On disconnection use list_video_tasks to resume by saved ID; never resubmit. If repeated wait calls report query errors, report the outage instead of claiming success. Never retry an uncertain submission with a new request_key. Audio is OFF by default (sound=false). When the user requests speech, narration, dialogue, music, sound effects or ambient sound, set sound=true and describe the desired audio and exact spoken lines in prompt. Keep sound=false for silent videos or when audio is not requested. Enabling sound can increase KIE charges. Call list_video_models before choosing a model: each model has different durations, resolutions and image inputs. Respect user model choices; do not silently fall back or generate multiple paid candidates.",
     stateless_http=True,
     json_response=True,
     streamable_http_path="/",
@@ -184,6 +184,24 @@ async def wait_video_task(
     except Exception:
         return {**result, "continue_waiting": True, "wait_timed_out": False,
                 "query_error": "TASK_QUERY_UNAVAILABLE", "guidance": "Retry waiting without recreating the task; report persistent query errors."}
+
+
+@mcp.resource(PLAYER_URI, name="kie_video_player", mime_type="text/html")
+def player_resource() -> str:
+    """Player HTML is provided by the metadata-aware resource handler."""
+    from pathlib import Path
+    return Path(__file__).with_name('kie_mcp_player.html').read_text()
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+async def show_video(task_id: str) -> dict:
+    """Display an existing completed video using MCP Apps. Read-only, no generation or credits. Call after success. If no player appears, show video_urls as normal links; never embed an MP4 as an image. Pending permanent storage: wait then call again."""
+    result = await get_video_task(task_id)
+    return {"task_id": result['task_id'], "state": result.get('state'),
+            "video_urls": playable_urls(result.get('video_urls', [])),
+            "fallback_urls": result.get('video_urls', []),
+            "storage_state": result.get('storage_state'),
+            "display_guidance": "MCP Apps player requires client support. If absent, provide a normal fallback_urls link; never claim inline playback was verified."}
 
 
 class BearerAuth:

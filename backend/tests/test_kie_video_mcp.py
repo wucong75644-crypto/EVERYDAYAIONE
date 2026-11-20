@@ -45,7 +45,16 @@ def test_auth_and_protocol(settings, monkeypatch, redis):
         response = client.post('/api/kie-mcp/', headers=headers, json={
             "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
         tools = response.json()['result']['tools']
-        assert {t['name'] for t in tools} == {'list_video_models', 'create_video', 'get_video_task', 'wait_video_task', 'list_video_tasks'}
+        assert {t['name'] for t in tools} == {'list_video_models', 'create_video', 'get_video_task', 'wait_video_task', 'list_video_tasks', 'show_video'}
+        player = next(t for t in tools if t['name'] == 'show_video')
+        assert player['_meta']['ui']['resourceUri'] == 'ui://kie-video/player-v1.html'
+        response = client.post('/api/kie-mcp/', headers=headers, json={
+            "jsonrpc": "2.0", "id": 20, "method": "resources/read",
+            "params": {"uri": "ui://kie-video/player-v1.html"}})
+        resource = response.json()['result']['contents'][0]
+        assert resource['mimeType'] == 'text/html;profile=mcp-app'
+        assert resource['_meta']['ui']['csp']['connectDomains'] == []
+        assert '<video ' in resource['text']
         create = next(t for t in tools if t['name'] == 'create_video')
         assert 'request_key' in create['inputSchema']['required']
         for sound in (False, True):

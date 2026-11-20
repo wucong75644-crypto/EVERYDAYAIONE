@@ -222,3 +222,28 @@ checksum metadata. Native video persistence now uses full `head_object` on all t
 receipt paths (new upload, existing-object recovery, and verification). The original
 ownership/hash/size checks remain strict. A retry can recover the existing object
 without downloading again, overwriting it, or generating another video.
+
+### MCP Apps video player (client validation pending)
+
+`show_video(task_id)` is read-only and never submits a generation. After a successful
+wait, call it to present `ui://kie-video/player-v1.html`. The tool descriptor binds
+this resource via `_meta.ui.resourceUri`; resources/read returns
+`text/html;profile=mcp-app` with CSP allowing only the existing CDN media origin.
+The SDK 1.12 adapter preserves resource metadata without upgrading shared backend
+dependencies. Existing stdio bridge forwards resource requests unchanged.
+
+The player uses native video controls (play, seek, volume and browser fullscreen
+when permitted by the host), no autoplay, no credentials, no external JS, and no
+paid tool calls. Only archived HTTPS `/personal/*.mp4` CDN URLs are embedded.
+Pending archive and playback errors are explicitly shown. Temporary results remain
+available as `fallback_urls` for an ordinary link; never embed an MP4 as a Markdown
+image. Save through the opened video's browser controls; cross-origin links do not
+guarantee a forced download.
+
+Client support is independent of server protocol validation. Local Codex CLI
+0.146.0 reports `enable_mcp_apps` under development and disabled. This alone does
+not establish desktop renderer support. Do not claim conversation playback until
+the deployed tool is refreshed and the actual client renders the video. Windows
+also needs its own visual acceptance check. No client setting is changed by server
+installation. Deployment status is tracked by the release result; visual acceptance
+remains pending until tested in each client.
