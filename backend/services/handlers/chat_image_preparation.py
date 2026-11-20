@@ -96,8 +96,7 @@ def prepare_input(resolver,args,*,scoped,workflow,settings,composition=None,entr
     if source and 'content_object' in source:
         bound_specs = {key: normalized[key] for key in ('aspect_ratio', 'resolution', 'output_format')
                        if key in normalized}
-        intent, previous = resolver.size_context(
-            use_previous=False, infer_attachment_canvas='aspect_ratio' not in bound_specs)
+        intent, previous = resolver.size_context(use_previous=False, infer_attachment_canvas=False)
     else:
         intent, previous = resolver.size_context()
     if source and not size_fields.intersection(intent) and not size_fields.intersection(previous):

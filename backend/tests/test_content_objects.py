@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import uuid4
 import pytest
 from services.task_execution import content_objects as co
 from services.task_execution.contracts import TaskError, TaskState
@@ -84,7 +85,9 @@ async def test_writing_records_one_shared_origin_and_only_explicit_execution_sel
     assert not item.materials and not item.options
     original, = co.ContentRecord.model_validate_json(artifact.inline_text).source_images
 
-    target, _ = co.compile_input(r.task_execution_state, 'generate_image', {}, reference)
+    with pytest.raises(TaskError, match='CONTENT_SOURCE_IMAGE_SELECTION_REQUIRED'):
+        co.compile_input(r.task_execution_state, 'generate_image', {}, reference)
+    target, _ = co.compile_input(r.task_execution_state, 'generate_image', {}, {**reference, 'without_reference': True})
     assert target['mode'] == 'text_to_image' and target['references'] == []
     select_original = {**reference, 'source_image_indices': [1]}
     target, _ = co.compile_input(r.task_execution_state, 'generate_image', {}, select_original)
@@ -142,6 +145,22 @@ async def test_registered_reference_is_canonical_and_a_different_selection_is_re
     assert co.compile_input(r.task_execution_state, 'generate_image', {}, {**reference, 'source_image_indices': [1]}) == canonical
     with pytest.raises(TaskError, match='CONTENT_ARGUMENT_CONFLICT'):
         co.compile_input(r.task_execution_state, 'generate_image', {}, {**reference, 'source_image_indices': [2]})
+
+@pytest.mark.asyncio
+async def test_explicit_image_override_changes_only_execution_references():
+    runtime, _, _, _, row = await registered()
+    reference = ref(row)
+    state = runtime.task_execution_state
+    before, _ = co.compile_input(state, 'generate_image', {}, reference)
+    replacement = {'message_id': str(uuid4()), 'content_index': 1}
+    arguments, binding = co.compile_input(state, 'generate_image', {}, {**reference, 'image_override': [replacement]})
+    assert arguments['references'] == [{**replacement, 'role': '原图参考'}]
+    assert all(arguments[key] == before[key] for key in ('prompt', 'aspect_ratio', 'resolution', 'output_format'))
+    assert binding['reference']['image_override'] == [replacement]
+    assert co.compile_input(state, 'generate_image', {}, reference)[0] == before
+    with pytest.raises(TaskError, match='CONTENT_IMAGE_SELECTION_CONFLICT'):
+        co.compile_input(state, 'generate_image', {}, {**reference, 'image_override': [replacement, replacement]})
+
 
 @pytest.mark.asyncio
 async def test_registration_renders_same_source_and_roundtrips_checkpoint():

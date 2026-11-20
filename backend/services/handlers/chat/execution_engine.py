@@ -1541,12 +1541,13 @@ async def _execute_tools_impl(
     bound_sources = {}
     if direct_enabled(runtime):
         from services.task_execution.direct_loop import (
-            can_resume_content_calls, resume_from_model, retire_saved_image_method,
+            can_resume_content_calls, content_followup_state, resume_from_model, retire_saved_image_method,
             stage_plan_calls, stage_native_calls, stage_image_plan_batch,
         )
         assistant=_assistant_tool_message(turn_text,calls)
         scoped_content = content_tools.enabled(runtime, prepared.execution_context)
         server_image_plan = scoped_content and content_tools.uses_server_image_plan(prepared)
+        current_images = content_objects.current_source_images(request) if scoped_content else ()
         if getattr(prepared,'last_provider_output',None):assistant['_dashscope_output']=prepared.last_provider_output
         if getattr(prepared,'last_reasoning_content',''):assistant['reasoning_content']=prepared.last_reasoning_content
         if any(c['name'] in content_tools.CONTROLS for c in calls):
@@ -1630,6 +1631,16 @@ async def _execute_tools_impl(
                         save_value = content_objects.SaveContent.model_validate_json(call['arguments'])
                         if turn_text.strip() and (not save_value.continue_execution or save_value.show_content):
                             raise TaskError(content_objects.DRAFT_CONFLICT)
+                        related_state = candidate or content_followup_state(runtime)
+                        if (save_value.document is not None and save_value.continue_execution
+                                and not save_value.new_content and not server_image_plan):
+                            existing = candidate is None and bool(content_objects.objects(related_state))
+                            if (not existing and not current_images
+                                    and getattr(request.context_anchor, 'base_revision', None) is not None):
+                                existing = await asyncio.to_thread(content_tools.historical_image_source,
+                                    handler.db, request, prepared.execution_context)
+                            if existing:
+                                raise TaskError('CONTENT_EXECUTION_SOURCE_REQUIRED')
                         checked_message = None
                         if save_value.message_source is not None:
                             if not getattr(prepared, 'content_controls_available', False) or server_image_plan:
@@ -1637,10 +1648,12 @@ async def _execute_tools_impl(
                             checked_message = await asyncio.to_thread(content_tools.prepare_message_content, handler.db,
                                 request.task_id, prepared.execution_context, save_value.message_source,
                                 content_tools.checkpoint_state(runtime).get('observed_history', {}))
+                            if candidate is None and content_objects.message_artifact(related_state, checked_message[2]):
+                                raise TaskError('CONTENT_MESSAGE_SOURCE_ALREADY_REGISTERED')
                         candidate, artifact, document, value = content_objects.save(
                             runtime, call, build_capability_catalog(),
                             has_image_attachments=any(part.type == 'image' for part in request.content),
-                            source_images=content_objects.current_source_images(request),
+                            source_images=current_images,
                             checked_message=checked_message,
                         )
                         result = {'ok':True,'object':next(row for row in content_objects.catalog(candidate, for_model=True)
@@ -1666,6 +1679,11 @@ async def _execute_tools_impl(
                         if result['code'] == content_objects.PRESENTATION_INCOMPLETE:
                             from services.task_execution.methods import REFERENCE_PROMPTS_PRESENTATION
                             result['message'] = REFERENCE_PROMPTS_PRESENTATION
+                        if result['code'] in {'CONTENT_EXECUTION_SOURCE_REQUIRED', 'CONTENT_MESSAGE_SOURCE_ALREADY_REGISTERED'}:
+                            result['message'] = (
+                                '执行已有方案请从成果目录选择；尚无成果时，读取并登记原消息整组。'
+                                '只有本轮明确独立制作才用 document 和 new_content=true。'
+                            )
                         if result['code'] == content_objects.INVALID_OBJECT:
                             result['message'] = (
                                 '按当前工具定义提交有效 JSON。新建用 document（标题及条目的标题和完整正文），'
@@ -1768,7 +1786,9 @@ async def _execute_tools_impl(
                     if not scoped_content or not recovery_only and not getattr(prepared,'content_controls_available',False):
                         raise PermissionError('CONTENT_SOURCE_DENIED')
                     original = dict(args); reference = original.pop('content_source')
-                    resolved, source = content_objects.compile_input(runtime.task_execution_state,call['name'],original,reference,allow_old=recovery_only)
+                    resolved, source = content_objects.compile_input(
+                        runtime.task_execution_state, call['name'], original, reference,
+                        allow_old=recovery_only)
                     bound_sources[call['id']] = (original,source,resolved)
                     projected_calls.append({**call,'arguments':json.dumps(resolved,ensure_ascii=False)})
                     continue

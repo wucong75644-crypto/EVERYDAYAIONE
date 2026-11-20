@@ -30,10 +30,27 @@ class ContentReference(Fact):
     item_index: int = Field(strict=True, ge=1, le=100)
     sha256: str | None = Field(default=None, pattern=r'^[a-f0-9]{64}$')
 
+class ImageMessageReference(Fact):
+    message_id: UUID
+    content_index: int = Field(strict=True, ge=0)
+
+
 class ImageContentReference(ContentReference):
     source_image_indices: tuple[Annotated[int, Field(strict=True, ge=1)], ...] | None = Field(
         default=None, min_length=1, max_length=16,
-        description='仅当本轮用户要求使用原图且条目没有已登记执行图时填写，取所选成果的source_images序号。只有一张原图时填[1]。')
+        description='使用所选成果里尚未绑定的原图时，填写 source_images 序号。')
+    image_override: tuple[ImageMessageReference, ...] | None = Field(
+        default=None, min_length=1, max_length=16,
+        description='仅当用户明确换图时填写。复制对话中所选图片的 message_id 和 content_index，后台只替换此次执行的参考图。')
+    without_reference: Literal[True] | None = Field(
+        default=None, description='仅当本轮明确不使用方案的候选图片，或图片只作分析时设为 true。')
+
+    @model_validator(mode='after')
+    def image_choice(self):
+        if sum(choice is not None for choice in (
+                self.source_image_indices, self.image_override, self.without_reference)) > 1:
+            raise ValueError('CONTENT_IMAGE_SELECTION_CONFLICT')
+        return self
 
 class MaterialReference(Fact):
     resource_ref: str | None = Field(default=None,min_length=1)
@@ -176,6 +193,9 @@ class MessageContentSource(Fact):
     content_index: int = Field(strict=True, ge=0)
     title: str = Field(min_length=1, max_length=300)
     items: tuple[MessageItem, ...] = Field(min_length=1, max_length=100)
+    source_image_indices: tuple[Annotated[int, Field(strict=True, ge=1)], ...] | None = Field(
+        default=None, min_length=1, max_length=16,
+        description='整组明确沿用原稿所关联的原图时填原图序号。只分析素材时省略。')
 
 
 class SaveContent(Fact):
@@ -187,6 +207,8 @@ class SaveContent(Fact):
     message_source: MessageContentSource | None = None
     updates: tuple[ItemUpdate, ...] = Field(default=(), max_length=100)
     continue_execution: bool = False
+    new_content: Literal[True] | None = Field(
+        default=None, description='仅当本轮明确是全新制作且无需采用历史正文或素材时，随 document 填 true。')
     show_content: bool | None = Field(default=None, description=(
         '仅在用户同时要求交付文字且继续执行时设为true；只要求执行时省略，输入在后台登记。'))
 
@@ -204,6 +226,8 @@ class SaveContent(Fact):
             raise ValueError('CONTENT_SAVE_FORM_INVALID')
         if self.message_source is not None and (not self.continue_execution or self.show_content):
             raise ValueError('CONTENT_MESSAGE_SOURCE_REQUIRES_EXECUTION')
+        if self.new_content is not None and (self.document is None or not self.continue_execution):
+            raise ValueError('CONTENT_NEW_SOURCE_INVALID')
         return self
 
 def save_parameters(*, require_presentation=False):
@@ -228,13 +252,19 @@ def save_parameters(*, require_presentation=False):
 def selection_parameters(model=ContentReference):
     parameters = model.model_json_schema()
     del parameters['properties']['sha256']
+    if model is ImageContentReference:
+        definitions = parameters.pop('$defs')
+        array = next(option for option in parameters['properties']['image_override']['anyOf']
+                     if option['type'] == 'array')
+        array['items'] = definitions[ImageMessageReference.__name__]
     return parameters
 
 
 SCHEMA = {'type': 'function', 'function': {'name': SAVE,
     'description': '用于修订已登记内容，或在本轮执行前登记输入。只交付新写的文稿时直接写入聊天，后台保存消息。'
-        '要执行尚无成果条目的历史稿件，先用read_conversation_text按消息ID读取，再用message_source和continue_execution=true登记所选整条原文的行范围。'
-        '行号从1开始，两端均包含。原文包含限制时一并选择。已有成果时直接用对应成果ID。'
+        '执行历史稿件时直接选已有成果；未登记则先按消息ID读取，再用message_source和continue_execution=true登记原稿整组。'
+        '每条填完整执行原文的行范围，包含已有的限制。行号从1开始，两端均包含。整组复用原图时登记原图序号一次。'
+        '已有历史稿件或图片时，只有用户明确开启独立制作才可用document和new_content=true交接全新内容。'
         'body包含最终要求和限制；按用户或方法要求交付的可见结构放display_prefix，内部说明放notes。仅有条目专用素材或已确定执行规格时才填materials或options。'
         '修订既有条目时，base选择成果ID和条目，updates传修订正文。后台绑定版本并保留未改条目、素材和规格。'
         '本轮实际执行时设continue_execution=true；有上传图片时每条明确登记素材及用途。还要求看文字时设show_content=true。',
@@ -275,7 +305,34 @@ def load(state, reference):
     return artifact, record.document, item
 
 
+def content_image_receipts(state):
+    if state is None:
+        return {}
+    operations = {operation.step_id: operation.status for operation in state.operations}
+    completed = {result.step_id for result in state.results}
+    receipts = {}
+    for artifact in state.artifacts:
+        if 'image.direct.recipe' not in artifact.validations:
+            continue
+        if artifact.step_id in completed:
+            status = 'completed'
+        else:
+            status = operations.get(artifact.step_id)
+        if status not in {'accepted', 'completed', 'uncertain', 'reserved'}:
+            continue
+        recipe = json.loads(artifact.inline_text)['normalized']
+        proof = (recipe.get('source_prompt') or {}).get('content_object')
+        if proof is None or proof['source'].get('image_override'):
+            continue
+        source = proof['source']
+        key = (source['artifact_id'], source['item_index'])
+        receipts[key] = {'status': status, 'specs': {name: recipe[name] for name in (
+            'aspect_ratio', 'resolution', 'output_format') if name in recipe}}
+    return receipts
+
+
 def catalog(state, *, for_model=False):
+    receipts = content_image_receipts(state) if for_model else {}
     latest = {}
     for artifact in objects(state):
         record = ContentRecord.model_validate_json(artifact.inline_text)
@@ -289,6 +346,9 @@ def catalog(state, *, for_model=False):
             entry = {'item_index': index, 'title': item.title, 'options': item.options}
             if for_model:
                 entry['has_bound_inputs'] = any(material.usage == 'input' for material in item.materials)
+                receipt = receipts.get((artifact.id, index))
+                if receipt:
+                    entry['image_status'] = receipt['status']
             else:
                 entry['body_sha256'] = hashlib.sha256(item.body.encode()).hexdigest()
                 entry['materials'] = [material.model_dump(mode='json', exclude_none=True) for material in item.materials]
@@ -342,15 +402,18 @@ def retry_pending(messages):
     return False
 
 
-def current_source_images(request):
+def source_images_from_message(row):
     from services.handlers.chat_context.image_sources import image_sources
+    return tuple(SourceImage(name=image['name'], reference=image['reference'])
+                 for image in image_sources(row) if image['available'])
 
+
+def current_source_images(request):
     message_id = getattr(request.context_anchor, 'input_message_id', None)
     if not message_id:
         return ()
     row = {'id': message_id, 'role': 'user', 'content': [part.model_dump(mode='json') for part in request.content]}
-    return tuple(SourceImage(name=image['name'], reference=MaterialReference.model_validate(image['reference']))
-                 for image in image_sources(row) if image['available'])
+    return source_images_from_message(row)
 
 
 def save(runtime, call, registry, *, has_image_attachments=False, source_images=(), checked_message=None):
@@ -372,6 +435,10 @@ def save(runtime, call, registry, *, has_image_attachments=False, source_images=
         arguments.pop('show_content')
     if value.message_source is None:
         arguments.pop('message_source')
+    elif value.message_source.source_image_indices is None:
+        arguments['message_source'].pop('source_image_indices')
+    if value.new_content is None:
+        arguments.pop('new_content')
     bound = next((b for b in state.call_bindings if b.call_id == call['id']),None) if state else None
     if bound:
         if bound.tool_name != SAVE or bound.arguments_sha256 != digest(arguments):
@@ -390,7 +457,7 @@ def save(runtime, call, registry, *, has_image_attachments=False, source_images=
         raise TaskError(ATTACHMENT_USAGE_REQUIRED)
     if value.continue_execution and value.message_source is None:
         source_images = ()
-    identity = message_proof if message_proof is not None else [str(runtime.task_id), call['id']]
+    identity = message_identity(message_proof) if message_proof is not None else [str(runtime.task_id), call['id']]
     object_key = 'object-'+digest(identity)[:32]
     revision = 1
     # Importing a completed message supplies an execution source without
@@ -424,8 +491,12 @@ def save(runtime, call, registry, *, has_image_attachments=False, source_images=
                              if not present})
     if len(body.encode()) > 50000: raise TaskError('CONTENT_OBJECT_TOO_LARGE')
     checksum = hashlib.sha256(body.encode()).hexdigest()
-    for artifact in objects(runtime.task_execution_state):
-        if artifact.sha256 == checksum: return runtime.task_execution_state, artifact, document, value
+    if message_proof is not None and (existing := message_artifact(state, message_proof)) is not None:
+        if existing.sha256 != checksum:
+            raise TaskError('CONTENT_MESSAGE_SOURCE_ALREADY_REGISTERED')
+        return state, existing, document, value
+    for artifact in objects(state):
+        if artifact.sha256 == checksum: return state, artifact, document, value
     parsed = ToolCall(call['id'], SAVE, arguments)
     state = record_calls(runtime.task_execution_state, runtime.task_bootstrap, [parsed], registry)
     step, requirement = call_binding(state, parsed)
@@ -444,6 +515,29 @@ def save(runtime, call, registry, *, has_image_attachments=False, source_images=
     return complete_step(state,step.id,[artifact.id],owner_task_id=runtime.task_id), artifact, document, value
 
 
+def message_identity(proof):
+    return [proof[key] for key in ('message_id', 'content_index', 'sha256', 'context_revision')]
+
+
+def message_artifact(state, proof):
+    identity = message_identity(proof)
+    for artifact in reversed(objects(state)):
+        record = ContentRecord.model_validate_json(artifact.inline_text)
+        try:
+            source = json.loads(record.document.notes or '{}').get('message_source')
+            if source and message_identity(source) == identity:
+                return artifact
+        except (ValueError, KeyError, AttributeError, TypeError):
+            continue
+    return None
+
+
+def image_materials(images, indices):
+    if len(set(indices)) != len(indices) or any(index < 1 or index > len(images) for index in indices):
+        raise TaskError('CONTENT_SOURCE_IMAGE_UNAVAILABLE')
+    return [Material(reference=images[index - 1].reference, role='原图参考', usage='input') for index in indices]
+
+
 def _selected_image_inputs(record, indices, inputs):
     if not record.source_images:
         # A single registered execution image already answers the only possible
@@ -451,10 +545,8 @@ def _selected_image_inputs(record, indices, inputs):
         if indices == (1,) and len(inputs) == 1:
             return inputs
         raise TaskError('CONTENT_SOURCE_IMAGE_UNAVAILABLE')
-    if len(set(indices)) != len(indices) or any(index > len(record.source_images) for index in indices):
-        raise TaskError('CONTENT_SOURCE_IMAGE_UNAVAILABLE')
-    selected = [record.source_images[index - 1].reference.model_dump(mode='json', exclude_none=True)
-                for index in indices]
+    materials = image_materials(record.source_images, indices)
+    selected = [material.reference.model_dump(mode='json', exclude_none=True) for material in materials]
     if inputs:
         registered = [{key: value for key, value in image.items() if key != 'role'} for image in inputs]
         if selected != registered:
@@ -476,11 +568,25 @@ def compile_input(state, name, arguments, reference, *, allow_old=False):
     inputs = [{**m.reference.model_dump(mode='json',exclude_none=True),'role':m.role} for m in item.materials if m.usage=='input']
     result = dict(item.options)
     if name == 'generate_image':
-        if indices := selection.source_image_indices:
+        if selection.image_override:
+            if len({(image.message_id, image.content_index) for image in selection.image_override}) != len(selection.image_override):
+                raise TaskError('CONTENT_IMAGE_SELECTION_CONFLICT')
+            inputs = [{**image.model_dump(mode='json'), 'role': '原图参考'} for image in selection.image_override]
+            previous = content_image_receipts(state).get((artifact.id, selection.item_index))
+            if previous:
+                result = {**previous['specs'], **result}
+            result.pop('mode', None)
+        elif selection.without_reference:
+            if inputs:
+                raise TaskError('CONTENT_ARGUMENT_CONFLICT')
+        elif indices := selection.source_image_indices:
             selected = _selected_image_inputs(record, indices, inputs)
             if inputs:
                 selection = selection.model_copy(update={'source_image_indices': None})
             inputs = selected
+        elif record.source_images and not inputs and not allow_old and result.get('mode') != 'text_to_image':
+            if not any(material.usage == 'analysis' for material in item.materials):
+                raise TaskError('CONTENT_SOURCE_IMAGE_SELECTION_REQUIRED')
         mode='image_to_image' if inputs else 'text_to_image'
         if result.get('mode',mode)!=mode: raise TaskError('CONTENT_ARGUMENT_CONFLICT')
         result.update(prompt=text,references=inputs,mode=mode)

@@ -93,8 +93,12 @@ def model_tools(tools, *, selectable_source_images=False, server_image_plan=Fals
                 )
                 result.append(tool)
             continue
-        source = ImageContentReference if name == 'generate_image' and selectable_source_images else ContentReference
-        parameters.setdefault('properties',{})['content_source']=selection_parameters(source)
+        source = ImageContentReference if name == 'generate_image' else ContentReference
+        selection = selection_parameters(source)
+        if source is ImageContentReference and not selectable_source_images:
+            selection['properties'].pop('source_image_indices')
+            selection['properties'].pop('without_reference')
+        parameters.setdefault('properties', {})['content_source'] = selection
         # Old source locators are read-only recovery proofs, never a new model input.
         parameters['properties'].pop('source_prompt',None)
         constraints={key:parameters.pop(key) for key in ('required','anyOf','oneOf','allOf','not','dependentRequired') if key in parameters}
@@ -105,6 +109,8 @@ def model_tools(tools, *, selectable_source_images=False, server_image_plan=Fals
             tool['function']['description'] = (
                 f'用 content_source 选择一个已保存条目，异步生成{media}。'
                 '后台读取完整原文、素材与规格，受理后由页面展示进度和结果。'
+                + (' 已绑定的图自动复用。继续其余条目时跳过已有受理或结果的项；用户明确换图时只替换此次参考图。'
+                   if name == 'generate_image' else '')
             )
         else:
             if constraints:
@@ -250,16 +256,64 @@ def source_text(db, task_id, context, args):
             item['requires_explicit_read'] = True
         else:
             total += size
-    return {'messages': history}
+    result = {'messages': history}
+    if (message_id and not args.get('_for_execution') and history
+            and all(part['role'] == 'assistant' for part in history)):
+        try:
+            images = message_source_images(db, task_id, context, str(UUID(message_id)))
+        except (ValueError, PermissionError):
+            images = ()  # Text reading remains available when image provenance is absent.
+        if images:
+            result['source_images'] = [{'index': index, 'name': image.name,
+                'reference': image.reference.model_dump(mode='json', exclude_none=True)}
+                for index, image in enumerate(images, 1)]
+    return result
+
+
+def historical_image_source(db, request, context):
+    from types import SimpleNamespace
+    from services.task_execution.content_objects import source_images_from_message
+    from services.task_execution.image_resources import native_resolver
+
+    native = native_resolver(SimpleNamespace(db=db), request, context)
+    query = db.table('messages').select('id,role,content').eq(
+        'conversation_id', context.conversation_id).eq('message_kind', 'conversation').eq(
+        'status', 'completed').in_('role', ['assistant', 'user']).lte(
+        'context_revision', native.base_revision).neq('id', native.input_message_id)
+    query = query.eq('org_id', context.org_id) if context.org_id else query.is_('org_id', 'null')
+    history = query.order('context_revision', desc=True).limit(8).execute().data or []
+    has_reply = False
+    for row in history:
+        if row['role'] == 'assistant':
+            has_reply = True
+        elif has_reply and source_images_from_message(row):
+            return True
+    return False
+
+
+def message_source_images(db, task_id, context, message_id):
+    from types import SimpleNamespace
+    from services.task_execution.content_objects import source_images_from_message
+    from services.task_execution.image_resources import native_resolver
+
+    native = native_resolver(SimpleNamespace(db=db), SimpleNamespace(task_id=task_id,
+        conversation_id=context.conversation_id), context)
+    owner = db.table('tasks').select('user_id,org_id,conversation_id,input_message_id').eq(
+        'assistant_message_id', message_id).eq('type', 'chat').eq('status', 'completed').limit(2).execute().data or []
+    owner = [row for row in owner if str(row['user_id']) == str(context.actor_user_id)
+             and row['org_id'] == context.org_id and row['conversation_id'] == context.conversation_id]
+    if len(owner) != 1 or not owner[0].get('input_message_id'):
+        raise ValueError('CONTENT_MESSAGE_SOURCE_ORIGIN_UNAVAILABLE')
+    original = native._message(str(owner[0]['input_message_id']))
+    if original['role'] != 'user':
+        raise ValueError('CONTENT_MESSAGE_SOURCE_ORIGIN_UNAVAILABLE')
+    return source_images_from_message(original)
 
 
 def prepare_message_content(db, task_id, context, source, observed):
     """Copy authorized completed message ranges and their authoritative original images."""
-    from types import SimpleNamespace
-    from services.handlers.chat_context.image_sources import image_sources
     from services.handlers.chat_input_handoff import _range
-    from services.task_execution.content_objects import ContentDocument, SourceImage
-    from services.task_execution.image_resources import native_resolver
+    from services.task_execution.content_objects import ContentDocument, image_materials
 
     message_id = str(source.message_id)
     query = {'message_id': message_id, '_full': True, '_for_execution': True}
@@ -277,19 +331,10 @@ def prepare_message_content(db, task_id, context, source, observed):
         ranges.append((start, end))
         items.append({'title': item.title, 'body': text[start:end]})
 
-    native = native_resolver(SimpleNamespace(db=db), SimpleNamespace(task_id=task_id,
-        conversation_id=context.conversation_id), context)
-    owner = db.table('tasks').select('user_id,org_id,conversation_id,input_message_id').eq(
-        'assistant_message_id', message_id).eq('type', 'chat').eq('status', 'completed').limit(2).execute().data or []
-    owner = [row for row in owner if str(row['user_id']) == str(context.actor_user_id)
-             and row['org_id'] == context.org_id and row['conversation_id'] == context.conversation_id]
-    if len(owner) != 1 or not owner[0].get('input_message_id'):
-        raise ValueError('CONTENT_MESSAGE_SOURCE_ORIGIN_UNAVAILABLE')
-    original = native._message(str(owner[0]['input_message_id']))
-    if original['role'] != 'user':
-        raise ValueError('CONTENT_MESSAGE_SOURCE_ORIGIN_UNAVAILABLE')
-    images = tuple(SourceImage(name=image['name'], reference=image['reference'])
-                   for image in image_sources(original) if image['available'])
+    images = message_source_images(db, task_id, context, message_id)
+    materials = image_materials(images, source.source_image_indices or ())
+    for item in items:
+        item['materials'] = materials
     proof = {'message_id': message_id, 'content_index': source.content_index, 'ranges': ranges,
              'sha256': part['sha256'], 'context_revision': part['context_revision']}
     document = ContentDocument.model_validate({

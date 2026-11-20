@@ -725,3 +725,364 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
                 (receipt['task_id'],)).fetchone()[0] == 1
     finally:
         database.pool.close()
+
+
+@pytest.mark.asyncio
+async def test_real_remaining_plans_keep_original_and_new_upload_can_replace_it(content_db, monkeypatch, tmp_path):
+    """Real text and original bytes, local model decisions and worker transport."""
+    import hashlib
+    import io
+    import json
+    import os
+    import re
+    from pathlib import Path
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, Mock
+    from uuid import uuid4
+
+    import httpx
+    from PIL import Image
+    from psycopg.types.json import Jsonb
+    from core.config import get_settings
+    from core.db_scope import DatabaseAccessKind, DatabaseScope, ScopedDatabaseClient
+    from core.local_db import LocalDBClient
+    from schemas.message import ImagePart, TextPart
+    from services.adapters.kie.client import KieClient
+    from services.adapters.kie.image_adapter import KieImageAdapter
+    from services.adapters.types import StreamChunk, ToolCallDelta
+    from services.file_executor import FileExecutor
+    from services.handlers.chat.outcome_builder import build_content_parts
+    from services.handlers.chat_image_lifecycle import ChatImageLifecycle
+    from services.handlers.chat_image_request import REQUEST_KEY
+    from services.media_tool_executor import MediaToolMixin
+    from services.task_execution.artifact_reader import TaskArtifactReader
+    from services.task_execution.direct_loop import restore_plan
+    from services.task_execution.followup import FollowupRestart
+    from services.task_execution.image_resources import create_resolver
+    from services.task_execution.user_changes import restore
+    from services.tools import ToolCall, ToolResult
+    from services.tools.catalog import build_tool_catalog
+    from services.tools.dispatcher import _dispatch_call_id
+    from services.tools.policy import ToolPolicy
+    from tests.test_content_objects import run_content_loop
+    from tests.test_task_execution_operations_postgres import typed_store
+
+    evidence = os.getenv('CHAT_IMAGE_CONTINUITY_REPLAY')
+    if not evidence:
+        pytest.skip('Private conversation and original image required')
+    capture = json.loads((Path(evidence) / 'replay.json').read_text())
+    initial, visible, turns = capture['initial'], capture['draft']['content'][0]['text'], capture['turns']
+    original = initial['content'][1]
+    raw = (Path(os.environ['CHAT_THIRD_PLAN_RECORD']) / 'original.png').read_bytes()
+    archived = json.loads((Path(os.environ['CHAT_THIRD_PLAN_RECORD']) / 'record.json').read_text())
+    archived_image = json.loads(archived['messages'][0]['content'])[1]
+    assert archived_image['original_url'] == original['original_url']
+    assert archived_image['workspace_path'] == original['workspace_path'] and len(raw) == original['size']
+    # The offline model uses the recorded visible Markdown, including exact newlines.
+    sections = list(re.finditer(r'^### ([^\n]+)\n[^\n]+\n\n```\n(.+?)^```$', visible, re.M | re.S))
+    assert len(sections) == 4
+    bodies = [match[2] for match in sections]
+    spans = [{'title': match[1], 'first_line': visible.count('\n', 0, match.start(2)) + 1,
+              'last_line': visible.count('\n', 0, match.end(2))} for match in sections]
+    assert [[image['mode'] for image in turn['images']] for turn in turns] == [['text_to_image'], ['text_to_image'] * 3]
+    assert all(not image['references'] for turn in turns for image in turn['images'])
+    assert all(image['prompt'] not in bodies for turn in turns for image in turn['images'])
+    assert {(img['aspect_ratio'], img['resolution'], img['output_format'])
+            for turn in turns for img in turn['images']} == {('1:1', '1K', 'png')}
+
+    f = seed(content_db)
+    settings = get_settings().model_copy(update={'file_workspace_root': str(tmp_path),
+        'chat_image_async_enabled': True, 'agent_task_execution_enabled': True})
+    monkeypatch.setattr('core.config.get_settings', lambda: settings)
+    monkeypatch.setattr('services.handlers.chat.execution_engine.compact_tool_context', AsyncMock())
+    ws = AsyncMock()
+    monkeypatch.setattr('services.websocket_manager.ws_manager.send_to_task_or_user', ws)
+    monkeypatch.setattr('api.deps.get_task_limit_service', AsyncMock(return_value=SimpleNamespace(
+        acquire_image_slot=AsyncMock(), release=AsyncMock())))
+    monkeypatch.setattr(FileExecutor, 'get_cdn_url', lambda _, path: 'https://local.invalid/' + path)
+    files = FileExecutor(str(tmp_path), f['user'], None)
+    replacement = io.BytesIO()
+    Image.new('RGB', (300, 400), 'navy').save(replacement, format='PNG')
+    replacement_bytes = replacement.getvalue()
+    old_path, new_path = original['workspace_path'], 'new-task/product.png'
+    image_bytes = {old_path: raw, new_path: replacement_bytes}
+    for path, data in image_bytes.items():
+        local = files.resolve_safe_path(path)
+        local.parent.mkdir(parents=True, exist_ok=True)
+        local.write_bytes(data)
+
+    database = LocalDBClient(psycopg.conninfo.make_conninfo(content_db, user='everydayai'), min_size=1, max_size=4)
+    scoped = ScopedDatabaseClient(database, DatabaseScope(f['user'], None, DatabaseAccessKind.RUNTIME))
+    provider_requests, submitted = [], []
+
+    def create_task(request):
+        assert request.url.path == '/api/v1/jobs/createTask'
+        data = json.loads(request.content)['input']
+        provider_requests.append(data)
+        return httpx.Response(200, json={'code': 200, 'msg': 'success', 'data': {'taskId': str(uuid4())}})
+
+    client = KieClient('isolated-replay')
+    client._client = httpx.AsyncClient(base_url='https://local.invalid', transport=httpx.MockTransport(create_task), trust_env=False)
+    monkeypatch.setattr(client, '_schedule_shadow_upload', Mock())
+    monkeypatch.setattr('services.adapters.factory.create_image_adapter', lambda model, **_: KieImageAdapter(client, model))
+    monkeypatch.setattr('services.assets.asset_identity.configured_asset_hosts', lambda: frozenset({'local.invalid'}))
+    worker = ChatImageLifecycle(database, settings)
+
+    def upload(turn, text, *, image=None):
+        parts = [TextPart(text=text)] + ([image] if image else [])
+        with psycopg.connect(content_db) as connection:
+            connection.execute("""UPDATE messages SET status='completed', context_revision=COALESCE(context_revision,0),
+                turn_id=%s,content=%s WHERE id=%s""", (turn['turn'], json.dumps(
+                    [part.model_dump(mode='json', exclude_none=True) for part in parts]), turn['message']))
+        return parts
+
+    def context(turn, parts):
+        async def checkpoint(point, payload):
+            with connect(turn) as connection:
+                if '_task_execution' in payload:
+                    return save(connection, turn, payload, expected=payload['_task_execution_expected_revision'])
+                return connection.execute('SELECT save_generation_checkpoint(%s,%s,%s,%s)',
+                    (turn['task'], turn['token'], point.value, Jsonb({**payload, 'safe_point': point.value}))).fetchone()[0]
+        runtime, prepared, handler, request = case(checkpoint)
+        bootstrap = runtime.task_bootstrap
+        runtime.task_bootstrap = replace(bootstrap, task_id=UUID(turn['task']), conversation_id=UUID(turn['conv']),
+            actor_user_id=UUID(turn['user']), input_message_id=UUID(turn['message']),
+            execution_identity=bootstrap.execution_identity.model_copy(update={'workspace_owner_id': turn['user']}))
+        runtime.task_id, runtime.turn_id, runtime.conversation_id = turn['task'], turn['turn'], turn['conv']
+        prepared.execution_context = replace(prepared.execution_context, task_id=turn['task'], conversation_id=turn['conv'],
+            actor_user_id=turn['user'], workspace_owner_id=turn['user'])
+        prepared.messages = [{'role': 'user', 'content': parts[0].text}]
+        prepared.content_controls_available = True
+        prepared.core_tools.append(build_tool_catalog().require('generate_image').to_schema())
+        handler.db, handler._actor_runtime = scoped, runtime
+        request = replace(request, task_id=turn['task'], conversation_id=turn['conv'], user_id=turn['user'], content=parts,
+                          context_anchor=SimpleNamespace(input_message_id=turn['message'], base_revision=0))
+        runtime.task_image_resource_resolver = create_resolver(handler, request, prepared.execution_context)
+        runtime.task_operation_store = store = typed_store(turn)
+        runtime.task_artifact_reader = TaskArtifactReader(store.db, task_id=turn['task'], execution_token=turn['token'])
+
+        async def dispatch(calls, *args, task_image_operations, **kwargs):
+            outcomes = []
+            for raw_call in calls:
+                args = json.loads(raw_call['arguments'])
+                parsed = ToolCall(raw_call['id'], raw_call['name'], args)
+                binding = task_image_operations.bindings[raw_call['id']]
+                result = await store.begin(runtime.task_execution_state, step_id=binding.step_id, effect_key=binding.effect_key,
+                    effect_version=binding.effect_version, call=parsed)
+                task_image_operations.adopt(result)
+                decision_context = replace(prepared.execution_context, call_id=parsed.call_id)
+                decision = ToolPolicy(store.registry).decide(parsed.name, decision_context, parsed.arguments)
+                if result.outcome == 'replay':
+                    lifecycle = task_image_operations.lifecycle(handler, decision_context, parsed.call_id)
+                    replayed = lifecycle.replay_result(result, parsed, decision_context, decision)
+                    outcomes.append((raw_call, replayed, False, '已复用'))
+                    continue
+                assert result.outcome == 'execute'
+                owner = SimpleNamespace(db=scoped, task_id=turn['task'], conversation_id=turn['conv'], user_id=turn['user'],
+                    workspace_user_id=turn['user'], context_scope='user', personal_context_allowed=True, org_id=None,
+                    execution_mode='interactive', resource_manifest=None, image_execution_token=turn['token'],
+                    cancellation_event=runtime.cancellation_event, _task_execution_state=runtime.task_execution_state)
+                token = _dispatch_call_id.set(parsed.call_id)
+                try:
+                    output = await MediaToolMixin._generate_image(owner, args)
+                finally:
+                    _dispatch_call_id.reset(token)
+                receipt = output.metadata
+                assert receipt['accepted'] is True and receipt['completed'] is False, receipt
+                wrapped = ToolResult.wrap(output, call=parsed, context=decision_context, decision=decision)
+                committed = await store.complete_invocation(runtime.task_execution_state, operation_id=result.operation.id,
+                    result=wrapped, status='accepted', receipt_ref='task:' + receipt['task_id'])
+                task_image_operations.adopt(committed)
+                submitted.append(receipt)
+                outcomes.append((raw_call, wrapped, False, '已受理'))
+            return outcomes
+
+        handler._execute_tool_calls.side_effect = dispatch
+        return runtime, prepared, handler, request
+
+    async def publish(turn, receipts, expected_bodies, expected_path, expected_ratio):
+        for receipt, body in zip(receipts, expected_bodies, strict=True):
+            child = {'id': receipt['task_id'], 'user_id': turn['user'], 'org_id': None}
+            queued = await worker.refresh(child)
+            snapshot = queued['request_params'][REQUEST_KEY]
+            assert snapshot['mode'] == 'image_to_image' and snapshot['prompt'] == body
+            assert (snapshot['aspect_ratio'], snapshot['resolution'], snapshot['output_format']) == (expected_ratio, '1K', 'png')
+            reference, = snapshot['references']
+            assert reference['workspace_path'] == expected_path
+            assert reference['content_sha256'] == hashlib.sha256(image_bytes[expected_path]).hexdigest()
+            await worker.submit(queued)
+            external = provider_requests[-1]
+            assert external['prompt'] == body and ['https://local.invalid/' + expected_path] in external.values()
+            assert external.get('aspect_ratio', external.get('image_size')) == expected_ratio
+            assert external['resolution'] == '1K'
+            path = 'generated/' + receipt['task_id'] + '.png'
+            local = files.resolve_safe_path(path)
+            local.parent.mkdir(parents=True, exist_ok=True)
+            Image.new('RGB', (30, 40) if expected_ratio == '3:4' else (30, 30)).save(local)
+            user_hash = hashlib.md5(turn['user'].encode(), usedforsecurity=False).hexdigest()[:8]
+            url = f'https://local.invalid/workspace/personal/{user_hash}/{path}'
+            monkeypatch.setattr('services.file_upload.persist_media_urls_to_workspace',
+                AsyncMock(return_value=[{'url': url, 'workspace_path': path}]))
+            await worker.rpc(child, 'record_chat_image_provider_result',
+                p_result={'status': 'success', 'image_urls': ['https://local.invalid/replay']})
+            await worker.finish_recorded(await worker.refresh(child))
+            await worker.advance(await worker.refresh(child))
+            events = [event.args[2] for event in ws.await_args_list if event.args[2]['task_id'] == receipt['task_id']]
+            assert events[0]['type'] == 'message_pending'
+            assert events[-1]['type'] == 'message_done'
+            displayed, = events[-1]['payload']['message']['content']
+            assert displayed['url'] == url and displayed['quality_checks']['size_matches'] is True
+            if directory := os.getenv('CHAT_EXECUTION_WS_REPLAY_DIR'):
+                Path(directory, f'continuity-{len(provider_requests)}.json').write_text(json.dumps([events[0], events[-1]], default=str))
+
+    async def assistant_reply(turn, parts, text):
+        async def model(**kwargs):
+            yield StreamChunk(content=text)
+        runtime, prepared, handler, request = context(turn, parts)
+        sink, blocks, _ = await run_content_loop(runtime, prepared, handler, request, model)
+        assert not co.objects(runtime.task_execution_state)
+        assert [block['text'] for block in blocks if block['type'] == 'text'] == [text] and sink.text == text
+        return [part.model_dump(mode='json', exclude_none=True)
+                for part in build_content_parts(blocks, fallback_text='')]
+
+    def latest_result(prepared):
+        return json.loads(next(message['content'] for message in reversed(prepared.messages) if message['role'] == 'tool'))
+
+    async def reject_historical_registration(runtime, prepared, handler, request, recorded):
+        saved, = [entry for entry in recorded['calls'] if entry['name'] == co.SAVE]
+        arguments = saved['arguments']
+        await execute(runtime, prepared, handler, request, [call(
+            co.SAVE, json.loads(arguments) if isinstance(arguments, str) else arguments, 'historical-save')])
+        assert latest_result(prepared)['code'] == 'CONTENT_EXECUTION_SOURCE_REQUIRED'
+        handler._execute_tool_calls.assert_not_awaited()
+
+    async def choose(turn, parts, source, selections, *, recorded=None, reference_message=None):
+        runtime, prepared, handler, request = context(turn, parts)
+
+        async def transfer(candidate, observation, payload):
+            with connect(turn) as connection:
+                return adopt(connection, turn, candidate, observation, payload)
+
+        runtime.task_followup_candidate = source
+        runtime.task_followup_adopt = transfer
+        if recorded:
+            await reject_historical_registration(runtime, prepared, handler, request, recorded)
+        if reference_message:
+            await execute(runtime, prepared, handler, request, [
+                call('read_conversation_text', {'message_id': reference_message}, 'read-replacement')])
+            chosen_reference, = latest_result(prepared)['source_images']
+            selections = [{**selection, 'image_override': [chosen_reference['reference']]} for selection in selections]
+
+        async def model(**kwargs):
+            tool = next(t['function'] for t in kwargs['tools'] if t['function']['name'] == 'generate_image')
+            selector = tool['parameters']['properties']['content_source']['properties']
+            assert 'image_override' in selector
+            facts = json.loads(kwargs['messages'][-1]['content'].split('\n')[-1])
+            previous_group, = facts['previous_content_objects']
+            assert previous_group['artifact_id'] == selections[0]['artifact_id']
+            assert previous_group['items'][3]['image_status'] in {'accepted', 'completed'}
+            yield StreamChunk(tool_calls=[ToolCallDelta(index=i, id=f'selection-{i}', name='generate_image',
+                arguments_delta=json.dumps({'content_source': selection})) for i, selection in enumerate(selections)])
+
+        with pytest.raises(FollowupRestart):
+            await run_content_loop(runtime, prepared, handler, request, model)
+        with connect(turn) as connection:
+            checkpoint = connection.execute('SELECT state FROM conversation_turn_checkpoints WHERE task_id=%s',
+                (turn['task'],)).fetchone()[0]
+        runtime, prepared, handler, request = context(turn, parts)
+        runtime.checkpoint_base = checkpoint
+        runtime.task_execution_state = state = TaskState.model_validate(checkpoint['_task_execution'])
+        runtime.committed_task_execution_revision = state.revision
+        runtime.task_user_changes = restore(checkpoint, root_task_id=str(state.root_task_id), owner_task_id=turn['task'])
+        runtime._steer_messages.extend(item.message for item in runtime.task_user_changes.items if not item.delivered)
+        restore_plan(runtime, checkpoint)
+        prepared.messages = copy.deepcopy(checkpoint['messages'])
+
+        async def done(**kwargs):
+            yield StreamChunk(content='图片任务已受理。')
+
+        await run_content_loop(runtime, prepared, handler, request, done)
+        return runtime, prepared
+
+    try:
+        old_upload = ImagePart.model_validate(original)
+        old_turn = f
+        original_reply = await assistant_reply(f, upload(f, initial['content'][0]['text'], image=old_upload), visible)
+        question4, remaining = [turn['input']['content'][0]['text'] for turn in turns]
+        _, fourth, message_id, _, _ = new_turn(content_db, old=f, text=question4, reply=original_reply)
+        runtime, prepared, handler, request = context(fourth, [TextPart(text=question4)])
+        await reject_historical_registration(runtime, prepared, handler, request, turns[0])
+        await execute(runtime, prepared, handler, request, [call('read_conversation_text', {'message_id': message_id}, 'read-old')])
+        read = latest_result(prepared)
+        part, = read['messages']
+        assert part['text'] == visible and read['source_images'][0]['reference']['message_id'] == old_turn['message']
+        origin = {'message_id': message_id, 'content_index': part['content_index'], 'title': '新品提示词', 'items': spans,
+                  'source_image_indices': [1]}
+        execution_calls = [call(co.SAVE, {'continue_execution': True, 'message_source': origin}, 'import-old')]
+        await execute(runtime, prepared, handler, request, execution_calls)
+        group, = co.catalog(runtime.task_execution_state)
+        group_id = group['artifact_id']
+        assert len(group['items']) == 4
+        assert not any(body in json.dumps(latest_result(prepared)) for body in bodies)
+        assert all(co.load(runtime.task_execution_state, ref(group, i))[2].body == body
+                   for i, body in enumerate(bodies, 1))
+        await execute(runtime, prepared, handler, request, [
+            call('generate_image', {'content_source': {'artifact_id': group_id, 'item_index': 4}}, 'native-fourth')])
+        await publish(fourth, submitted[:1], [bodies[3]], old_path, '1:1')
+
+        _, rest, old_source, _, _ = new_turn(content_db, old=fourth, text=remaining)
+        old_selection = [{'artifact_id': group_id, 'item_index': index} for index in (1, 2, 3, 4)]
+        # Include the already accepted fourth slot deliberately to test the server guard.
+        rest_runtime, _ = await choose(rest, [TextPart(text=remaining)], old_source, old_selection, recorded=turns[1])
+        assert len(submitted) == 4 and co.catalog(rest_runtime.task_execution_state) == [group]
+        await publish(rest, submitted[1:4], bodies[:3], old_path, '1:1')
+
+        new_question = '参考这次上传的新图，写一条全新的产品图片提示词。'
+        _, writer, _, _, _ = new_turn(content_db, old=rest, text=new_question)
+        new_image = ImagePart(name='新产品.png', workspace_path=new_path, url='https://local.invalid/' + new_path)
+        new_body = '新产品用深蓝色的背景，输出比例：3:4。\n避免添加旧商品上的任何装饰。\n'
+        new_text = f'### 新产品方向\n\n{new_body}'
+        new_reply = await assistant_reply(writer, upload(writer, new_question, image=new_image), new_text)
+        _, replacement_turn, new_message_id, _, _ = new_turn(content_db, old=writer,
+            text='用新图做上一组的第四条，规格照旧。', reply=new_reply)
+
+        # First verify the new writing source independently, with the same authorized read and original lookup.
+        runtime, prepared, handler, request = context(replacement_turn, [TextPart(text='用新图做上一组的第四条，规格照旧。')])
+        await execute(runtime, prepared, handler, request, [
+            call('read_conversation_text', {'message_id': new_message_id}, 'read-new')])
+        from services.handlers.chat.content_tools import checkpoint_state, prepare_message_content
+        selected = co.MessageContentSource.model_validate({'message_id': new_message_id, 'content_index': 0,
+            'title': '新产品', 'items': [{'title': '新产品方向', 'first_line': 3, 'last_line': 4}],
+            'source_image_indices': [1]})
+        document, sources, _ = prepare_message_content(scoped, replacement_turn['task'], prepared.execution_context,
+            selected, checkpoint_state(runtime)['observed_history'])
+        assert document.items[0].body == new_body and sources[0].reference.message_id == writer['message']
+        assert sources[0].reference.message_id != old_turn['message']
+
+        # The replacement is the verified attachment from the preceding writing turn.
+        override_question = request.content[0].text
+        parts = [TextPart(text=override_question)]
+        with connect(replacement_turn) as connection:
+            old_source = connection.execute('SELECT read_agent_task_followup(%s,%s)',
+                (replacement_turn['task'], replacement_turn['token'])).fetchone()[0]['source']
+        revised, _ = await choose(replacement_turn, parts, old_source, [old_selection[-1]], reference_message=new_message_id)
+        assert str(revised.task_execution_state.root_task_id) == fourth['task']
+        assert co.catalog(revised.task_execution_state) == [group] and len(submitted) == 5
+        await publish(replacement_turn, submitted[4:], [bodies[3]], new_path, '1:1')
+        _, fresh, _, _, _ = new_turn(content_db, old=replacement_turn, text='用新产品的方案生成一张图。')
+        runtime, prepared, handler, request = context(fresh, [TextPart(text='用新产品的方案生成一张图。')])
+        await execute(runtime, prepared, handler, request, [
+            call('read_conversation_text', {'message_id': new_message_id}, 'read-new-fresh')])
+        await execute(runtime, prepared, handler, request, [call(co.SAVE, {'continue_execution': True,
+            'message_source': selected.model_dump(mode='json', exclude_none=True)}, 'import-new')])
+        new_group, = co.catalog(runtime.task_execution_state)
+        assert new_group['object_key'] != group['object_key']
+        assert str(runtime.task_execution_state.root_task_id) == fresh['task']
+        await execute(runtime, prepared, handler, request, [call('generate_image',
+            {'content_source': {'artifact_id': new_group['artifact_id'], 'item_index': 1}}, 'new-product-image')])
+        assert len(submitted) == 6
+        await publish(fresh, submitted[5:], [new_body], new_path, '3:4')
+        assert len(provider_requests) == 6
+    finally:
+        await client._client.aclose()
+        database.pool.close()

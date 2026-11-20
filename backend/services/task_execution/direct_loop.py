@@ -538,9 +538,13 @@ async def bind_image_recipes(runtime,calls,registry,*,server_image_plan=False):
 
 
 def duplicate_image_plan_items(state, calls):
-    """A reused result or an earlier accepted item cannot be submitted again."""
-    if state is None or not saved_image_plans(state) and not any(a.image_method for a in state.artifacts):
+    """Block equivalent items using the same ledger as method image slots."""
+    if state is None:
         return {}
+    from .content_objects import ContentRecord, objects
+
+    groups = {artifact.id: ContentRecord.model_validate_json(artifact.inline_text).object_key
+              for artifact in objects(state)}
     held = {operation.step_id for operation in state.operations if operation.status != 'failed_before_dispatch'}
     held.update(result.step_id for result in state.results)
     by_call = {}
@@ -548,10 +552,19 @@ def duplicate_image_plan_items(state, calls):
     for artifact in state.artifacts:
         if 'image.direct.recipe' not in artifact.validations:
             continue
-        handoff = json.loads(artifact.inline_text).get('method_handoff')
-        if handoff is None:
-            continue
-        item = (handoff['artifact_id'], handoff['image_item_index'])
+        recipe = json.loads(artifact.inline_text)
+        handoff = recipe.get('method_handoff')
+        if handoff is not None:
+            item = (handoff['artifact_id'], handoff['image_item_index'])
+        else:
+            normalized = recipe['normalized']
+            proof = (normalized.get('source_prompt') or {}).get('content_object')
+            if proof is None or proof['source']['artifact_id'] not in groups:
+                continue
+            selection = proof['source']
+            effect = {key: value for key, value in normalized.items() if key not in {
+                'source_prompt', 'references', 'plan_item_id', 'variant_id', 'size_requirement'}}
+            item = (groups[selection['artifact_id']], selection['item_index'], digest([effect, recipe['resolved']]))
         by_call[artifact.source_call_id] = (item, artifact.step_id)
         if artifact.step_id in held:
             occupied[item] = artifact.step_id
@@ -562,9 +575,8 @@ def duplicate_image_plan_items(state, calls):
             continue
         item, step = proof
         if occupied.setdefault(item, step) != step:
-            errors[call['id']] = ('TASK_IMAGE_PLAN_ITEM_ALREADY_SUBMITTED', '此逐图方案项已有执行记录，请先读取或复用原结果。')
+            errors[call['id']] = ('TASK_IMAGE_PLAN_ITEM_ALREADY_SUBMITTED', '此方案项以相同原文、素材和规格提交过，请复用原结果。')
     return errors
-
 
 def end_candidate(state):
     """Physical outcomes, not an independent judgment of natural-language goals."""

@@ -97,7 +97,7 @@ def user_size_intent(text: str) -> dict:
 def selected_source_size(prompt: str) -> dict:
     """Explicit output declarations in verified selected content, excluding product geometry."""
     declarations = [match[1] for match in re.finditer(
-        r'(?:输出(?:比例|尺寸|分辨率)|画布(?:比例|尺寸)|aspect[_ ]ratio)'
+        r'(?:输出(?:比例|尺寸|分辨率)|画布(?:比例|尺寸)|aspect[_ ]ratio|(?<!\w)--ar)'
         r'\s*[:：=为是]?\s*(\d+\s*[:：xX×]\s*\d+|\d+[kK])', prompt, re.I)
         if not source_canvas_fact(prompt, match.start())]
     return user_size_intent('，'.join(declarations))
