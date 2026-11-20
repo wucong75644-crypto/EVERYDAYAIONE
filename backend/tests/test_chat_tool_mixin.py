@@ -4,6 +4,7 @@ services/handlers/chat_tool_mixin.py 单元测试
 覆盖：_partition_tool_calls()、_execute_single_tool()、_accumulate_tool_call_delta()
 """
 
+import json
 import sys
 from pathlib import Path
 
@@ -193,9 +194,16 @@ class TestExecuteSingleTool:
         result = await ChatToolMixin._execute_single_tool(
             mixin, tc, executor, "task1", "conv1", "msg1", "test_user", 1,
         )
-        tc_out, text, is_error, _display = result
+        returned_call, model_text, is_error, display = result
+        assert returned_call == tc
         assert is_error is True
-        assert "参数解析失败" in (text.model_content("chat") if isinstance(text, ToolResult) else text)
+        rejection = json.loads(display)
+        assert rejection["code"] == "MODEL_TOOL_ARGUMENTS_INVALID"
+        assert rejection["stage"] == "validate"
+        assert rejection["recovery"]["action"] == "repair_arguments"
+        assert rejection["issues"][0]["path"] == "$"
+        assert display in model_text
+        executor.handler.assert_not_awaited()
 
     @pytest.mark.asyncio
     @patch("services.handlers.chat_tool_mixin.ws_manager")
