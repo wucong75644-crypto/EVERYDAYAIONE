@@ -4,7 +4,9 @@ Endpoint: `https://<existing-app-domain>/api/kie-mcp/` (trailing slash).
 The existing backend serves the MCP Streamable HTTP transport through the existing `/api` reverse proxy.
 
 The server reads `KIE_API_KEY` using the existing backend `.env` settings loader.
-Set a separate random `KIE_MCP_TOKEN` of at least 32 characters in that server `.env`.
+The controlled release provisions a separate random `KIE_MCP_TOKEN` in that server `.env`
+via `deploy/configure-kie-mcp.py`, before service restart. It preserves existing tokens
+and all other settings and uses the existing private atomic environment patch helper.
 No token means all MCP requests return 401. Browser Origin requests are rejected.
 Never commit or print these values. The endpoint is a personal account capability;
 it bypasses application users and application credit billing, and spends the server's KIE balance.
@@ -122,3 +124,22 @@ Additional model protocol references (checked 2026-11-20):
 - https://docs.kie.ai/market/bytedance/seedance-2-5
 - https://docs.kie.ai/market/pixverse/v6-max-text-to-video
 - https://docs.kie.ai/market/pixverse/v6-max-image-to-video
+
+## Installed desktop connection
+
+For Codex versions without an HTTP credential helper, use `scripts/kie-mcp-bridge.py`
+as the stdio command. It forwards the stateless JSON-RPC messages to the HTTPS MCP
+endpoint and reads a private 0600 credential file. No credential is embedded in the
+script, process arguments, or tracked/global Codex configuration. Redirects are denied
+and uncertain requests are never retried. The bridge forwards MCP results/errors
+unchanged and carries the negotiated protocol version on subsequent HTTP calls.
+
+Install a copy in `~/.codex/mcp/kie-video/bridge.py`, store the independent MCP token
+in `~/.codex/mcp/kie-video/token` (directory 0700, file 0600), then register:
+
+```sh
+codex mcp add kie_video -- /usr/bin/python3 /Users/wucong/.codex/mcp/kie-video/bridge.py https://everydayai.com.cn/api/kie-mcp/ /Users/wucong/.codex/mcp/kie-video/token
+```
+
+After registration verify initialization, tools/list and list_video_models through
+the actual bridge; do not submit a paid generation during deployment checks.

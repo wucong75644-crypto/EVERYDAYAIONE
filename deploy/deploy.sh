@@ -501,7 +501,10 @@ deploy_backend() {
             echo "❌ 服务器虚拟环境版本不匹配: $actual_python（要求 Python 3.11）"
             exit 1
         fi
-        venv/bin/python -m pip install -q -r requirements.txt
+        if ! venv/bin/python -m pip install -q --retries 1 --timeout 15 -r requirements.txt; then
+            echo "默认 Python 包镜像不可用，使用官方 PyPI 重试固定版本依赖"
+            venv/bin/python -m pip install -q --index-url https://pypi.org/simple --retries 2 --timeout 30 -r requirements.txt
+        fi
         if [ ! -f ".env" ]; then
             echo "❌ .env 文件不存在"
             exit 1
@@ -533,6 +536,8 @@ deploy_backend() {
         # The pinned XHS scan fix must be installed under the release lock.
         venv/bin/python /var/www/everydayai/deploy/xhs/install-login-fix.py
 ENDSSH
+    remote_exec /var/www/everydayai/backend/venv/bin/python \
+        /var/www/everydayai/deploy/configure-kie-mcp.py --lock-token "$EVERYDAYAI_RELEASE_LOCK_TOKEN"
     configure_agent_task_execution
     remote_exec bash << 'ENDSSH'
         set -e
