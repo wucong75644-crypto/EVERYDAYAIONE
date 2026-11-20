@@ -78,7 +78,8 @@ def test_deploy_pins_local_python_312_and_remote_python_311() -> None:
     assert 'EVERYDAYAI_PYTHON_BIN="${EVERYDAYAI_PYTHON_BIN:-python3.12}"' in SCRIPT
     assert 'EVERYDAYAI_REQUIRED_PYTHON="${EVERYDAYAI_REQUIRED_PYTHON:-3.12}"' in SCRIPT
     assert '"$EVERYDAYAI_PYTHON_BIN" -m venv venv' in SCRIPT
-    assert 'venv/bin/python -m pip install -q -r requirements.txt' in SCRIPT
+    assert 'venv/bin/python -m pip install -q --retries 1 --timeout 15 -r requirements.txt' in SCRIPT
+    assert 'venv/bin/python -m pip install -q --index-url https://pypi.org/simple --retries 2 --timeout 30 -r requirements.txt' in SCRIPT
     assert 'python3.11 -m venv venv' in SCRIPT
     assert 'python3 -m venv venv' not in SCRIPT
     assert '\n    pip install -q -r requirements.txt' not in SCRIPT

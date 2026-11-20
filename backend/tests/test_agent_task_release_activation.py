@@ -11,12 +11,13 @@ from tests.test_production_env_safety import ENV
 ROOT=Path(__file__).resolve().parents[2]
 
 
-def invoke(tmp_path,*,enabled=True,failure=0):
+def invoke(tmp_path,*,enabled=True,failure=0,kie_failure=0):
     source=(ROOT/'deploy/deploy.sh').read_text().rsplit('main "$@"',1)[0]
     stubs='''
 remote_exec() {
   printf '%s\\n' "$*" >> "$TRACE"
   if [[ "$1" == bash ]]; then cat >/dev/null; return 0; fi
+  if [[ "$*" == *configure-kie-mcp.py* ]]; then return "$KIE_FAILURE"; fi
   cat > "$PATCH"
   return "$FAILURE"
 }
@@ -26,15 +27,16 @@ EVERYDAYAI_RELEASE_LOCK_TOKEN=owned-test-token
 deploy_backend
 '''
     result=subprocess.run(['bash','-s'],input=source+stubs,text=True,capture_output=True,cwd=ROOT,
-        env={**os.environ,'TRACE':str(tmp_path/'trace'),'PATCH':str(tmp_path/'patch'),'ENABLED':'true' if enabled else 'false','FAILURE':str(failure)},timeout=10)
+        env={**os.environ,'TRACE':str(tmp_path/'trace'),'PATCH':str(tmp_path/'patch'),'ENABLED':'true' if enabled else 'false','FAILURE':str(failure),'KIE_FAILURE':str(kie_failure)},timeout=10)
     return result,(tmp_path/'trace').read_text().splitlines()
 
 
 def test_explicit_activation_patches_only_three_keys_between_prepare_and_restart(tmp_path):
     result,trace=invoke(tmp_path)
     assert result.returncode==0
-    assert len(trace)==3 and trace[0]==trace[2]=='bash'
-    assert trace[1].endswith('deploy/env-patch.py --lock-token owned-test-token')
+    assert len(trace)==4 and trace[0]==trace[3]=='bash'
+    assert trace[1].endswith('deploy/configure-kie-mcp.py --lock-token owned-test-token')
+    assert trace[2].endswith('deploy/env-patch.py --lock-token owned-test-token')
     patch=json.loads((tmp_path/'patch').read_text())
     assert patch=={'AGENT_TASK_EXECUTION_ENABLED':'true','AGENT_TASK_MODEL_DIRECTED_ENABLED':'true','AGENT_TASK_ERP_WRITE_ENABLED':'false'}
     target=tmp_path/'.env';target.write_text('DATABASE_URL=unchanged-db\nAPI_KEY=unchanged-secret\nOTHER_FEATURE=true\nAGENT_TASK_MODEL_DIRECTED_ENABLED=false\nAGENT_TASK_ERP_WRITE_ENABLED=true\n')
@@ -47,16 +49,27 @@ def test_explicit_activation_patches_only_three_keys_between_prepare_and_restart
 
 def test_default_release_does_not_patch_flags(tmp_path):
     result,trace=invoke(tmp_path,enabled=False)
-    assert result.returncode==0 and trace==['bash','bash']
+    assert result.returncode==0 and len(trace)==3
+    assert trace[0]==trace[2]=='bash'
+    assert trace[1].endswith('deploy/configure-kie-mcp.py --lock-token owned-test-token')
     assert not (tmp_path/'patch').exists()
 
 
 def test_configuration_failure_stops_before_service_restart(tmp_path):
     result,trace=invoke(tmp_path,failure=42)
-    assert result.returncode==42 and len(trace)==2
+    assert result.returncode==42 and len(trace)==3
+    assert trace[-1].endswith('deploy/env-patch.py --lock-token owned-test-token')
 
 
 @pytest.mark.parametrize('mode',[['--frontend-only'],['--accept-and-close'],['--rollback','0'*40],['--recover-lock','not-owner','--failed-commit','0'*40]])
 def test_activation_rejects_wrong_release_mode_before_any_production_io(mode):
     result=subprocess.run(['bash',str(ROOT/'deploy/release.sh'),'--enable-agent-task-execution',*mode],cwd=ROOT,capture_output=True,text=True,timeout=10)
     assert result.returncode!=0 and '只用于包含后端的正常发布' in result.stdout+result.stderr
+
+
+def test_kie_configuration_failure_stops_before_activation_or_restart(tmp_path):
+    result,trace=invoke(tmp_path,kie_failure=43)
+    assert result.returncode==43 and len(trace)==2
+    assert trace[0]=='bash'
+    assert trace[-1].endswith('deploy/configure-kie-mcp.py --lock-token owned-test-token')
+    assert not (tmp_path/'patch').exists()

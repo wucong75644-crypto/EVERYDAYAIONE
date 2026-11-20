@@ -306,7 +306,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     set_kernel_manager(_kernel_manager)
     logger.info(f"KernelManager started | nsjail={'enabled' if _nsjail_cfg else 'disabled'}")
 
-    yield
+    from services.kie_video_mcp import mcp
+    from services.kie_mcp_task_flow import worker_loop
+    from contextlib import suppress
+    import asyncio
+    async with mcp.session_manager.run():
+        personal_worker = asyncio.create_task(worker_loop()) if settings.kie_mcp_token and settings.kie_api_key else None
+        try:
+            yield
+        finally:
+            if personal_worker:
+                personal_worker.cancel()
+                with suppress(asyncio.CancelledError):
+                    await personal_worker
 
     await knowledge_worker.stop(knowledge_worker_task)
     await journal_worker.stop(journal_worker_task)
@@ -396,6 +408,9 @@ def create_app() -> FastAPI:
 
     # 注册路由
     register_routers(app)
+
+    from services.kie_video_mcp import authenticated_app
+    app.mount("/api/kie-mcp", authenticated_app)
 
     return app
 
@@ -537,6 +552,8 @@ def register_routers(app: FastAPI) -> None:
 
     # Webhook 回调（无需用户鉴权，Provider 直接调用）
     app.include_router(webhook.router, prefix="/api")
+    from api.routes.kie_mcp_callback import router as kie_callback_router
+    app.include_router(kie_callback_router, prefix="/api")
 
     # 企业微信回调（无需用户鉴权）
     app.include_router(wecom.router, prefix="/api")
