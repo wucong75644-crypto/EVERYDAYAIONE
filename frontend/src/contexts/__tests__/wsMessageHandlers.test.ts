@@ -121,7 +121,9 @@ describe('independent chat image delivery', () => {
   const scenarios = ['recorded-first', 'recorded-fifth', 'text-to-image', 'image-to-image'];
   for (const scenario of ['recorded-write-once', 'recorded-retired', 'recorded-third-output',
     'new-third-output', 'recorded-third-history', 'new-third-history',
-    'continuity-1', 'continuity-2', 'continuity-3', 'continuity-4', 'continuity-5', 'continuity-6']) {
+    'continuity-ordinary-1', 'continuity-ordinary-2', 'continuity-ordinary-3',
+    'continuity-ordinary-4', 'continuity-ordinary-5', 'continuity-ordinary-6',
+    'continuity-skill-1', 'continuity-skill-2', 'continuity-skill-3']) {
     if (replayDir && existsSync(join(replayDir, scenario + '.json'))) scenarios.push(scenario);
   }
   it.skipIf(!replayDir).each(scenarios)('projects the actual local worker receipt for %s', scenario => {
@@ -140,7 +142,7 @@ describe('independent chat image delivery', () => {
     expect(final).toMatchObject({ status: 'completed', content: [{
       type: 'image', url: expect.stringMatching(scenario.startsWith('continuity-')
         ? /\/generated\/[\da-f-]+\.png$/ : /\/generated\/local-replay\.png$/),
-      width: 30, height: ['image-to-image', 'new-third-output', 'new-third-history', 'continuity-6'].includes(scenario) ? 40 : 30,
+      width: 30, height: ['image-to-image', 'new-third-output', 'new-third-history', 'continuity-ordinary-6', 'continuity-skill-3'].includes(scenario) ? 40 : 30,
     }] });
     vi.mocked(store.getMessage).mockReturnValue({ ...placeholder, ...final } as Message);
     handlers.message_pending(pending);

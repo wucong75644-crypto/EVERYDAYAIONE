@@ -19,13 +19,13 @@ from tests.test_task_execution_followup_reuse_postgres import (followup_db,new_t
 def content_db(dispatch_db):
     root=__import__('pathlib').Path(__file__).parents[1]
     with psycopg.connect(dispatch_db) as c:
-        for migration in ('376_agent_task_image_method_handoff','377_agent_task_content_objects'):
+        for migration in ('376_agent_task_image_method_handoff','377_agent_task_content_objects','378_agent_content_followup_groups'):
             c.execute((root/f'migrations/{migration}.sql').read_text())
     yield dispatch_db
     with psycopg.connect(dispatch_db) as c:
         c.execute("DELETE FROM conversation_turn_checkpoints WHERE state ? '_task_execution'")
         c.execute('DELETE FROM agent_task_events');c.execute('DELETE FROM agent_task_states');c.execute('SET CONSTRAINTS ALL IMMEDIATE')
-        for migration in ('377_agent_task_content_objects','376_agent_task_image_method_handoff'):
+        for migration in ('378_agent_content_followup_groups','377_agent_task_content_objects','376_agent_task_image_method_handoff'):
             c.execute((root/f'migrations/rollback/{migration}_rollback.sql').read_text())
 
 @pytest.mark.asyncio
@@ -479,7 +479,9 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
                 saved = co.ContentRecord.model_validate_json(artifact.inline_text)
                 assert saved_block['content_artifact_id'] == artifact.id
                 assert saved_block['text'] == co.render(saved_doc)
-                assert saved_item.body == body and all(not item.materials and not item.options for item in saved_doc.items)
+                assert saved_item.body == body
+                if saved_item.materials:
+                    assert all(m.reference.message_id == original_message and m.usage == 'input' for m in saved_item.materials)
                 delivered, = [part for part in build_content_parts(registered_blocks, fallback_text='') if part.type == 'text']
                 assert delivered.content_artifact_id == artifact.id and delivered.text == saved_block['text']
                 source, = saved.source_images
@@ -489,7 +491,8 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
                     assert [i.body for i in saved_doc.items] == [i['body'] for i in output_items]
                     assert all(saved_block['text'].count(i['body']) == 1 for i in output_items)
                     assert co.OUTPUT_START not in saved_block['text']
-                selection['source_image_indices'] = [1]
+                if not saved_item.materials:
+                    selection['source_image_indices'] = [1]
             old_task_id = f['task']
             _old, f, previous, _obs, _merged = new_turn(content_db, old=f, text=later_question)
 
@@ -509,8 +512,11 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
                 if write_once or automatic_output:
                     facts = json.loads(kwargs['messages'][-1]['content'].split('\n')[-1])
                     offered, = facts['previous_content_objects']
-                    assert offered['source_images'] == [{'index': 1, 'name': source.name}]
-                    assert 'source_image_indices' in selector['properties']
+                    if saved_item.materials:
+                        assert offered['items'][item_index-1]['has_bound_inputs']
+                    else:
+                        assert offered['source_images'] == [{'index': 1, 'name': source.name}]
+                        assert 'source_image_indices' in selector['properties']
                 yield tool_chunk('generate_image', arguments=json.dumps({'content_source':selection}))
 
             with pytest.raises(FollowupRestart):
@@ -630,7 +636,11 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
             assert receipts and seen == 1, 'A checked selection should resume before asking the model again'
             yield StreamChunk(content='图片任务已受理。')
         elif seen == 1:
-            args = {'document':doc,'continue_execution':True}
+            args = {'document':copy.deepcopy(doc),'continue_execution':True}
+            if scenario == 'image-to-image':
+                # The live request supplies the original; the model supplies only the authored text.
+                for item in args['document']['items']:
+                    item.pop('materials', None)
             yield StreamChunk(tool_calls=[ToolCallDelta(index=0,id='save',name=co.SAVE,
                                                         arguments_delta=json.dumps(args, ensure_ascii=False))])
         elif seen == 2:
@@ -728,7 +738,8 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
 
 
 @pytest.mark.asyncio
-async def test_real_remaining_plans_keep_original_and_new_upload_can_replace_it(content_db, monkeypatch, tmp_path):
+@pytest.mark.parametrize('sample', ['ordinary', 'skill'])
+async def test_real_remaining_plans_keep_original_and_new_upload_can_replace_it(content_db, monkeypatch, tmp_path, sample):
     """Real text and original bytes, local model decisions and worker transport."""
     import hashlib
     import io
@@ -779,16 +790,23 @@ async def test_real_remaining_plans_keep_original_and_new_upload_can_replace_it(
     assert archived_image['original_url'] == original['original_url']
     assert archived_image['workspace_path'] == original['workspace_path'] and len(raw) == original['size']
     # The offline model uses the recorded visible Markdown, including exact newlines.
-    sections = list(re.finditer(r'^### ([^\n]+)\n[^\n]+\n\n```\n(.+?)^```$', visible, re.M | re.S))
-    assert len(sections) == 4
-    bodies = [match[2] for match in sections]
-    spans = [{'title': match[1], 'first_line': visible.count('\n', 0, match.start(2)) + 1,
-              'last_line': visible.count('\n', 0, match.end(2))} for match in sections]
-    assert [[image['mode'] for image in turn['images']] for turn in turns] == [['text_to_image'], ['text_to_image'] * 3]
-    assert all(not image['references'] for turn in turns for image in turn['images'])
-    assert all(image['prompt'] not in bodies for turn in turns for image in turn['images'])
-    assert {(img['aspect_ratio'], img['resolution'], img['output_format'])
-            for turn in turns for img in turn['images']} == {('1:1', '1K', 'png')}
+    mixed = None
+    if sample == 'skill':
+        import base64
+        path = os.getenv('CHAT_CONTENT_DUPLICATE_RECORD')
+        if not path:
+            pytest.skip('Private original Skill conversation required')
+        record = json.loads(Path(path).read_text())
+        initial = record['messages'][1]
+        original = initial['content'][1]
+        visible = record['mixed']['content']
+        mixed = record['mixed']['tool_calls']
+        raw = base64.b64decode(record['original']['raw_b64'])
+        assert original['workspace_path'] == record['original']['path']
+    expected_fourth = {
+        'ordinary': '7635318a2ad3f8d42ea117579481c8037be7dd510a746c6cbd6b62ac8ae1f1a7',
+        'skill': '68fc87a916ddf18372a81b615773bccb0ca1736f1aee51dfe435b5a70a67d907',
+    }[sample]
 
     f = seed(content_db)
     settings = get_settings().model_copy(update={'file_workspace_root': str(tmp_path),
@@ -881,6 +899,7 @@ async def test_real_remaining_plans_keep_original_and_new_upload_can_replace_it(
                 owner = SimpleNamespace(db=scoped, task_id=turn['task'], conversation_id=turn['conv'], user_id=turn['user'],
                     workspace_user_id=turn['user'], context_scope='user', personal_context_allowed=True, org_id=None,
                     execution_mode='interactive', resource_manifest=None, image_execution_token=turn['token'],
+                    image_composition=kwargs.get('image_composition'), image_skill_snapshot=kwargs.get('image_skill_snapshot', ()),
                     cancellation_event=runtime.cancellation_event, _task_execution_state=runtime.task_execution_state)
                 token = _dispatch_call_id.set(parsed.call_id)
                 try:
@@ -888,7 +907,7 @@ async def test_real_remaining_plans_keep_original_and_new_upload_can_replace_it(
                 finally:
                     _dispatch_call_id.reset(token)
                 receipt = output.metadata
-                assert receipt['accepted'] is True and receipt['completed'] is False, receipt
+                assert receipt['accepted'] is True and receipt['completed'] is False, (receipt, str(output)[:1200])
                 wrapped = ToolResult.wrap(output, call=parsed, context=decision_context, decision=decision)
                 committed = await store.complete_invocation(runtime.task_execution_state, operation_id=result.operation.id,
                     result=wrapped, status='accepted', receipt_ref='task:' + receipt['task_id'])
@@ -933,57 +952,96 @@ async def test_real_remaining_plans_keep_original_and_new_upload_can_replace_it(
             displayed, = events[-1]['payload']['message']['content']
             assert displayed['url'] == url and displayed['quality_checks']['size_matches'] is True
             if directory := os.getenv('CHAT_EXECUTION_WS_REPLAY_DIR'):
-                Path(directory, f'continuity-{len(provider_requests)}.json').write_text(json.dumps([events[0], events[-1]], default=str))
+                key = f'continuity-{sample}-{len(provider_requests)}'
+                Path(directory, key + '.json').write_text(json.dumps([events[0], events[-1]], default=str))
+                Path(directory, key + '-request.json').write_text(json.dumps({
+                    'provider': 'local MockTransport', 'prompt_sha256': hashlib.sha256(external['prompt'].encode()).hexdigest(),
+                    'prompt_characters': len(external['prompt']), 'includes_negative_section': '## 负面提示词' in external['prompt'],
+                    'reference_sha256': reference['content_sha256'], 'aspect_ratio': snapshot['aspect_ratio'],
+                    'resolution': snapshot['resolution'], 'output_format': snapshot['output_format'],
+                    'receipt': receipt['accepted'], 'first_event': events[0]['type'], 'last_event': events[-1]['type'],
+                }, indent=2))
 
-    async def assistant_reply(turn, parts, text):
-        async def model(**kwargs):
-            yield StreamChunk(content=text)
-        runtime, prepared, handler, request = context(turn, parts)
-        sink, blocks, _ = await run_content_loop(runtime, prepared, handler, request, model)
-        assert not co.objects(runtime.task_execution_state)
-        assert [block['text'] for block in blocks if block['type'] == 'text'] == [text] and sink.text == text
-        return [part.model_dump(mode='json', exclude_none=True)
-                for part in build_content_parts(blocks, fallback_text='')]
-
-    def latest_result(prepared):
-        return json.loads(next(message['content'] for message in reversed(prepared.messages) if message['role'] == 'tool'))
-
-    async def reject_historical_registration(runtime, prepared, handler, request, recorded):
-        saved, = [entry for entry in recorded['calls'] if entry['name'] == co.SAVE]
-        arguments = saved['arguments']
-        await execute(runtime, prepared, handler, request, [call(
-            co.SAVE, json.loads(arguments) if isinstance(arguments, str) else arguments, 'historical-save')])
-        assert latest_result(prepared)['code'] == 'CONTENT_EXECUTION_SOURCE_REQUIRED'
-        handler._execute_tool_calls.assert_not_awaited()
-
-    async def choose(turn, parts, source, selections, *, recorded=None, reference_message=None):
-        runtime, prepared, handler, request = context(turn, parts)
-
+    def attach_history(turn, runtime):
+        with connect(turn) as connection:
+            history = connection.execute('SELECT read_agent_task_followup(%s,%s)',
+                (turn['task'], turn['token'])).fetchone()[0]
+        runtime.task_followup_candidate = history.get('source')
+        runtime.task_content_groups = history.get('other_groups', [])
+        async def read_root(root):
+            with connect(turn) as connection:
+                return connection.execute('SELECT read_agent_content_followup(%s,%s,%s)',
+                    (turn['task'], turn['token'], root)).fetchone()[0]['source']
+        runtime.read_content_root = read_root
         async def transfer(candidate, observation, payload):
             with connect(turn) as connection:
                 return adopt(connection, turn, candidate, observation, payload)
-
-        runtime.task_followup_candidate = source
         runtime.task_followup_adopt = transfer
-        if recorded:
-            await reject_historical_registration(runtime, prepared, handler, request, recorded)
-        if reference_message:
-            await execute(runtime, prepared, handler, request, [
-                call('read_conversation_text', {'message_id': reference_message}, 'read-replacement')])
-            chosen_reference, = latest_result(prepared)['source_images']
-            selections = [{**selection, 'image_override': [chosen_reference['reference']]} for selection in selections]
+
+    async def assistant_reply(turn, parts, text, tool_calls=None):
+        async def model(**kwargs):
+            yield StreamChunk(content=text[:19])
+            yield StreamChunk(content=text[19:])
+            if tool_calls:
+                yield StreamChunk(tool_calls=[ToolCallDelta(index=i, id=c['id'], name=c['function']['name'],
+                    arguments_delta=c['function']['arguments']) for i,c in enumerate(tool_calls)])
+        runtime, prepared, handler, request = context(turn, parts)
+        attach_history(turn, runtime)
+        if tool_calls:
+            from services.skills.selection import SkillSelection
+            from tests.test_task_execution_original_skills import OriginalSource, original_runtime
+            skill, = [part for part in record['messages'][0]['content'] if part['type'] == 'skill_step']
+            if not os.getenv('TASK_ORIGINAL_SKILLS_EXPORT'):
+                pytest.skip('Local copy of pinned original Skill is required')
+            pinned = SkillSelection(skill_id='reference-image-prompts', revision=skill['revision'])
+            runtime.skill_runtime = original_runtime(OriginalSource(), turn_id=runtime.turn_id)
+            await runtime.skill_runtime.initialize(selection=pinned)
+            assert (await runtime.skill_runtime.activate_manual(pinned))['ok']
+        sink, blocks, _ = await run_content_loop(runtime, prepared, handler, request, model)
+        group, = co.catalog(runtime.task_execution_state)
+        shown, = [block for block in blocks if block['type'] == 'text']
+        assert shown['content_artifact_id'] == group['artifact_id']
+        assert shown['text'] == sink.text == text
+        handler._execute_tool_calls.assert_not_awaited()
+        return ([part.model_dump(mode='json', exclude_none=True)
+                 for part in build_content_parts(blocks, fallback_text='')], group, runtime.task_execution_state)
+
+    async def choose(turn, parts):
+        runtime, prepared, handler, request = context(turn, parts)
+        attach_history(turn, runtime)
 
         async def model(**kwargs):
-            tool = next(t['function'] for t in kwargs['tools'] if t['function']['name'] == 'generate_image')
-            selector = tool['parameters']['properties']['content_source']['properties']
-            assert 'image_override' in selector
+            # A local stand-in chooses only from the catalog actually exposed this round.
+            # Neither the original tool calls nor manually prepared source ranges are inputs.
             facts = json.loads(kwargs['messages'][-1]['content'].split('\n')[-1])
-            previous_group, = facts['previous_content_objects']
-            assert previous_group['artifact_id'] == selections[0]['artifact_id']
-            assert previous_group['items'][3]['image_status'] in {'accepted', 'completed'}
-            yield StreamChunk(tool_calls=[ToolCallDelta(index=i, id=f'selection-{i}', name='generate_image',
-                arguments_delta=json.dumps({'content_source': selection})) for i, selection in enumerate(selections)])
-
+            question = parts[0].text
+            override = None
+            if '旧第四' in question:
+                group, = facts['older_content_objects']
+                new_group, = facts['previous_content_objects']
+                image, = new_group['uploads']
+                override = image['reference']
+            elif '笔袋' in question:
+                group, = [row for row in facts['previous_content_objects'] + facts.get('older_content_objects', [])
+                          if '笔袋' in row['title']]
+            else:
+                group, = facts['previous_content_objects']
+            index = 2 if '第二' in question else 4
+            indices = [item['item_index'] for item in group['items'] if not item.get('image_status')
+                       ] if '剩' in question or '其他三个' in question else [index]
+            actions = []
+            for idx in indices:
+                selected = {'artifact_id': group['artifact_id'], 'item_index': idx}
+                if override:
+                    selected['image_override'] = [override]
+                if '只改第二' in question:
+                    tool = co.SAVE
+                    args = {'base': selected, 'updates': [{'item_index': idx, 'item': {'body': revised_body}}]}
+                else:
+                    tool = 'generate_image'
+                    args = {'content_source': selected}
+                actions.append(ToolCallDelta(index=len(actions), id=f'select-{idx}', name=tool, arguments_delta=json.dumps(args)))
+            yield StreamChunk(tool_calls=actions)
         with pytest.raises(FollowupRestart):
             await run_content_loop(runtime, prepared, handler, request, model)
         with connect(turn) as connection:
@@ -993,6 +1051,10 @@ async def test_real_remaining_plans_keep_original_and_new_upload_can_replace_it(
         runtime.checkpoint_base = checkpoint
         runtime.task_execution_state = state = TaskState.model_validate(checkpoint['_task_execution'])
         runtime.committed_task_execution_revision = state.revision
+        if 'skill_runtime' in checkpoint:
+            from tests.test_task_execution_original_skills import OriginalSource, original_runtime
+            runtime.skill_runtime = original_runtime(OriginalSource(), turn_id=runtime.turn_id, task_state=state)
+            await runtime.skill_runtime.initialize(checkpoint['skill_runtime'])
         runtime.task_user_changes = restore(checkpoint, root_task_id=str(state.root_task_id), owner_task_id=turn['task'])
         runtime._steer_messages.extend(item.message for item in runtime.task_user_changes.items if not item.delivered)
         restore_plan(runtime, checkpoint)
@@ -1005,84 +1067,78 @@ async def test_real_remaining_plans_keep_original_and_new_upload_can_replace_it(
         return runtime, prepared
 
     try:
-        old_upload = ImagePart.model_validate(original)
-        old_turn = f
-        original_reply = await assistant_reply(f, upload(f, initial['content'][0]['text'], image=old_upload), visible)
-        question4, remaining = [turn['input']['content'][0]['text'] for turn in turns]
-        _, fourth, message_id, _, _ = new_turn(content_db, old=f, text=question4, reply=original_reply)
-        runtime, prepared, handler, request = context(fourth, [TextPart(text=question4)])
-        await reject_historical_registration(runtime, prepared, handler, request, turns[0])
-        await execute(runtime, prepared, handler, request, [call('read_conversation_text', {'message_id': message_id}, 'read-old')])
-        read = latest_result(prepared)
-        part, = read['messages']
-        assert part['text'] == visible and read['source_images'][0]['reference']['message_id'] == old_turn['message']
-        origin = {'message_id': message_id, 'content_index': part['content_index'], 'title': '新品提示词', 'items': spans,
-                  'source_image_indices': [1]}
-        execution_calls = [call(co.SAVE, {'continue_execution': True, 'message_source': origin}, 'import-old')]
-        await execute(runtime, prepared, handler, request, execution_calls)
-        group, = co.catalog(runtime.task_execution_state)
-        group_id = group['artifact_id']
-        assert len(group['items']) == 4
-        assert not any(body in json.dumps(latest_result(prepared)) for body in bodies)
-        assert all(co.load(runtime.task_execution_state, ref(group, i))[2].body == body
-                   for i, body in enumerate(bodies, 1))
-        await execute(runtime, prepared, handler, request, [
-            call('generate_image', {'content_source': {'artifact_id': group_id, 'item_index': 4}}, 'native-fourth')])
-        await publish(fourth, submitted[:1], [bodies[3]], old_path, '1:1')
+        def advance(old, text, reply=None):
+            return new_turn(content_db, old=old, text=text, reply=reply or [], preserve_checkpoint=True)[1:3]
 
-        _, rest, old_source, _, _ = new_turn(content_db, old=fourth, text=remaining)
-        old_selection = [{'artifact_id': group_id, 'item_index': index} for index in (1, 2, 3, 4)]
-        # Include the already accepted fourth slot deliberately to test the server guard.
-        rest_runtime, _ = await choose(rest, [TextPart(text=remaining)], old_source, old_selection, recorded=turns[1])
-        assert len(submitted) == 4 and co.catalog(rest_runtime.task_execution_state) == [group]
-        await publish(rest, submitted[1:4], bodies[:3], old_path, '1:1')
+        # Re-open the archived, unindexed answer as a separate conversation. Only its
+        # actual message id enters the fallback; no ranges, slots or materials are supplied.
+        unindexed = seed(content_db)
+        upload(unindexed, initial['content'][0]['text'], image=ImagePart.model_validate(original))
+        archived_parts = (record['messages'][0]['content'] if sample == 'skill' else capture['draft']['content'])
+        historical, historical_id = advance(unindexed, '用第四条做图', archived_parts)
+        rr, pp, hh, qq = context(historical, [TextPart(text='用第四条做图')])
+        hh.db = ScopedDatabaseClient(database, DatabaseScope(historical['user'], None, DatabaseAccessKind.RUNTIME))
+        await execute(rr, pp, hh, qq, [call(co.SAVE, {'continue_execution': True,
+            'message_source': {'message_id': historical_id}}, 'select-original-reply')])
+        assert json.loads(pp.messages[-1]['content'])['ok'], pp.messages[-1]['content']
+        recovered, = co.catalog(rr.task_execution_state)
+        recovered_item = co.load(rr.task_execution_state, ref(recovered, 4))[2]
+        assert hashlib.sha256(recovered_item.body.encode()).hexdigest() == expected_fourth
+        assert recovered_item.materials[0].reference.message_id == unindexed['message']
+        hh._execute_tool_calls.assert_not_awaited()
+        original_reply, original_group, original_state = await assistant_reply(f, upload(
+            f, initial['content'][0]['text'], image=ImagePart.model_validate(original)), visible, mixed)
+        bodies = [co.load(original_state, ref(original_group, i))[2].body
+                  for i in range(1, len(original_group['items']) + 1)]
+        assert len(bodies) == (6 if sample == 'skill' else 4)
+        assert hashlib.sha256(bodies[3].encode()).hexdigest() == expected_fourth
+        assert ('## 负面提示词' in bodies[3]) == (sample == 'skill')
+        assert all(item['materials'][0]['reference']['message_id'] == f['message'] for item in original_group['items'])
 
-        new_question = '参考这次上传的新图，写一条全新的产品图片提示词。'
-        _, writer, _, _, _ = new_turn(content_db, old=rest, text=new_question)
+        question = turns[0]['input']['content'][0]['text']
+        fourth, _ = advance(f, question, original_reply)
+        _, after = await choose(fourth, [TextPart(text=question)])
+        assert submitted, [m.get('content','')[:400] for m in after.messages if m['role'] == 'tool'][-5:]
+        await publish(fourth, submitted, [bodies[3]], old_path, '1:1')
+        change = '只改第二条，主色改成深蓝，保留原有配图和规格。'
+        edit_turn, _ = advance(fourth, change)
+        revised_body = bodies[1].replace('粉', '蓝') if '粉' in bodies[1] else bodies[1] + '\n主色改为深蓝。'
+        revised, _ = await choose(edit_turn, [TextPart(text=change)])
+        changed, = co.catalog(revised.task_execution_state)
+        assert changed['object_key'] == original_group['object_key'] and changed['revision'] == 2
+        updated = [co.load(revised.task_execution_state, ref(changed, i))[2] for i in range(1,len(bodies)+1)]
+        assert [item.body for item in updated] == [bodies[0], revised_body, *bodies[2:]]
+        assert [item['materials'] for item in changed['items']] == [item['materials'] for item in original_group['items']]
+        last_turn = edit_turn
+        if sample == 'ordinary':
+            remaining = turns[1]['input']['content'][0]['text']
+            last_turn, _ = advance(edit_turn, remaining)
+            await choose(last_turn, [TextPart(text=remaining)])
+            await publish(last_turn, submitted[1:], [updated[i].body for i in (0,1,2)], old_path, '1:1')
+
+        new_question = '参考这次上传的新图，写四条全新的笔袋方案。'
+        writer, _ = advance(last_turn, new_question)
         new_image = ImagePart(name='新产品.png', workspace_path=new_path, url='https://local.invalid/' + new_path)
-        new_body = '新产品用深蓝色的背景，输出比例：3:4。\n避免添加旧商品上的任何装饰。\n'
-        new_text = f'### 新产品方向\n\n{new_body}'
-        new_reply = await assistant_reply(writer, upload(writer, new_question, image=new_image), new_text)
-        _, replacement_turn, new_message_id, _, _ = new_turn(content_db, old=writer,
-            text='用新图做上一组的第四条，规格照旧。', reply=new_reply)
-
-        # First verify the new writing source independently, with the same authorized read and original lookup.
-        runtime, prepared, handler, request = context(replacement_turn, [TextPart(text='用新图做上一组的第四条，规格照旧。')])
-        await execute(runtime, prepared, handler, request, [
-            call('read_conversation_text', {'message_id': new_message_id}, 'read-new')])
-        from services.handlers.chat.content_tools import checkpoint_state, prepare_message_content
-        selected = co.MessageContentSource.model_validate({'message_id': new_message_id, 'content_index': 0,
-            'title': '新产品', 'items': [{'title': '新产品方向', 'first_line': 3, 'last_line': 4}],
-            'source_image_indices': [1]})
-        document, sources, _ = prepare_message_content(scoped, replacement_turn['task'], prepared.execution_context,
-            selected, checkpoint_state(runtime)['observed_history'])
-        assert document.items[0].body == new_body and sources[0].reference.message_id == writer['message']
-        assert sources[0].reference.message_id != old_turn['message']
-
-        # The replacement is the verified attachment from the preceding writing turn.
-        override_question = request.content[0].text
-        parts = [TextPart(text=override_question)]
-        with connect(replacement_turn) as connection:
-            old_source = connection.execute('SELECT read_agent_task_followup(%s,%s)',
-                (replacement_turn['task'], replacement_turn['token'])).fetchone()[0]['source']
-        revised, _ = await choose(replacement_turn, parts, old_source, [old_selection[-1]], reference_message=new_message_id)
-        assert str(revised.task_execution_state.root_task_id) == fourth['task']
-        assert co.catalog(revised.task_execution_state) == [group] and len(submitted) == 5
-        await publish(replacement_turn, submitted[4:], [bodies[3]], new_path, '1:1')
-        _, fresh, _, _, _ = new_turn(content_db, old=replacement_turn, text='用新产品的方案生成一张图。')
-        runtime, prepared, handler, request = context(fresh, [TextPart(text='用新产品的方案生成一张图。')])
-        await execute(runtime, prepared, handler, request, [
-            call('read_conversation_text', {'message_id': new_message_id}, 'read-new-fresh')])
-        await execute(runtime, prepared, handler, request, [call(co.SAVE, {'continue_execution': True,
-            'message_source': selected.model_dump(mode='json', exclude_none=True)}, 'import-new')])
-        new_group, = co.catalog(runtime.task_execution_state)
-        assert new_group['object_key'] != group['object_key']
-        assert str(runtime.task_execution_state.root_task_id) == fresh['task']
-        await execute(runtime, prepared, handler, request, [call('generate_image',
-            {'content_source': {'artifact_id': new_group['artifact_id'], 'item_index': 1}}, 'new-product-image')])
-        assert len(submitted) == 6
-        await publish(fresh, submitted[5:], [new_body], new_path, '3:4')
-        assert len(provider_requests) == 6
+        fence = chr(96)*3
+        new_text = '\n'.join(f'### 笔袋 {i}｜新款\n{fence}text\n竖版笔袋 {i}，输出比例：3:4。\n{fence}' for i in range(1,5))
+        new_reply, new_group, _ = await assistant_reply(writer, upload(writer, new_question, image=new_image), new_text)
+        assert new_group['object_key'] != changed['object_key']
+        assert all(item['materials'][0]['reference']['message_id'] == writer['message'] for item in new_group['items'])
+        assert new_group['items'][3]['options']['aspect_ratio'] == '3:4'
+        swap = '用新图做旧第四条，规格照旧。'
+        replacement_turn, _ = advance(writer, swap, new_reply)
+        before = len(submitted)
+        resumed, _ = await choose(replacement_turn, [TextPart(text=swap)])
+        assert str(resumed.task_execution_state.root_task_id) == f['task']
+        assert co.catalog(resumed.task_execution_state) == [changed]
+        await publish(replacement_turn, submitted[before:], [bodies[3]], new_path, '1:1')
+        assert len(submitted) == len(provider_requests) == before + 1
+        new_command = '把笔袋第四条做成图片。'
+        fresh, _ = advance(replacement_turn, new_command)
+        fresh_runtime, _ = await choose(fresh, [TextPart(text=new_command)])
+        assert str(fresh_runtime.task_execution_state.root_task_id) == writer['task']
+        await publish(fresh, submitted[before+1:], ['竖版笔袋 4，输出比例：3:4。'], new_path, '3:4')
+        assert len(provider_requests) == before + 2
     finally:
         await client._client.aclose()
         database.pool.close()

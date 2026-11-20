@@ -60,6 +60,9 @@ REFERENCE_PROMPTS_PRESENTATION = (
 OUTPUT_PROFILES = frozenset({REFERENCE_PROMPTS_PROFILE, 'ecommerce-image-plan-v1'})
 
 
+REFERENCE_PROMPTS_BODY_HEADINGS = ('完整生图提示词', '负面提示词')
+
+
 def valid_reference_prompts_presentation(document):
     """Check the pinned writing method's authored sections without transforming them."""
     import re
@@ -79,7 +82,7 @@ def valid_reference_prompts_presentation(document):
         body = sections(item.body)
         if (len(prefix) != 4 or not prefix[0][0].startswith('方案')
                 or [name for name, _ in prefix[1:]] != ['方案内容', '视觉设定', '参考图使用方式']
-                or [name for name, _ in body] != ['完整生图提示词', '负面提示词']
+                or tuple(name for name, _ in body) != REFERENCE_PROMPTS_BODY_HEADINGS
                 or not all(text for _, text in [*prefix[1:], *body])):
             return False
     return True

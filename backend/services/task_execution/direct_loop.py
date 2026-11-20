@@ -142,7 +142,8 @@ def retire_saved_image_method(runtime, candidate):
     previous = {a.id for a in runtime.task_execution_state.artifacts} if runtime.task_execution_state else set()
     committed={key for result in candidate.results for key in result.artifact_ids} if candidate else set()
     retiring = [a.image_method for a in candidate.artifacts if a.id not in previous and a.id in committed
-                and a.image_method is not None and a.image_method.retire_on_complete]
+                and a.image_method is not None and a.image_method.retire_on_complete
+                and a.image_method.skill_key in skills.active]
     return retire_bound_methods(skills, candidate, retiring)
 
 
@@ -229,7 +230,10 @@ def context_message(runtime,*,state=None):
     facts['content_objects'] = catalog(state, for_model=True)
     if source is not None and state is None:
         source_state = TaskState.model_validate(source['state'])
-        facts['previous_content_objects'] = catalog(source_state, for_model=True)
+        older = getattr(runtime, 'task_content_groups', ())
+        facts['previous_content_objects'] = catalog(source_state, for_model=True, include_image_markers=bool(older))
+        if older:
+            facts['older_content_objects'] = [{k: v for k, v in row.items() if k != 'root_task_id'} for row in older]
     if state is not None:
         facts.update(revision=state.revision,status=state.status,
             operations=[v.model_dump(mode='json') for v in state.operations],
@@ -543,7 +547,7 @@ def duplicate_image_plan_items(state, calls):
         return {}
     from .content_objects import ContentRecord, objects
 
-    groups = {artifact.id: ContentRecord.model_validate_json(artifact.inline_text).object_key
+    groups = {artifact.id: ContentRecord.model_validate_json(artifact.inline_text)
               for artifact in objects(state)}
     held = {operation.step_id for operation in state.operations if operation.status != 'failed_before_dispatch'}
     held.update(result.step_id for result in state.results)
@@ -554,17 +558,25 @@ def duplicate_image_plan_items(state, calls):
             continue
         recipe = json.loads(artifact.inline_text)
         handoff = recipe.get('method_handoff')
-        if handoff is not None:
+        normalized = recipe['normalized']
+        proof = (normalized.get('source_prompt') or {}).get('content_object')
+        if proof is None:
+            if handoff is None:
+                continue
             item = (handoff['artifact_id'], handoff['image_item_index'])
         else:
-            normalized = recipe['normalized']
-            proof = (normalized.get('source_prompt') or {}).get('content_object')
-            if proof is None or proof['source']['artifact_id'] not in groups:
-                continue
             selection = proof['source']
+            if selection['artifact_id'] not in groups:
+                continue
             effect = {key: value for key, value in normalized.items() if key not in {
                 'source_prompt', 'references', 'plan_item_id', 'variant_id', 'size_requirement'}}
-            item = (groups[selection['artifact_id']], selection['item_index'], digest([effect, recipe['resolved']]))
+            record = groups[selection['artifact_id']]
+            if handoff is not None:
+                # A pinned method owns the slot specs. Unverified tool arguments cannot
+                # create another variant; a real revision or different input file can.
+                slot = record.document.items[selection['item_index'] - 1]
+                effect = {'prompt': slot.body, 'options': slot.options}
+            item = (record.object_key, selection['item_index'], digest([effect, recipe['resolved']]))
         by_call[artifact.source_call_id] = (item, artifact.step_id)
         if artifact.step_id in held:
             occupied[item] = artifact.step_id
@@ -626,6 +638,26 @@ def content_followup_state(runtime):
     if runtime.task_execution_state is None and source is not None:
         return TaskState.model_validate(source['state'])
     return None
+
+
+async def select_content_owner(runtime, calls):
+    """Bind a path offered by the scoped catalog; recheck it under the current Turn lease."""
+    groups = getattr(runtime, 'task_content_groups', ())
+    if not groups or runtime.task_execution_state is not None:
+        return
+    selected = set()
+    for call in calls:
+        try:
+            value = json.loads(call['arguments'])
+            ref = value['base' if call['name'] == 'save_task_text' else 'content_source']
+            selected.add(ref['artifact_id'])
+        except (ValueError, KeyError, TypeError):
+            return
+    roots = {row['root_task_id'] for row in groups if row['artifact_id'] in selected}
+    if len(roots) == 1 and selected <= {row['artifact_id'] for row in groups}:
+        source = await runtime.read_content_root(roots.pop())
+        if source:
+            runtime.task_followup_candidate = source
 
 
 def can_resume_content_calls(runtime, calls, *, server_image_plan=False):

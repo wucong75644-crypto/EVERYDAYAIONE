@@ -951,13 +951,32 @@ async def _run_loop(
             raise RuntimeError('KNOWLEDGE_ANSWER_UNEXPECTED_TOOL_CALL')
         if runtime:
             await runtime.safe_point(SafePoint.AFTER_MODEL)
-        if prepared.content_output_available and content_objects.is_content_output(turn_text):
+        tagged = prepared.content_output_available and content_objects.is_content_output(turn_text)
+        indexed = None
+        mixed_draft = False
+        if len(calls) == 1 and calls[0]['name'] == content_objects.SAVE:
+            try:
+                draft = json.loads(calls[0]['arguments'])
+                mixed_draft = isinstance(draft, dict) and 'document' in draft and not draft.get('continue_execution')
+            except ValueError:
+                pass
+        if (prepared.content_output_available and not tagged and totals.last_finish_reason != 'length'
+                and (not calls or mixed_draft)):
+            from services.task_execution.content_groups import index_document
+            try:
+                indexed = index_document(turn_text)
+                if indexed:
+                    document = indexed.document
+            except ValueError:
+                indexed = None  # An unindexable answer is still the user's completed reply.
+        if indexed or tagged:
             await _append_turn_blocks(blocks, sink, thinking=turn_thinking, text='')
             # A content delivery is terminal for this round. It must not be
             # combined with a model tool request, including business effects.
-            document = None
+            if not indexed:
+                document = None
             rejection = 'mixed_tool_call' if calls else 'incomplete_output'
-            if not calls and totals.last_finish_reason != 'length':
+            if not indexed and not calls and totals.last_finish_reason != 'length':
                 try:
                     document = content_objects.document_from_output(turn_text, references=prepared.content_output_references)
                 except ValueError:
@@ -969,11 +988,12 @@ async def _run_loop(
                 await _execute_tools(handler=handler, request=request, prepared=prepared, turn=turn, turn_text='',
                     calls=[save_call], previewed_call_ids=set(), next_model_round=model_round,
                     cancellation_event=cancellation_event, sink=sink, blocks=blocks, runtime=runtime,
-                    totals=totals, repeated_tool_call_guard=repeated_tool_call_guard, content_output_registration=True)
+                    totals=totals, repeated_tool_call_guard=repeated_tool_call_guard, content_output_registration=True,
+                    indexed_gaps=indexed.gaps if indexed else ())
                 if blocks and blocks[-1].get('content_delivery_final') is True:
                     return None
                 rejection = 'registration_rejected'
-            text = content_objects.render_unregistered_output(turn_text) + prepared.content_output_references
+            text = turn_text if indexed else content_objects.render_unregistered_output(turn_text) + prepared.content_output_references
             logger.info('Legacy draft shown without registration | task={} | reason={} | chars={} | finish={}',
                         request.task_id, rejection, len(turn_text), totals.last_finish_reason)
             notice = {'type': 'text', 'text': text or content_objects.SAVE_FAILED_TEXT, 'content_delivery_final': True}
@@ -984,7 +1004,8 @@ async def _run_loop(
                     block.update(status='error', output='工具未执行，已保留本轮正文。')
                     await sink.on_block_update(block)
             blocks.append(notice)
-            totals.text += notice['text']
+            if not indexed:
+                totals.text += notice['text']
             prepared.messages.append({'role': 'assistant', 'content': notice['text']})
             await sink.on_block(notice)
             return None
@@ -1168,6 +1189,9 @@ async def _read_turn(
     from services.task_execution.direct_loop import followup_source
     awaiting_content_owner = runtime is not None and runtime.task_execution_state is None and followup_source(runtime) is not None
     defer_narrative = getattr(prepared, "defer_ecom_narrative", False)
+    image_reply = (not task_review and request is not None and not defer_narrative
+                   and content_tools.image_execution_request(request, runtime))
+    defer_narrative = defer_narrative or image_reply
     skills = runtime.skill_runtime if runtime and not task_review else None
     stream_kwargs = {
         "messages": skills.model_messages(prepared.messages, tools) if skills else prepared.messages,
@@ -1377,6 +1401,13 @@ async def _read_turn(
         timings.append({'round': model_round, **timing})
     logger.info('Chat model timing | task={} | round={} | metrics={}',
                 request.task_id if request else None, model_round, timing)
+    if image_reply and not content_output:
+        if not getattr(prepared, 'image_receipt_seen', False) and not any(
+                c['name'] == content_objects.SAVE for c in ordered_calls):
+            turn_text = content_tools.unconfirmed_image_reply(turn_text, bool(ordered_calls))
+        if turn_text:
+            totals.text += turn_text
+            await sink.on_text(turn_text)
     return turn_text, turn_thinking, ordered_calls, previewed_call_ids
 
 
@@ -1511,6 +1542,7 @@ async def _execute_tools_impl(
     assistant_already_present: bool = False,
     recovery_only: bool = False,
     content_output_registration: bool = False,
+    indexed_gaps: tuple[str, ...] = (),
 ) -> str | None:
     totals = totals or StreamTotals()
     from services.task_execution.model_bridge import TASK_CONTROL_TOOLS, execute_control_batch
@@ -1604,12 +1636,18 @@ async def _execute_tools_impl(
                 if block.get('tool_call_id') in previewed_call_ids:
                     await sink.on_block_update(block)
             return None
+        original_owner = getattr(runtime, 'task_followup_candidate', None)
+        if scoped_content and not recovery_only and not content_output_registration:
+            from services.task_execution.direct_loop import select_content_owner
+            await select_content_owner(runtime, calls)
         selected_content = (
             not recovery_only and getattr(prepared, 'content_controls_available', False)
             and scoped_content
             and not (turn_text.strip() and any(c['name'] == content_objects.SAVE for c in calls))
             and can_resume_content_calls(runtime, calls, server_image_plan=server_image_plan)
         )
+        if not selected_content:
+            runtime.task_followup_candidate = original_owner
         if selected_content or any(c['name']=='resume_task_execution' for c in calls):
             await resume_from_model(runtime,prepared,blocks,calls,assistant,turn=turn,
                 model_round=next_model_round,build_checkpoint=_build_replay_context,selected_content=selected_content)
@@ -1654,12 +1692,14 @@ async def _execute_tools_impl(
                             runtime, call, build_capability_catalog(),
                             has_image_attachments=any(part.type == 'image' for part in request.content),
                             source_images=current_images,
-                            checked_message=checked_message,
+                            checked_message=checked_message, display_gaps=indexed_gaps,
+                            author_request=content_tools.visual_author_request(request, content_output_registration),
                         )
                         result = {'ok':True,'object':next(row for row in content_objects.catalog(candidate, for_model=True)
                                                          if row['artifact_id']==artifact.id)}
                         if not value.continue_execution or value.show_content:
-                            saved_block = {'type': 'text', 'text': content_objects.render(document),
+                            record = content_objects.ContentRecord.model_validate_json(artifact.inline_text)
+                            saved_block = {'type': 'text', 'text': content_objects.render(document, record.display_gaps),
                                            'content_artifact_id': artifact.id, 'content_delivery_final': not value.continue_execution}
                     except (ValueError,TypeError,KeyError,PermissionError) as error:
                         code = str(error)
@@ -1707,7 +1747,8 @@ async def _execute_tools_impl(
             if runtime.skill_runtime is not original_skills:
                 _apply_skill_context(prepared,runtime.skill_runtime)
             if saved_block is not None:
-                totals.text += saved_block['text']
+                if not indexed_gaps:
+                    totals.text += saved_block['text']
                 await sink.on_block(saved_block)
             return None
         if (any(c['name'] == SAVE_IMAGE_PLAN for c in calls)
@@ -2142,11 +2183,13 @@ async def _execute_tools_impl(
             handler._tool_result_stop_reason = getattr(result, "summary", None) or _display
     # Confirmed child placeholders are the final delivery; never synthesize
     # another acknowledgement. Errors and mixed tool batches keep their flow.
-    handler._terminal_image_pending = bool(results) and all(
-        call["name"] == "generate_image" and not is_error
-        and getattr(result, "metadata", {}).get("accepted") is True
-        for call, result, is_error, _display in results
-    )
+    accepted_images = [call['id'] for call, result, is_error, _ in results
+                       if call['name'] == 'generate_image' and not is_error
+                       and getattr(result, 'metadata', {}).get('accepted') is True
+                       and getattr(result, 'metadata', {}).get('task_id')]
+    if any(call['name'] == 'generate_image' for call, *_ in results):
+        prepared.image_receipt_seen = len(accepted_images) == sum(call['name'] == 'generate_image' for call, *_ in results)
+    handler._terminal_image_pending = bool(results) and len(accepted_images) == len(results)
     from services.task_execution.image_binding import managed_image_task
     managed_images = bool(runtime and managed_image_task(runtime.task_execution_state))
     if managed_images:

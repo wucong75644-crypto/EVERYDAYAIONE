@@ -19,6 +19,43 @@ MEDIA_TOOLS = frozenset({'generate_video', 'generate_image'})
 STATE = '_chat_content_tools'
 
 
+def image_execution_request(request, runtime=None):
+    """Hold execution narration until there is a receipt. This never starts a task."""
+    text = ' '.join(getattr(part, 'text', '') for part in (getattr(request, 'content', None) or ()))
+    if re.search(r'怎么|如何|为什么|是什么意思|是否支持|怎样', text):
+        return False
+    if re.search(r'(?:写|修改|改写|整理).{0,24}提示词[？?。！!\s]*$', text):
+        return False
+    if runtime and re.search(r'(?:剩余|剩下|其他|其余).{0,10}(?:也|一起|继续).{0,6}(?:做|生成)', text):
+        state = getattr(runtime, 'task_execution_state', None)
+        prior = getattr(runtime, 'task_followup_candidate', None) or {}
+        if (state and any(op.capability == 'platform.generate_image' for op in state.operations)
+                or any(op.get('capability') == 'platform.generate_image' for op in prior.get('state', {}).get('operations', ()))):
+            return True
+    return bool(re.search(r'(?:生图|出图|改图|做图|画一张|(?:生成|做成?|制作|绘制).{0,14}(?:图片|图像|主图|封面图)|'
+                          r'generate (?:an? |the )?image)', text, re.I))
+
+
+def visual_author_request(request, indexed):
+    text = '\n'.join(part.text for part in request.content if part.type == 'text')
+    if indexed or '提示词' in text or image_execution_request(request) or re.search(
+            r'(?:参考|用).{0,8}(?:原图|这张图).{0,12}(?:改|生成|出图)', text):
+        return text
+    return None
+
+
+def unconfirmed_image_reply(text, has_calls):
+    if has_calls:
+        return ''
+    # A genuine clarification or failure can accompany a status. A free-form
+    # promise is never a substitute for the worker's acceptance event.
+    notice = '本轮尚未收到图片任务的受理回执。'
+    if text.strip() and (text.rstrip().endswith(('？', '?')) or re.search(r'无法|缺少|失败|请(?:选择|指定|上传|确认)', text)):
+        if not re.search(r'已(?:经)?(?:成功)?(?:提交|受理|派发|生成)|提交成功|正在(?:生成|排队)', text):
+            return text + '\n\n' + notice
+    return notice
+
+
 def checkpoint_state(runtime):
     state = runtime.checkpoint_base.get(STATE) or {}
     return state if state.get('task_id') == str(runtime.task_id) else {'task_id': str(runtime.task_id)}
@@ -63,8 +100,8 @@ def schema(name, description, properties, required=()):
 SCHEMAS = (
     schema(DISCOVER, '查找当前可用业务工具。用能力名称、工具名或简短目标查询；下一轮提供真实工具定义和已保存内容的content_source用法。',
            {'query': {'type': 'string', 'minLength': 1, 'maxLength': 160}}, ('query',)),
-    schema(READ, '在当前会话已关闭的历史中读取原文。指定message_id可读取单条消息并取得登记所需的行号。'
-                 'text_exact/text_exacts只读取逐字片段。执行已登记内容时选择content_source；未登记的完整原文用save_task_text的message_source登记。',
+    schema(READ, '在当前会话已关闭的历史中读取原文。需要查看原文时指定message_id。'
+                 'text_exact/text_exacts只读取逐字片段。执行已登记内容时选择content_source；未登记的分条回复可直接按原消息登记整组。',
            {'message_id': {'type': 'string'}, 'text_exact': {'type': 'string', 'maxLength': 20000},
             'text_exacts': {'type': 'array', 'minItems': 1, 'maxItems': 100,
                             'items': {'type': 'string', 'minLength': 1, 'maxLength': 20000}},
@@ -223,7 +260,8 @@ def source_text(db, task_id, context, args):
     messages, history = [], []
     from services.handlers.chat_context.image_sources import content_parts
     for row in rows:
-        parts = [{'type': 'text', 'content_index': index, 'text': part['text']}
+        parts = [{'type': 'text', 'content_index': index, 'text': part['text'],
+                  **({'content_artifact_id': part['content_artifact_id']} if part.get('content_artifact_id') else {})}
                  for index, part in enumerate(content_parts(row['content']))
                  if isinstance(part, dict) and part.get('type') == 'text' and isinstance(part.get('text'), str)
                  and not (args.get('_for_execution') and part.get('content_incomplete'))]
@@ -238,6 +276,8 @@ def source_text(db, task_id, context, args):
                     'text': part['text'] if args.get('_full') else part['text'][:20000],
                     'sha256': hashlib.sha256(part['text'].encode()).hexdigest(),
                     'line_starts': line_starts(part['text'] if args.get('_full') else part['text'][:20000])}
+            if part.get('content_artifact_id'):
+                item['content_artifact_id'] = part['content_artifact_id']
             if not args.get('_full') and len(part['text']) > 20000:
                 item.update(requires_explicit_read=True, total_chars=len(part['text']), truncated=True)
             history.append(item)
@@ -291,9 +331,8 @@ def historical_image_source(db, request, context):
     return False
 
 
-def message_source_images(db, task_id, context, message_id):
+def _author_input(db, task_id, context, message_id):
     from types import SimpleNamespace
-    from services.task_execution.content_objects import source_images_from_message
     from services.task_execution.image_resources import native_resolver
 
     native = native_resolver(SimpleNamespace(db=db), SimpleNamespace(task_id=task_id,
@@ -307,7 +346,12 @@ def message_source_images(db, task_id, context, message_id):
     original = native._message(str(owner[0]['input_message_id']))
     if original['role'] != 'user':
         raise ValueError('CONTENT_MESSAGE_SOURCE_ORIGIN_UNAVAILABLE')
-    return source_images_from_message(original)
+    return original
+
+
+def message_source_images(db, task_id, context, message_id):
+    from services.task_execution.content_objects import source_images_from_message
+    return source_images_from_message(_author_input(db, task_id, context, message_id))
 
 
 def prepare_message_content(db, task_id, context, source, observed):
@@ -318,11 +362,34 @@ def prepare_message_content(db, task_id, context, source, observed):
     message_id = str(source.message_id)
     query = {'message_id': message_id, '_full': True, '_for_execution': True}
     messages = source_text(db, task_id, context, query)['messages']
-    part = next((m for m in messages if m['role'] == 'assistant' and m['content_index'] == source.content_index), None)
-    key = f'{message_id}:{source.content_index}'
-    if part is None or observed.get(key) != {k: part[k] for k in ('sha256', 'context_revision')}:
+    from services.task_execution.content_groups import index_document, bind_group
+    parts = [m for m in messages if m['role'] == 'assistant'
+             and (source.content_index is None or m['content_index'] == source.content_index)]
+    if len(parts) > 1 and not source.items:
+        parts = [m for m in parts if index_document(m['text']) is not None]
+    if len(parts) != 1:
+        raise ValueError('CONTENT_MESSAGE_SOURCE_BOUNDARIES_REQUIRED')
+    part = parts[0]
+    if part.get('content_artifact_id'):
+        raise ValueError('CONTENT_MESSAGE_SOURCE_ALREADY_REGISTERED')
+    key = f"{message_id}:{part['content_index']}"
+    if (source.items or key in observed) and observed.get(key) != {k: part[k] for k in ('sha256', 'context_revision')}:
         raise ValueError('CONTENT_MESSAGE_SOURCE_UNAVAILABLE_OR_CHANGED')
     text = part['text']
+    if not source.items:
+        from services.task_execution.content_objects import source_images_from_message
+        group = index_document(text)
+        if group is None:
+            raise ValueError('CONTENT_MESSAGE_SOURCE_BOUNDARIES_REQUIRED')
+        origin = _author_input(db, task_id, context, message_id)
+        images = source_images_from_message(origin)
+        from services.handlers.chat_context.image_sources import content_parts
+        question = '\n'.join(p.get('text', '') for p in content_parts(origin['content']) if p.get('type') == 'text')
+        document = bind_group(group.document, images, question, source.source_image_indices)
+        proof = {'message_id': message_id, 'content_index': part['content_index'], 'ranges': group.ranges,
+                 'sha256': part['sha256'], 'context_revision': part['context_revision']}
+        document = document.model_copy(update={'notes': json.dumps({'message_source': proof}, ensure_ascii=False)})
+        return document, images, {**proof, 'display_gaps': group.gaps}
     items, ranges = [], []
     for item in source.items:
         start, end = _range(text, {'first_line': item.first_line, 'last_line': item.last_line})
@@ -335,7 +402,7 @@ def prepare_message_content(db, task_id, context, source, observed):
     materials = image_materials(images, source.source_image_indices or ())
     for item in items:
         item['materials'] = materials
-    proof = {'message_id': message_id, 'content_index': source.content_index, 'ranges': ranges,
+    proof = {'message_id': message_id, 'content_index': part['content_index'], 'ranges': ranges,
              'sha256': part['sha256'], 'context_revision': part['context_revision']}
     document = ContentDocument.model_validate({
         'title': source.title, 'items': items,

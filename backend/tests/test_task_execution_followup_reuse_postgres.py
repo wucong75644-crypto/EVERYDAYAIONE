@@ -33,7 +33,7 @@ def followup_db(continuation_db,native_result_db):
     drain(continuation_db)
 
 
-def new_turn(dsn,old=None,text='继续原任务，保留之前的成果', *, reply=None):
+def new_turn(dsn,old=None,text='继续原任务，保留之前的成果', *, reply=None, preserve_checkpoint=False):
     if old is None:old,cp=prepared(dsn,binding_version=3)
     new={**old,'task':str(uuid4()),'message':str(uuid4()),'turn':str(uuid4()),'token':str(uuid4())}
     answer=str(uuid4())
@@ -43,7 +43,7 @@ def new_turn(dsn,old=None,text='继续原任务，保留之前的成果', *, rep
         c.execute("INSERT INTO messages(id,conversation_id,role,content,status,context_revision,turn_id) VALUES(%s,%s,'assistant',%s,'completed',%s,%s)",(answer,old['conv'],Jsonb(reply or []),base-1,old['turn']))
         c.execute("UPDATE tasks SET status='completed',assistant_message_id=%s WHERE id=%s",(answer,old['task']))
         c.execute("UPDATE conversation_turn_checkpoints SET status='consumed' WHERE task_id=%s",(old['task'],))
-        if reply is not None:
+        if reply is not None and not preserve_checkpoint:
             c.execute("DELETE FROM conversation_turn_checkpoints WHERE task_id=%s", (old['task'],))
         c.execute("INSERT INTO messages(id,conversation_id,role,content,status,context_revision,turn_id) VALUES(%s,%s,'user',%s,'completed',%s,%s)",
             (new['message'],old['conv'],Jsonb([{'type':'text','text':text}]),base,new['turn']))

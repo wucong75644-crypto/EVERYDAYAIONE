@@ -269,9 +269,12 @@ async def test_recorded_six_plan_duplicate_delivery_and_second_image(monkeypatch
     shown = rendered_parts[0]['text']
     if recover_incomplete:
         assert shown == sink.text == draft
-        assert shown.count('## 负面提示词') == 6 and not co.objects(r.task_execution_state)
-        invalid = await execute(r, p, h, q, [call(co.SAVE, {'document': screenshot_document}, 'screenshot-incomplete')])
-        assert not invalid and json.loads(p.messages[-1]['content'])['code'] == co.PRESENTATION_INCOMPLETE
+        assert shown.count('## 负面提示词') == 6
+        saved, = co.catalog(r.task_execution_state)
+        artifact, _, second = co.load(r.task_execution_state, ref(saved, 2))
+        assert artifact.image_method.skill_key == selection.skill_id
+        assert second.body == corrected['items'][1]['body']
+        assert rendered_parts[0]['content_artifact_id'] == saved['artifact_id']
         return
     assert not sink.text
     assert shown == sink.blocks[0]['text'] == draft.rstrip('\n')

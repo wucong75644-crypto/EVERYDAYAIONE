@@ -593,3 +593,21 @@ async def test_plain_answer_still_delivered_when_registration_tool_is_available(
     assert sink.text == totals.text == '普通回答'
     assert blocks == [{'type': 'text', 'text': '普通回答'}]
     assert not co.catalog(r.task_execution_state)
+
+
+@pytest.mark.asyncio
+async def test_image_submission_narration_requires_receipt():
+    from dataclasses import replace
+    from schemas.message import TextPart
+    from services.adapters.types import StreamChunk
+    r, p, h, q = case()
+    q = replace(q, content=[TextPart(text='用第四个方案做成图片')])
+
+    async def promise(**kwargs):
+        yield StreamChunk(content='我来登记第四条，然后')
+        yield StreamChunk(content='提交生图。图片任务已提交。')
+
+    sink, blocks, totals = await run_content_loop(r, p, h, q, promise)
+    shown, = [block['text'] for block in blocks if block['type'] == 'text']
+    assert shown == totals.text == sink.text == '本轮尚未收到图片任务的受理回执。'
+    h._execute_tool_calls.assert_not_awaited()

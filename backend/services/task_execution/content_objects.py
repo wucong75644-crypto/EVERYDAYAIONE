@@ -165,6 +165,18 @@ class ContentRecord(Fact):
     source_images: tuple[SourceImage, ...] = ()
     presentation_profile: str | None = None
 
+    @property
+    def display_gaps(self):
+        try:
+            layout = json.loads(self.document.notes)['_chat_display_layout']
+            if len(layout) != len(self.document.items) + 1:
+                return ()
+            return tuple(before + (item.display_prefix or '') + after
+                         for (before, after), item in zip(layout[:-1], self.document.items)) + (layout[-1],)
+        except (ValueError, KeyError, TypeError):
+            return ()
+
+
 
 class ContentItemPatch(Presentation):
     title: str | None = Field(default=None,min_length=1,max_length=300)
@@ -190,9 +202,9 @@ class MessageItem(Fact):
 
 class MessageContentSource(Fact):
     message_id: UUID
-    content_index: int = Field(strict=True, ge=0)
-    title: str = Field(min_length=1, max_length=300)
-    items: tuple[MessageItem, ...] = Field(min_length=1, max_length=100)
+    content_index: int | None = Field(default=None, strict=True, ge=0)
+    title: str = Field(default='对话方案', min_length=1, max_length=300)
+    items: tuple[MessageItem, ...] = Field(default=(), max_length=100)
     source_image_indices: tuple[Annotated[int, Field(strict=True, ge=1)], ...] | None = Field(
         default=None, min_length=1, max_length=16,
         description='整组明确沿用原稿所关联的原图时填原图序号。只分析素材时省略。')
@@ -262,12 +274,12 @@ def selection_parameters(model=ContentReference):
 
 SCHEMA = {'type': 'function', 'function': {'name': SAVE,
     'description': '用于修订已登记内容，或在本轮执行前登记输入。只交付新写的文稿时直接写入聊天，后台保存消息。'
-        '执行历史稿件时直接选已有成果；未登记则先按消息ID读取，再用message_source和continue_execution=true登记原稿整组。'
-        '每条填完整执行原文的行范围，包含已有的限制。行号从1开始，两端均包含。整组复用原图时登记原图序号一次。'
+        '已有成果直接选条目。未登记的分条正文用message_source指定原回复消息，后台定位整组原文；continue_execution=true。'
+        '仅后台无法识别边界时才按已核实的完整行范围指定条目。'
         '已有历史稿件或图片时，只有用户明确开启独立制作才可用document和new_content=true交接全新内容。'
         'body包含最终要求和限制；按用户或方法要求交付的可见结构放display_prefix，内部说明放notes。仅有条目专用素材或已确定执行规格时才填materials或options。'
         '修订既有条目时，base选择成果ID和条目，updates传修订正文。后台绑定版本并保留未改条目、素材和规格。'
-        '本轮实际执行时设continue_execution=true；有上传图片时每条明确登记素材及用途。还要求看文字时设show_content=true。',
+        '本轮实际执行时设continue_execution=true；单一明确的原图由后台关联，多图用途或条目例外再指定。还要求看文字时设show_content=true。',
     'parameters': save_parameters()}}
 
 
@@ -328,10 +340,21 @@ def content_image_receipts(state):
         key = (source['artifact_id'], source['item_index'])
         receipts[key] = {'status': status, 'specs': {name: recipe[name] for name in (
             'aspect_ratio', 'resolution', 'output_format') if name in recipe}}
+    # An unchanged slot keeps its receipt across revisions of other slots.
+    documents = {}
+    for artifact in objects(state):
+        record = ContentRecord.model_validate_json(artifact.inline_text)
+        prior = documents.get(record.base_artifact_id)
+        if prior:
+            for index, (old, new) in enumerate(zip(prior.items, record.document.items), 1):
+                previous = receipts.get((record.base_artifact_id, index))
+                if previous and old == new:
+                    receipts.setdefault((artifact.id, index), previous)
+        documents[artifact.id] = record.document
     return receipts
 
 
-def catalog(state, *, for_model=False):
+def catalog(state, *, for_model=False, include_image_markers=False):
     receipts = content_image_receipts(state) if for_model else {}
     latest = {}
     for artifact in objects(state):
@@ -360,6 +383,10 @@ def catalog(state, *, for_model=False):
         if record.source_images and (not for_model or any(not item['has_bound_inputs'] for item in items)):
             row['source_images'] = [{'index': index, 'name': image.name}
                                     for index, image in enumerate(record.source_images, 1)]
+        if include_image_markers and record.source_images:
+            row['uploads'] = [{'name': image.name, 'reference': image.reference.model_dump(
+                mode='json', include={'message_id', 'content_index'})}
+                for image in record.source_images if image.reference.message_id]
         rows.append(row)
     return rows
 
@@ -371,7 +398,9 @@ def has_selectable_source_images(state):
     return any(row.get('source_images') for row in catalog(state, for_model=True))
 
 
-def render(document):
+def render(document, gaps=()):
+    if gaps and len(gaps) == len(document.items) + 1:
+        return gaps[0] + ''.join(item.body + gap for item, gap in zip(document.items, gaps[1:]))
     parts = [document.display_prefix or f'# {document.title}']
     for i, item in enumerate(document.items, 1):
         parts.extend([item.display_prefix or f'## {i}. {item.title}', item.body])
@@ -416,7 +445,7 @@ def current_source_images(request):
     return source_images_from_message(row)
 
 
-def save(runtime, call, registry, *, has_image_attachments=False, source_images=(), checked_message=None):
+def save(runtime, call, registry, *, has_image_attachments=False, source_images=(), checked_message=None, display_gaps=(), author_request=None):
     from services.tools import ToolCall
     from .model_directed import record_calls, call_binding
     from .direct_loop import active_image_methods
@@ -435,8 +464,11 @@ def save(runtime, call, registry, *, has_image_attachments=False, source_images=
         arguments.pop('show_content')
     if value.message_source is None:
         arguments.pop('message_source')
-    elif value.message_source.source_image_indices is None:
-        arguments['message_source'].pop('source_image_indices')
+    else:
+        # Preserve fingerprints of completed pre-index calls when new optional fields are absent.
+        for key in ('source_image_indices', 'content_index'):
+            if arguments['message_source'].get(key) is None:
+                arguments['message_source'].pop(key, None)
     if value.new_content is None:
         arguments.pop('new_content')
     bound = next((b for b in state.call_bindings if b.call_id == call['id']),None) if state else None
@@ -447,11 +479,19 @@ def save(runtime, call, registry, *, has_image_attachments=False, source_images=
         if artifact is None: raise TaskError('CONTENT_SAVE_UNCONFIRMED')
         return state, artifact, ContentRecord.model_validate_json(artifact.inline_text).document, value
     document = value.document
+    # Layout is produced only from the verified author output, never from model notes.
+    if document is not None and '_chat_display_layout' in document.notes:
+        raise TaskError(INVALID_OBJECT)
+    if document is not None and source_images and author_request is not None:
+        from .content_groups import bind_group
+        document = bind_group(document, source_images, author_request)
     message_proof = None
     if value.message_source is not None:
         if checked_message is None:
             raise TaskError('CONTENT_MESSAGE_SOURCE_UNVERIFIED')
         document, source_images, message_proof = checked_message
+        display_gaps = tuple(message_proof.get('display_gaps', ()))
+        message_proof = {k: v for k, v in message_proof.items() if k != 'display_gaps'}
     elif (document is not None and value.continue_execution and has_image_attachments
             and any(not item.materials for item in document.items)):
         raise TaskError(ATTACHMENT_USAGE_REQUIRED)
@@ -483,6 +523,19 @@ def save(runtime, call, registry, *, has_image_attachments=False, source_images=
     if (presentation_profile == REFERENCE_PROMPTS_PROFILE
             and not valid_reference_prompts_presentation(document)):
         raise TaskError(PRESENTATION_INCOMPLETE)
+    if display_gaps:
+        # Store separators around existing display prefixes in the v2 notes slot.
+        # Earlier readers can still validate and execute these same item bodies.
+        layout = []
+        for gap, item in zip(display_gaps[:-1], document.items, strict=True):
+            before, prefix, after = gap.rpartition(item.display_prefix or '')
+            if not prefix:
+                raise TaskError(INVALID_OBJECT)
+            layout.append([before, after])
+        notes = json.loads(document.notes) if document.notes else {}
+        notes['_chat_display_layout'] = [*layout, display_gaps[-1]]
+        document = ContentDocument.model_validate({**document.model_dump(),
+            'notes': json.dumps(notes, ensure_ascii=False, separators=(',', ':'))})
     body = ContentRecord(object_key=object_key,revision=revision,document=document,source_images=source_images,
                          base_artifact_id=value.base.artifact_id if value.base else None,
                          presentation_profile=presentation_profile).model_dump_json(exclude={
@@ -508,6 +561,8 @@ def save(runtime, call, registry, *, has_image_attachments=False, source_images=
         method=MethodBinding(package_id=selected.package_id,skill_key=key,revision=active.revision,
             body_sha256=active.body_sha256,profile_id=profile,contract_source=source,
             requirement_ids=(requirement.id,),image_count=len(document.items),retire_on_complete=retire)
+    elif base_record and base_record[0].image_method is not None:
+        method = base_record[0].image_method.model_copy(update={'requirement_ids': (requirement.id,)})
     artifact = Artifact(id='content-'+digest(step.id)[:32], kind='text', reference='task-text:'+str(state.root_task_id)+':content-'+digest(step.id)[:32],
         sha256=checksum, inline_text=body, source_task_id=UUID(str(runtime.task_id)), delivery_task_id=UUID(str(runtime.task_id)),
         source_call_id=call['id'], step_id=step.id, validations=('artifact.exists',TAG),image_method=method)
@@ -572,7 +627,8 @@ def compile_input(state, name, arguments, reference, *, allow_old=False):
             if len({(image.message_id, image.content_index) for image in selection.image_override}) != len(selection.image_override):
                 raise TaskError('CONTENT_IMAGE_SELECTION_CONFLICT')
             inputs = [{**image.model_dump(mode='json'), 'role': '原图参考'} for image in selection.image_override]
-            previous = content_image_receipts(state).get((artifact.id, selection.item_index))
+            receipts = content_image_receipts(state)
+            previous = receipts.get((artifact.id, selection.item_index))
             if previous:
                 result = {**previous['specs'], **result}
             result.pop('mode', None)
