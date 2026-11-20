@@ -216,3 +216,9 @@ Validation uses a fresh local PostgreSQL instance bound only to a private Unix s
 no production database or paid KIE generation is used. Checks cover concurrent
 reservation/lease fencing, callback association/forgery rejection, missing callbacks,
 response-lost recovery, archive-only retries, cross-device paging, and bounded waits.
+
+Real generation verification found that OSS `get_object_meta` omits custom owner and
+checksum metadata. Native video persistence now uses full `head_object` on all three
+receipt paths (new upload, existing-object recovery, and verification). The original
+ownership/hash/size checks remain strict. A retry can recover the existing object
+without downloading again, overwriting it, or generating another video.

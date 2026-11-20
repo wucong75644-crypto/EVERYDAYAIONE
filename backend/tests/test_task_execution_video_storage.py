@@ -17,7 +17,7 @@ def storage():
     def meta(key):
         data,headers=objects[key]
         return SimpleNamespace(headers=headers,etag=hashlib.md5(data).hexdigest(),content_length=len(data))
-    bucket=SimpleNamespace(object_exists=Mock(side_effect=lambda key:key in objects),put_object=Mock(side_effect=put),get_object_meta=Mock(side_effect=meta))
+    bucket=SimpleNamespace(object_exists=Mock(side_effect=lambda key:key in objects),put_object=Mock(side_effect=put),head_object=Mock(side_effect=meta),get_object_meta=Mock(side_effect=AssertionError('simplified metadata must never verify owned bytes')))
     downloader=SimpleNamespace(download=AsyncMock(return_value=(b'\x00\x00\x00\x18ftypmp42'+b'video-data','video/mp4')))
     oss=SimpleNamespace(bucket=bucket,_downloader=downloader,MAX_VIDEO_SIZE=1024,get_url=lambda key:'https://owned.invalid/'+key)
     return task,oss,objects
@@ -109,3 +109,15 @@ async def test_worker_uses_single_sdk_boundary_and_preserves_paused_claim(monkey
         limiter.release.assert_awaited_once()
     client.create_task.assert_not_awaited();assert 'fail_agent_video_before_dispatch' not in calls
     await queue.close()
+
+
+@pytest.mark.asyncio
+async def test_oss_basic_metadata_cannot_replace_full_head_receipt():
+    task,oss,objects=storage()
+    result=await persist(oss,task,'https://provider.invalid/video')
+    assert await persist(oss,task,'https://provider.invalid/expired')==result
+    assert await verify(oss,task,result)==result
+    assert oss.bucket.head_object.call_count==3
+    oss.bucket.get_object_meta.assert_not_called()
+    oss._downloader.download.assert_awaited_once()
+    oss.bucket.put_object.assert_called_once()
