@@ -283,6 +283,10 @@ def save_parameters(*, require_presentation=False):
     parameters['properties']['message_source'] = parameters['$defs'][MessageContentSource.__name__]
     del parameters['$defs'][ContentReference.__name__]
     if require_presentation:
+        from services.handlers.image_size_requirements import image_draft_options_schema
+
+        for name in ('ContentItem', 'ContentItemPatch'):
+            parameters['$defs'][name]['properties']['options'] = image_draft_options_schema()
         for name in ('ContentDocument', 'ContentItem'):
             shape = parameters['$defs'][name]
             shape['required'].append('display_prefix')
@@ -622,6 +626,15 @@ def save(runtime, call, registry, *, has_image_attachments=False, source_images=
     if (presentation_profile == REFERENCE_PROMPTS_PROFILE
             and not valid_reference_prompts_presentation(document)):
         raise TaskError(PRESENTATION_INCOMPLETE)
+    if presentation_profile == REFERENCE_PROMPTS_PROFILE and value.message_source is None:
+        from services.handlers.image_size_requirements import image_draft_options_schema
+        from services.tools.argument_validation import _issues
+
+        changed_options = ([update.item.options for update in value.updates if 'options' in update.item.model_fields_set]
+                           if base_record is not None else [item.options for item in value.document.items])
+        options_schema = image_draft_options_schema()
+        if any(_issues(options, options_schema) for options in changed_options):
+            raise TaskError('CONTENT_IMAGE_OPTIONS_INVALID')
     if display_gaps:
         # Store separators around existing display prefixes in the v2 notes slot.
         # Earlier readers can still validate and execute these same item bodies.
@@ -719,6 +732,39 @@ def is_regeneration_variant(value):
     ) is not None
 
 
+def _legacy_image_options(options, original_goal, has_reference):
+    """Translate old image-only fields at execution, preserving archive identity."""
+    if not {'width', 'height'}.intersection(options):
+        return options
+    from services.handlers.image_size_requirements import ImageSizeError, user_size_intent
+
+    result = dict(options)
+    pixels = {key: result.pop(key) for key in ('width', 'height') if key in result}
+    requirement = result.get('size_requirement')
+    if requirement is not None:
+        raise TaskError('CONTENT_ARGUMENTS_INVALID')
+    if (len(pixels) != 2 or any(type(value) is not int or value < 1 for value in pixels.values())):
+        raise TaskError('CONTENT_ARGUMENTS_INVALID')
+    try:
+        initial = user_size_intent(original_goal)
+    except ImageSizeError:
+        initial = None
+    if has_reference and initial is not None and 'width' not in initial:
+        if 'resolution' in initial:
+            result['resolution'] = initial['resolution']
+        else:
+            result.pop('resolution', None)
+        if 'aspect_ratio' in initial:
+            result['aspect_ratio'] = initial['aspect_ratio']
+            result['size_requirement'] = {'mode': 'explicit'}
+        else:
+            result.pop('aspect_ratio', None)
+            result['size_requirement'] = {'mode': 'inherit_reference'}
+    else:
+        result['size_requirement'] = {'mode': 'explicit', **pixels}
+    return result
+
+
 def compile_input(state, name, arguments, reference, *, allow_old=False):
     """Copy the one saved execution text; adapters only translate parameter names."""
     from services.tools.catalog import build_tool_catalog
@@ -756,6 +802,8 @@ def compile_input(state, name, arguments, reference, *, allow_old=False):
             analysis = [material.reference for material in item.materials if material.usage == 'analysis']
             if not all(image.reference in analysis for image in record.source_images):
                 raise TaskError('CONTENT_SOURCE_IMAGE_SELECTION_REQUIRED')
+        if {'width', 'height'}.intersection(item.options):
+            result = _legacy_image_options(result, state.original_goal, bool(inputs))
         mode='image_to_image' if inputs else 'text_to_image'
         if result.get('mode',mode)!=mode: raise TaskError('CONTENT_ARGUMENT_CONFLICT')
         result.update(prompt=text,references=inputs,mode=mode)

@@ -377,3 +377,21 @@ def test_skill_budget_environment_configuration(monkeypatch):
     with pytest.raises(ValidationError):
         Settings(_env_file=None, database_url='postgresql://invalid/test',
                  jwt_secret_key='isolated-test-key')
+
+
+def test_reference_prompt_size_guidance_only_applies_to_the_reviewed_skill():
+    from services.handlers.image_size_requirements import SIZE_GUIDANCE
+    from services.skills.context import instruction_message
+    from services.task_execution.methods import PROFILES, REFERENCE_PROMPTS_PROFILE
+
+    (package, key, revision, sha), = [identity for identity, profile in PROFILES.items()
+                                     if profile[0] == REFERENCE_PROMPTS_PROFILE]
+    active = SimpleNamespace(skill_key=key, revision=revision, body_sha256=sha,
+                             rendered='原版提示词和完整工作步骤')
+    candidate = SimpleNamespace(package_id=package, skill_key=key, description='参考图提示词',
+                                catalog_metadata=SimpleNamespace(task_stage=None, name='参考图提示词'))
+    context = instruction_message(active, candidate, manual=True, context_version=2)
+    assert active.rendered in context['content'] and SIZE_GUIDANCE in context['content']
+    candidate.package_id = 'custom-package'
+    unrelated = instruction_message(active, candidate, manual=True, context_version=2)
+    assert unrelated['content'].endswith(active.rendered) and SIZE_GUIDANCE not in unrelated['content']

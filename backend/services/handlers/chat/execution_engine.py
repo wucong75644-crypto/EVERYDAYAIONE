@@ -956,10 +956,16 @@ async def _run_loop(
                 totals.text += question
                 await sink.on_block(blocks[-1])
                 return None
+            inline_image = allowed_for_offer(runtime, server_image_plan=server_image_plan, reuse_source=reuse_source)
+            from core.config import get_settings
+            single_image_edit = (inline_image and get_settings().chat_single_image_edit_enabled
+                                 and not content_tools.has_newer_image_input(runtime)
+                                 and content_tools.is_single_generated_image_edit(request))
             tools = [*content_tools.model_tools(
                 tools, selectable_source_images=content_objects.has_selectable_source_images(content_state),
                 server_image_plan=server_image_plan, reuse_source=reuse_source,
-                inline_image=allowed_for_offer(runtime, server_image_plan=server_image_plan, reuse_source=reuse_source),
+                inline_image=inline_image, single_image_edit=single_image_edit,
+                generated_image_edit=content_tools.requests_generated_image_edit(request),
                 current_images=content_objects.current_source_images(request),
                 first_delivery=first_delivery,
             ), *content_tools.SCHEMAS]
@@ -1962,7 +1968,7 @@ async def _execute_tools_impl(
                     direct_errors[call['id']] = gate
         selected_content = (
             not recovery_only and getattr(prepared, 'content_controls_available', False)
-            and scoped_content and not direct_errors
+            and scoped_content and not direct_errors and not repair_rejections
             and not (read_only_image and any(c['name'] == 'generate_image' for c in calls))
             and not (turn_text.strip() and any(c['name'] == content_objects.SAVE for c in calls))
             and can_resume_content_calls(runtime, calls, request, server_image_plan=server_image_plan)
@@ -2071,6 +2077,9 @@ async def _execute_tools_impl(
                                 result['material_example'] = {
                                     'reference': result['references'][0], 'role': '编辑底图', 'usage': 'input',
                                 }
+                        if result['code'] == 'CONTENT_IMAGE_OPTIONS_INVALID':
+                            from services.handlers.image_size_requirements import SIZE_GUIDANCE
+                            result.update(stage='validate', recovery={'action': 'repair_arguments'}, message=SIZE_GUIDANCE)
                         if result['code'] == content_objects.PRESENTATION_INCOMPLETE:
                             from services.task_execution.methods import REFERENCE_PROMPTS_PRESENTATION
                             result['message'] = REFERENCE_PROMPTS_PRESENTATION
@@ -2184,7 +2193,10 @@ async def _execute_tools_impl(
                             recovery_only = False  # Proven prepared with no native reservation.
                     else:
                         offer = getattr(prepared, 'content_visible_tools', {}).get(call['name'], {})
-                        if (not scoped_content or 'draft' not in offer.get('parameters', {}).get('properties', {})
+                        properties = offer.get('parameters', {}).get('properties', {})
+                        input_type = inline_image_action.request_type(properties)
+                        if (not scoped_content or input_type is None
+                                or (input_type is inline_image_action.SingleImageEdit) != ('edit_instruction' in draft_args)
                                 or not inline_image_action.allowed_for_offer(runtime, server_image_plan=server_image_plan,
                                     reuse_source=content_tools.selects_previous_item(request))):
                             raise PermissionError('CHAT_INLINE_IMAGE_UNAVAILABLE')
@@ -2199,9 +2211,11 @@ async def _execute_tools_impl(
                         raise ConversationStopRequested('inline_image_checkpoint_unconfirmed') from None
                     code = str(error)
                     code = code if code.startswith('CHAT_INLINE_IMAGE_') else 'CHAT_INLINE_IMAGE_INPUT_INVALID'
-                    guidance = ('已记录本轮的图片动作。请查看原任务状态。多张图请使用分条方案。'
-                                if code == 'CHAT_INLINE_IMAGE_ALREADY_PREPARED' else
-                                '本次没有派发。请按 draft 合同核对完整要求、明确素材和输出规格。')
+                    guidance = '本次没有派发。请按本轮工具定义核对完整要求、素材和输出规格。'
+                    if code == 'CHAT_INLINE_IMAGE_ALREADY_PREPARED':
+                        guidance = '已记录本轮的图片动作。请查看原任务状态。多张图请使用分条方案。'
+                    if getattr(error, 'issues', None):
+                        guidance += ' ' + '；'.join(f"{issue['path']} {issue['reason']}" for issue in error.issues[:4])
                     direct_errors[call['id']] = (code, code + '：' + guidance)
                     projected_calls.append(call)
                     continue

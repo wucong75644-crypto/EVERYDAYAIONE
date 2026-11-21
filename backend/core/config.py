@@ -356,6 +356,7 @@ class Settings(BaseSettings):
     # Only gates acceptance. Readers, settlement and recovery must remain active.
     chat_image_async_enabled: bool = False
     chat_inline_image_enabled: bool = True
+    chat_single_image_edit_enabled: bool = True  # Model input only; recorded calls remain recoverable.
     chat_image_allowed_user_ids: str = ""  # CSV; empty means all users when enabled.
     chat_image_transparent_enabled: bool = False
     chat_image_max_requests: int = Field(default=15, ge=1, le=15)

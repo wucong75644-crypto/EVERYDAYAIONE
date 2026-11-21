@@ -65,6 +65,8 @@ def _operation(args, parameters):
 
 # These errors come from the host's pre-dispatch source projection.
 _SOURCE_RECOVERY = {
+    'CHAT_INLINE_IMAGE_GENERATED_SOURCE_REQUIRED': (
+        'reload_source', '重新读取当前会话中用户指定的成图并核对引用。仍无法确认时请用户选择底图。'),
     'CONTENT_SOURCE_REQUIRED': ('reload_source', '从当前成果目录选取来源。需要时先用会话读取工具读取原稿。'),
     'CONTENT_OBJECT_UNAVAILABLE_OR_CHANGED': ('reload_source', '重新读取当前目录，使用选定条目的当前版本。'),
     'CONTENT_BASE_VERSION_CHANGED': ('reload_source', '重新读取当前目录中的最新版，核对同一条目。'),
@@ -94,13 +96,18 @@ class Batch:
         version = _input_version(runtime, input_id)
         counts = dict(previous.counts) if previous and previous.input_version == version else {}
         rejections, targets = {}, {}
+        from services.task_execution import inline_image_action
+
         for call in calls:
             name = call['name']
+            if inline_image_action.has_prepared_call(runtime, call) and inline_image_action.is_inline_call(call):
+                # Restore checks the original call digest, recipe and reservation against the checkpoint.
+                continue
             parameters = offers.get(name, {}).get('parameters')
             if parameters is None:
                 continue
             chat_image = (repair_chat_images and name == 'generate_image'
-                          and 'content_source' in parameters.get('properties', {}))
+                          and not {'content_source', 'draft', 'edit_instruction'}.isdisjoint(parameters.get('properties', {})))
             if not chat_image and name not in REVIEWED_MODEL_TOOLS:
                 continue
             args = {}
@@ -111,11 +118,11 @@ class Batch:
             else:
                 if chat_image:
                     from services.task_execution.content_objects import ImageContentReference
-                    from services.task_execution.inline_image_action import InlineRequest
-
-                    input_type = ImageContentReference if 'content_source' in args else InlineRequest
+                    input_type = (ImageContentReference if 'content_source' in args
+                                  else inline_image_action.request_type(parameters['properties']))
                     reference = args.get('content_source')
-                    if isinstance(reference, dict) and 'sha256' in reference:
+                    if (isinstance(reference, dict) and 'sha256' in reference
+                            and 'content_source' in parameters['properties']):
                         # Old clients may still supply a proof that is no longer
                         # advertised. Validate it and keep it for the version check.
                         fields = parameters['properties']
