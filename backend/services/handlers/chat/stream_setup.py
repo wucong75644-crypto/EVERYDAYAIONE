@@ -156,12 +156,12 @@ async def prepare_chat_stream(
         authorized = prepared.execution_context.authorized_tool_names
         if authorized is None:
             _prepare_provider_tools(session, tools, needs_google_search, session.model_id, task_id)
-        # Recompute for the actual retry model and current authorization, never globally.
-        builtin = bool(session.supports_builtin_search and tools
-                       and (authorized is None or "web_search" in authorized))
-        if builtin:
-            tools = [tool for tool in tools if _tool_name(tool) != "web_search"]
-        return {**kwargs, "tools": tools, "enable_builtin_tools": builtin}
+        # Keep the filtered function available for each retry. The adapter decides
+        # whether its hosted implementation can replace it for the actual model.
+        builtin_allowed = kwargs.get("enable_builtin_tools", True) and (
+            authorized is None or "web_search" in authorized
+        )
+        return {**kwargs, "tools": tools, "enable_builtin_tools": builtin_allowed}
 
     retry_policy.prepare_stream = prepare_attempt
 
@@ -255,13 +255,6 @@ def _prepare_permission_and_tools(
     tools = registry.resolve(execution_context, policy=ToolPolicy(registry),
                              advertisement=LegacyAdvertisement()).advertised_schemas()
     return permission, tools
-
-
-def _tool_name(tool: dict[str, Any]) -> str:
-    function = tool.get("function")
-    if isinstance(function, dict):
-        return str(function.get("name") or "")
-    return str(tool.get("name") or "")
 
 
 _PERSONAL_TOOLS = {

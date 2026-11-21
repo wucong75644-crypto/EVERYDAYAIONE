@@ -500,3 +500,117 @@ class TestClose:
         adapter = _make_adapter()
         adapter._client = None
         await adapter.close()  # 不应抛异常
+
+
+@pytest.mark.asyncio
+async def test_openrouter_sends_tool_definitions_and_preserves_indexed_argument_deltas():
+    adapter = _make_adapter("anthropic/claude-sonnet-4.6")
+    tools = [{"type": "function", "function": {"name": "file_search", "parameters": {"type": "object"}}}]
+    messages = [{"role": "user", "content": "查找报价文件"}]
+    first = _make_chunk()
+    first["choices"][0]["delta"]["tool_calls"] = [
+        {"index": 0, "id": "call-first", "function": {"name": "file_search", "arguments": '{"keyword":'}},
+        {"index": 1, "id": "call-second", "function": {"name": "file_search", "arguments": '{"keyword":'}},
+    ]
+    second = _make_chunk(finish_reason="tool_calls")
+    second["choices"][0]["delta"]["tool_calls"] = [
+        {"index": 1, "function": {"arguments": '"合同"}'}},
+        {"index": 0, "function": {"arguments": '"报价"}'}},
+    ]
+    usage = {"choices": [], "usage": {"prompt_tokens": 80, "completion_tokens": 23, "cost": 0.001}}
+    response = MockStreamResponse([_sse_line(first), _sse_line(second), _sse_line(usage), "data: [DONE]"])
+
+    @asynccontextmanager
+    async def stream(method, path, *, json):
+        assert (method, path) == ("POST", "/chat/completions")
+        assert json["messages"] == messages
+        assert json["tools"] == tools
+        assert json["provider"]["require_parameters"] is True
+        assert json["max_tokens"] == 1200
+        yield response
+
+    adapter._client = MagicMock(is_closed=False, stream=stream)
+    chunks = [item async for item in adapter.stream_chat(messages, tools=tools, max_tokens=1200)]
+    assert [(call.index, call.id, call.name, call.arguments_delta) for call in chunks[0].tool_calls] == [
+        (0, "call-first", "file_search", '{"keyword":'),
+        (1, "call-second", "file_search", '{"keyword":'),
+    ]
+    assert [(call.index, call.arguments_delta) for call in chunks[1].tool_calls] == [
+        (1, '"合同"}'), (0, '"报价"}'),
+    ]
+    assert chunks[1].finish_reason == "tool_calls"
+    assert chunks[-1].credits_consumed == 2
+
+
+@pytest.mark.asyncio
+async def test_openrouter_does_not_complete_a_cut_off_tool_stream():
+    adapter = _make_adapter()
+    packet = _make_chunk()
+    packet["choices"][0]["delta"]["tool_calls"] = [
+        {"index": 0, "id": "call-partial", "function": {"name": "file_search", "arguments": '{"keyword":'}},
+    ]
+    _patch_stream(adapter, MockStreamResponse([_sse_line(packet)]))
+    with pytest.raises(OpenRouterAPIError, match="OPENROUTER_TOOL_STREAM_INCOMPLETE"):
+        _ = [item async for item in adapter.stream_chat([{"role": "user", "content": "找文件"}])]
+
+
+@pytest.mark.asyncio
+async def test_openrouter_tool_results_reach_the_next_actor_model_round(monkeypatch):
+    from services.handlers.chat.execution_engine import _run_loop
+    from services.handlers.chat.execution_sink import CollectingExecutionSink
+    from services.handlers.chat.stream_session import StreamTotals
+    from tests.test_chat_tool_argument_repairs import setup
+
+    runtime, prepared, handler, request = setup()
+    runtime.task_bootstrap = None
+    adapter = _make_adapter("anthropic/claude-sonnet-4.6")
+    prepared.adapter = adapter
+    prepared.stream_kwargs = {"max_tokens": 1200}
+    prepared.messages = [{"role": "user", "content": "找报价并报告查询结果"}]
+    monkeypatch.setattr("services.handlers.chat.execution_engine.compact_tool_context", AsyncMock())
+
+    requests = []
+
+    async def provider(http_request):
+        body = json.loads(http_request.content)
+        requests.append(body)
+        assert "file_search" in {tool["function"]["name"] for tool in body["tools"]}
+        frames = []
+        if len(requests) == 1:
+            first = _make_chunk()
+            first["choices"][0]["delta"]["tool_calls"] = [
+                {"index": 0, "id": "search-vendor-id", "function": {"name": "file_search", "arguments": '{"keyword":'}},
+            ]
+            second = _make_chunk(finish_reason="tool_calls")
+            second["choices"][0]["delta"]["tool_calls"] = [
+                {"index": 0, "function": {"arguments": '"报价"}'}},
+            ]
+            frames.extend((first, second))
+        else:
+            assistant, result = body["messages"][-2:]
+            tool, = assistant["tool_calls"]
+            assert tool["function"]["name"] == "file_search"
+            assert json.loads(tool["function"]["arguments"]) == {"keyword": "报价"}
+            assert result["tool_call_id"] == tool["id"]
+            assert tool["id"].startswith("call_") and tool["id"][5:].isalnum()
+            assert result["content"].startswith("查询结果")
+            frames.append(_make_chunk(content="已找到报价。", finish_reason="stop"))
+        frames.append({"choices": [], "usage": {"prompt_tokens": 8, "completion_tokens": 5, "cost": 0.001}})
+        data = "\n\n".join([*map(_sse_line, frames), "data: [DONE]"]) + "\n\n"
+        return httpx.Response(200, text=data, headers={"Content-Type": "text/event-stream"})
+
+    async with httpx.AsyncClient(base_url=adapter._base_url, transport=httpx.MockTransport(provider)) as client:
+        adapter._client = client
+        blocks = []
+        await _run_loop(
+            handler=handler, request=request, prepared=prepared, runtime=runtime,
+            cancellation_event=runtime.cancellation_event, sink=CollectingExecutionSink(),
+            totals=StreamTotals(), blocks=blocks,
+        )
+
+    assert len(requests) == 2
+    handler._execute_tool_calls.assert_awaited_once()
+    dispatched, = handler._execute_tool_calls.await_args.args[0]
+    assert dispatched["name"] == "file_search"
+    assert dispatched["id"].startswith("actor-call:")
+    assert blocks[-1]["text"] == "已找到报价。"

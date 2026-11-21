@@ -43,6 +43,38 @@ def _request() -> ChatExecutionRequest:
     )
 
 
+async def test_read_turn_projects_legacy_interruption_notices_without_changing_saved_messages():
+    from services.adapters.types import StreamChunk
+    from services.handlers.chat.execution_sink import CollectingExecutionSink
+    from services.handlers.chat.stream_session import StreamTotals
+
+    old_tool = "[系统: 用户在工具 'generate_image' 执行完成前中断了对话。该工具结果未知，请视为未成功。]"
+    old_system = (
+        "[任务恢复] 此任务在 约 5 分钟前 被用户中断。可能未完成，请重新评估任务上下文。\n\n"
+        "注意：如果之前调用的工具没有收到结果，请假设该工具未成功执行；根据当前需要判断是否重试。"
+    )
+    original = [
+        {"role": "tool", "tool_call_id": "original-call", "content": old_tool},
+        {"role": "system", "content": old_system},
+        {"role": "user", "content": "继续"},
+    ]
+    received = []
+
+    async def stream_chat(**kwargs):
+        received.extend(kwargs["messages"])
+        yield StreamChunk(content="正在核实原任务。", finish_reason="stop")
+
+    prepared = SimpleNamespace(adapter=SimpleNamespace(stream_chat=stream_chat),
+                               messages=original, stream_kwargs={})
+    await _read_turn(prepared, [], asyncio.Event(), CollectingExecutionSink(), StreamTotals(), [], runtime=None)
+    assert received[0]["tool_call_id"] == "original-call"
+    assert "原操作状态待核实" in received[0]["content"]
+    assert "约 5 分钟前" in received[1]["content"]
+    assert "状态不明时不重复提交" in received[1]["content"]
+    assert received[2] == original[2]
+    assert [m["content"] for m in original] == [old_tool, old_system, "继续"]
+
+
 class _PauseStore:
     def __init__(self, ready: asyncio.Event):
         self.ready = ready

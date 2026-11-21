@@ -64,6 +64,7 @@ class ConversationTurnRuntime:
         self.skill_runtime = None  # Owned by this turn; never a handler/global cache.
         self.mcp_invocations = {}  # Result snapshots only; the ledger remains authoritative.
         self.task_execution_state = None  # New logical tasks only; old checkpoints remain unchanged.
+        self.task_image_completion = None  # Verified continuation input, distinct from a user turn.
         self.task_bootstrap = None  # Trusted input only; never populated from request params.
         self.task_direct_plan = None  # Optional notes, never an execution grant.
         self.task_direct_plan_owner = None
@@ -305,6 +306,8 @@ class ConversationTurnRuntime:
                     self._steer_messages.extend(i.message for i in self.task_user_changes.items if i.event_id not in prior and not i.delivered)
                     captured_steer = True  # Same transaction saved the source and acknowledged it.
                 else:
+                    if command.payload.get('attachments'):
+                        raise RuntimeError('STEER_ATTACHMENT_CHECKPOINT_REQUIRED')
                     self._steer_messages.append(message.strip())
             self.state = reduce_command(self.state, command)
             if self.state in {

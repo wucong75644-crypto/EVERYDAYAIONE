@@ -112,7 +112,7 @@ class TestExitAttachment:
         pm.exit_plan()
         assert pm.need_exit_attachment is True
         text = pm.consume_exit_attachment()
-        assert "计划已确认" in text
+        assert "确认的范围" in text
         assert pm.need_exit_attachment is False
 
     def test_consume_idempotent(self):
@@ -124,7 +124,7 @@ class TestExitAttachment:
         assert pm.need_exit_attachment is False
 
     def test_exit_prompt_content(self):
-        assert "erp_agent" in _PLAN_EXIT_PROMPT
+        assert "本轮实际权限及工具" in _PLAN_EXIT_PROMPT
 
 
 # ============================================================
@@ -216,24 +216,15 @@ class TestReminder:
 # ============================================================
 
 class TestPromptContent:
-    def test_plan_full_mentions_erp_analyze(self):
-        assert "erp_analyze" in _PLAN_FULL_PROMPT
+    def test_plan_reminders_defer_to_platform_policy_and_stop_after_showing_plan(self):
+        assert "<permission_mode>" in _PLAN_FULL_PROMPT
+        for prompt in (_PLAN_FULL_PROMPT, _PLAN_SPARSE_PROMPT):
+            assert "等待用户确认" in prompt
+            assert "erp_analyze" not in prompt
 
-    def test_plan_full_mentions_blocked_tools(self):
-        for tool in ("erp_agent", "generate_image", "generate_video", "social_crawler"):
-            assert tool in _PLAN_FULL_PROMPT
-
-    def test_plan_sparse_mentions_must_not(self):
-        assert "MUST NOT" in _PLAN_SPARSE_PROMPT
-
-    def test_auto_full_mentions_key_rules(self):
-        assert "立即执行" in _AUTO_FULL_PROMPT
-        assert "减少打断" in _AUTO_FULL_PROMPT
-        assert "破坏性操作" in _AUTO_FULL_PROMPT
-
-    def test_exit_prompt_mentions_execution(self):
-        assert "执行" in _PLAN_EXIT_PROMPT
-        assert "erp_agent" in _PLAN_EXIT_PROMPT
+    def test_auto_reminder_uses_shared_rules(self):
+        assert "<permission_mode>" in _AUTO_FULL_PROMPT
+        assert "必要输入明确时直接执行" in _AUTO_FULL_PROMPT
 
 
 # ============================================================

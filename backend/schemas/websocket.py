@@ -36,6 +36,7 @@ from schemas.websocket_builders import (  # noqa: F401
     build_media_pending,
     build_message_error,
     build_control_result,
+    build_steer_result,
     build_message_retry,
     build_image_partial_update,
     build_subscribed,

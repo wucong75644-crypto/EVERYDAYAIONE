@@ -6,6 +6,8 @@ KIE 模型配置
 
 from decimal import Decimal
 
+from config.kie_models import KIE_MODEL_CONFIGS, KLING_TEXT_VIDEO
+
 
 # ============================================================
 # Chat 模型配置
@@ -270,7 +272,15 @@ IMAGE_MODEL_CONFIGS = {
 # Video 模型配置
 # ============================================================
 
+
+_kling = KIE_MODEL_CONFIGS[KLING_TEXT_VIDEO]
 VIDEO_MODEL_CONFIGS = {
+    KLING_TEXT_VIDEO: {
+        **_kling,
+        "supported_frames": [str(seconds) for seconds in _kling["supported_durations"]],
+        "cost_per_second": Decimal("0.063"),
+        "credits_by_duration": {str(seconds): cost for seconds, cost in _kling["kie_cost_by_duration"].items()},
+    },
     "sora-2-text-to-video": {
         "model_id": "sora-2-text-to-video",
         "description": "文本生成视频",

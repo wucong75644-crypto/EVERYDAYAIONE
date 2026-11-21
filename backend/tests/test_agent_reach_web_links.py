@@ -88,3 +88,31 @@ def test_balanced_parentheses_in_original_url_are_preserved():
     original='https://example.com/product/(edition)?filter=(new)'
     _, refs=prepare(f'帮我查这个商品：[链接]({original})。')
     assert list(refs.values()) == [original]
+
+
+@pytest.mark.parametrize(('selector', 'value', 'reason'), [
+    ('url', '上传/2026-11/booth-brief.txt', 'invalid_agent_reach_url'),
+    ('url_ref', 'fref1_workspace_file', 'invalid_web_link_reference'),
+])
+def test_workspace_selector_is_rejected_with_a_reading_hint(selector, value, reason):
+    from services.tools import ToolCall, ToolContext, ToolPolicy, build_legacy_catalog
+    from services.tools.result import ToolResult
+
+    context = ToolContext(actor_user_id='user', workspace_owner_id='user', org_id='org',
+        context_scope='user', personal_context_allowed=True, agent_domain='general',
+        permission_mode='auto', execution_mode='interactive', conversation_id='chat',
+        feature_flags={'agent_reach_enabled': True})
+    call = ToolCall('read-attachment', 'agent_reach', {'task': '读取 TXT', 'action': 'read', selector: value})
+    policy = ToolPolicy(build_legacy_catalog())
+    decision = policy.plan_batches([call], context)[0][0].decision
+    result = ToolResult.not_executed(call=call, context=context, decision=decision)
+
+    assert decision.reason == reason
+    assert result.execution.status == 'not_started'
+    assert '工作区附件' in result.model_content('chat')
+    if selector == 'url':
+        assert 'code_execute' in result.model_content('chat')
+
+    corrected_call = ToolCall('read-web', 'agent_reach',
+        {'task': '读取网页', 'action': 'read', 'url': 'https://example.com/'})
+    assert policy.plan_batches([corrected_call], context)[0][0].decision.outcome == 'allow'

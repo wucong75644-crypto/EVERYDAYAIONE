@@ -1,0 +1,19 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.14.2, pytest-9.0.3, pluggy-1.6.0
+rootdir: /Users/wucong/EVERYDAYAIONE-worktrees/20261120175146-conversation-runtime-diagnosis/backend
+configfile: pytest.ini
+plugins: cov-7.1.0, asyncio-1.3.0, time-machine-3.5.1, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collected 392 items
+
+tests/test_tool_production_integration.py .............................. [  7%]
+........................................................................ [ 26%]
+......................................                                   [ 35%]
+tests/test_agent_protocol_integration.py .............................   [ 43%]
+tests/test_tool_registry.py ............................................ [ 54%]
+.................................................................        [ 70%]
+tests/test_tool_result_consumption.py .................................. [ 79%]
+......................................                                   [ 89%]
+tests/test_chat_tools.py ..........................................      [100%]
+
+============================= 392 passed in 5.24s ==============================

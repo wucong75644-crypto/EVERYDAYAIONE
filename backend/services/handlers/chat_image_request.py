@@ -562,7 +562,7 @@ class ChatImageInputResolver:
         return prompt,self.source_prompt(source,prompt)
 
     def verify_content_object(self,proof):
-        from services.task_execution.content_objects import compile_input
+        from services.task_execution.content_objects import compile_input, is_regeneration_variant
         from services.task_execution.reducer import digest
         if not isinstance(proof,dict) or set(proof)!={'version','source','tool','arguments','arguments_sha256'} or proof['version']!=1 or proof['tool']!='generate_image':
             raise ValueError('CONTENT_PROOF_INVALID')
@@ -576,6 +576,13 @@ class ChatImageInputResolver:
                 or state.execution_identity.context_scope!=getattr(self.owner,'context_scope','user')
                 or state.execution_identity.workspace_owner_id!=str(getattr(self.owner,'workspace_user_id',self.owner.user_id))):
             raise PermissionError('CONTENT_SOURCE_DENIED')
+        arguments = proof['arguments']
+        if not isinstance(arguments, dict):
+            raise ValueError('CONTENT_PROOF_INVALID')
+        variant = arguments.get('variant_id')
+        if (is_regeneration_variant(variant)
+                and variant != f'regenerate:{self.input_message_id}'):
+            raise PermissionError('CONTENT_IMAGE_REGENERATION_UNCONFIRMED')
         expected,_=compile_input(state,'generate_image',proof['arguments'],proof['source'],allow_old=True)
         if expected['source_prompt']['content_object']!=proof: raise ValueError('CONTENT_PROOF_CHANGED')
         return {k:v for k,v in expected.items() if k!='source_prompt'}

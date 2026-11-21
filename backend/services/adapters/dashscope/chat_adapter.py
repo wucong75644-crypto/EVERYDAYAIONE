@@ -231,12 +231,15 @@ class DashScopeChatAdapter(BaseChatAdapter):
     ) -> AsyncIterator[StreamChunk]:
         """流式聊天（统一接口）"""
 
-        # Agent requests alone opt into provider-managed network tools.
-        if kwargs.get("enable_builtin_tools", False) and self.supports_builtin_search:
+        tools = kwargs.get("tools")
+        # Only replace the search function actually offered for this attempt.
+        if kwargs.get("enable_builtin_tools", False) and self.supports_builtin_search and any(
+            tool.get("type") == "function" and tool.get("function", {}).get("name") == "web_search"
+            for tool in (tools or ())
+        ):
             async for chunk in self._stream_responses(messages, thinking_mode, reasoning_effort, **kwargs):
                 yield chunk
             return
-        tools = kwargs.get("tools")
         request_body = self._request_body(messages, stream=True, reasoning_effort=reasoning_effort,
             thinking_mode=thinking_mode, **kwargs)
 

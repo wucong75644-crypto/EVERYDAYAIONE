@@ -7,6 +7,10 @@ from .contracts import TaskError,TaskState
 from .native_writes import NativeWriteLifecycle,binding,receipt_artifact as native_artifact
 from .operation_store import TaskOperationPersistenceError
 
+from config.kie_models import KLING_TEXT_VIDEO, get_model_config
+
+CHAT_VIDEO_MODEL_ID = KLING_TEXT_VIDEO
+VIDEO_ASPECT_RATIO = 'landscape'
 REQUEST='_agent_video_request_v1'
 LIFECYCLE='_agent_video_lifecycle_v1'
 VALIDATOR='native.video.result'
@@ -25,7 +29,6 @@ def rejected(result):
 
 
 def frozen_request(owner,args,parent):
-    from services.adapters.factory import DEFAULT_VIDEO_MODEL_ID
     from config.kie_models import calculate_video_cost
     from services.handlers.chat_image_request import canonical_hash
     from services.tools.dispatcher import current_dispatch_call_id
@@ -35,11 +38,12 @@ def frozen_request(owner,args,parent):
     if state.execution_identity.context_scope!='user' or state.execution_identity.workspace_owner_id!=str(state.actor_user_id):
         raise VideoNotAccepted('VIDEO_CONTEXT_NOT_ADAPTED')
     prompt=args['prompt']
-    if len(prompt)>10000:raise VideoNotAccepted('VIDEO_PROMPT_TOO_LONG')
-    try:cost=calculate_video_cost(model_name=DEFAULT_VIDEO_MODEL_ID,duration_seconds=10)
+    model = get_model_config(CHAT_VIDEO_MODEL_ID)
+    if len(prompt) > model['max_prompt_length']: raise VideoNotAccepted('VIDEO_PROMPT_TOO_LONG')
+    try:cost=calculate_video_cost(model_name=CHAT_VIDEO_MODEL_ID,duration_seconds=10)
     except ValueError as error:raise VideoNotAccepted('VIDEO_DEFAULT_MODEL_UNAVAILABLE') from error
-    snapshot={'schema_version':1,'mode':'text_to_video','model':DEFAULT_VIDEO_MODEL_ID,'prompt':prompt,
-        'duration_seconds':10,'aspect_ratio':'landscape','remove_watermark':True,'references':[],
+    snapshot={'schema_version':1,'mode':'text_to_video','model':CHAT_VIDEO_MODEL_ID,'prompt':prompt,
+        'duration_seconds':10,'aspect_ratio':VIDEO_ASPECT_RATIO,'remove_watermark':model['supports_watermark_removal'],'references':[],
         'estimated_credits':cost['user_credits'],'estimated_provider_credits':cost['kie_cost'],
         'budget':{'max_requests':8,'max_credits':min(100000,8*cost['user_credits'])},
         'origin':{'parent_task_id':str(parent['id']),'logical_task_id':str(state.root_task_id),
@@ -64,6 +68,12 @@ async def accept(owner,args):
         if receipt['outcome'] not in {'accepted','replay'}:raise ValueError()
         UUID(receipt['task_id']);UUID(receipt['message_id'])
     except (TypeError,ValueError,KeyError):raise TaskError('VIDEO_ACCEPTANCE_UNCONFIRMED') from None
+    from services.handlers.media_delivery import send_pending_media
+    await send_pending_media(
+        owner.db, task_id=receipt['task_id'], message_id=receipt['message_id'],
+        user_id=str(parent['user_id']), org_id=owner.org_id,
+        conversation_id=str(parent['conversation_id']), submission_state=receipt['submission_state'],
+    )
     return receipt
 
 

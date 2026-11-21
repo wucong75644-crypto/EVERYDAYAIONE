@@ -26,6 +26,12 @@ def test_routing_keeps_complex_actions_erp_and_followups_out_of_fast_generation(
   assert not eligible(q),q
 
 
+def test_combined_knowledge_and_delivery_keeps_normal_tools_available():
+ for question in ('公司报销规则是什么？然后导出 Excel', '公司报销规则是什么？再生成一张流程图'):
+  assert not eligible(question)
+  assert not eligible(question, hierarchical=True)
+
+
 def test_program_reads_evidence_once_and_preserves_conditions_and_fixed_links(derived_db):
  r=derived_db[0]();root,_=fixture(r);run,_,_=start(derived_db[0],r,[ref(root)])
  result=collect(run,'拼多多漏发如何处理？食品拆封可以吗？')

@@ -144,7 +144,17 @@ class ToolResult:
         status = "confirmation_required" if decision.outcome == "require_confirmation" else "denied"
         error = (ValueError(f"Unknown sync tool: {call.name}") if decision.reason == "unknown_tool"
                  else PermissionError(f"Tool execution not allowed: {decision.reason}"))
-        if decision.reason.startswith("RESOURCE_"):
+        if decision.reason == "invalid_agent_reach_url":
+            error = ValueError(
+                "agent_reach 未执行：url 需要完整公开 HTTP/HTTPS 网页地址。"
+                "如目标是工作区附件，请按附件 action 读取，普通 TXT 用 code_execute 和工作区相对路径。"
+            )
+        elif decision.reason == "invalid_web_link_reference":
+            error = ValueError(
+                "agent_reach 未执行：url_ref 只接收当前会话登记的网页引用，且不能与 url 同时提供。"
+                "工作区附件请按该附件的 action 读取。"
+            )
+        elif decision.reason.startswith("RESOURCE_"):
             from .resource_access import ResourceAccessError
             error = ResourceAccessError(decision.reason,
                 "当前任务没有可验证的该动作文件授权。请先指定获准资源；不要改 scope 或换文件重试。")

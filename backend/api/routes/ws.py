@@ -26,6 +26,7 @@ from schemas.websocket import (
     build_message_done,
     build_message_error,
     build_control_result,
+    build_steer_result,
 )
 from services.websocket_manager import HEARTBEAT_INTERVAL, ws_manager
 from services.ws_ticket import consume_ws_ticket
@@ -39,6 +40,7 @@ from services.conversation_control_service import (
     load_control_tasks,
 )
 from services.conversation_task import is_actor_task
+from services.task_execution import steer_attachments
 
 router = APIRouter(tags=["WebSocket"])
 
@@ -168,6 +170,34 @@ async def _heartbeat_loop(conn_id: str, websocket: WebSocket):
                 break
     except asyncio.CancelledError:
         pass
+
+
+def _find_steer_receipt(db, *, task_id, conversation_id, user_id, org_id, request_id, message, attachments=()):
+    # Look up an exact, owned task even when the original turn has finished.
+    aliases = ('client_task_id', 'external_task_id')
+    try:
+        uuid.UUID(task_id)
+    except ValueError:
+        pass
+    else:
+        aliases = ('id', *aliases)
+    for alias in aliases:
+        query = (db.table('tasks').select('id,delivery_context')
+                 .eq(alias, task_id).eq('conversation_id', conversation_id)
+                 .eq('user_id', user_id).eq('type', 'chat'))
+        query = query.eq('org_id', org_id) if org_id else query.is_('org_id', 'null')
+        matches = query.limit(2).execute().data or []
+        if len(matches) != 1 or not is_actor_task(matches[0]):
+            continue
+        event = (db.table('conversation_control_events').select('id,payload,status')
+                 .eq('task_id', matches[0]['id']).eq('conversation_id', conversation_id)
+                 .eq('event_type', 'steer').eq('dedupe_key', f'steer:{request_id}')
+                 .maybe_single().execute())
+        data = event.data if event else None
+        if data is not None and data.get('status') in {'pending', 'applied'}:
+            if steer_attachments.matches(data.get('payload'), message.strip(), attachments):
+                return str(data['id'])
+    return None
 
 
 async def _handle_message(
@@ -306,8 +336,40 @@ async def _handle_message(
         # 用户在 AI 执行中发送新消息（打断当前工具循环）
         task_id = payload.get("task_id")
         message = payload.get("message", "")
-        if task_id and message:
+        request_id = payload.get("request_id")
+        if request_id is not None:
+            try:
+                request_id = str(uuid.UUID(str(request_id)))
+            except ValueError:
+                await ws_manager.send_to_connection(conn_id, build_error(
+                    "Invalid steer request ID", code="INVALID_STEER_REQUEST_ID"))
+                return
+        if task_id and isinstance(message, str) and message.strip():
             conversation_id = payload.get("conversation_id")
+
+            async def reply(outcome, event_id=None):
+                if request_id and conversation_id:
+                    await ws_manager.send_to_connection(conn_id, build_steer_result(
+                        request_id=request_id, outcome=outcome, task_id=str(task_id),
+                        conversation_id=str(conversation_id), event_id=event_id))
+            attachments = ()
+            if 'attachments' in payload:
+                try:
+                    if not request_id or not conversation_id:
+                        raise ValueError('STEER_ATTACHMENT_SCOPE_REQUIRED')
+                    attachments = steer_attachments.normalize(payload['attachments'])
+                except ValueError:
+                    await reply('unconfirmed')
+                    return
+            if request_id and conversation_id and payload.get('retry') is True:
+                event_id = await asyncio.to_thread(
+                    _find_steer_receipt, get_db(), task_id=str(task_id),
+                    conversation_id=str(conversation_id), user_id=user_id, org_id=org_id,
+                    request_id=request_id, message=message, attachments=attachments)
+                if event_id:
+                    await reply('enqueued', event_id)
+                    return
+
             control_tasks = None
             if conversation_id:
                 control_tasks = load_control_tasks(
@@ -327,12 +389,12 @@ async def _handle_message(
                 and candidate_task
                 and str(task_id) in candidate_ids
             ):
-                decision = await ConversationControlRouter().route(
-                    str(message),
+                decision = None if attachments else await ConversationControlRouter().route(
+                    message,
                     control_tasks.to_router_state(),
                     org_id=org_id,
                 )
-                if decision.action is not ControlAction.NONE:
+                if decision is not None and decision.action is not ControlAction.NONE:
                     result = execute_control_action(
                         get_db(),
                         tasks=control_tasks,
@@ -367,27 +429,59 @@ async def _handle_message(
                         client_task_id=result.get("client_task_id"),
                         external_task_id=result.get("external_task_id"),
                     ))
+                    accepted_control = result.get('outcome') in {
+                        'requested', 'paused', 'already_paused', 'cancelled', 'already_cancelled',
+                        'resumed', 'already_pending', 'enqueued', 'already_enqueued',
+                    }
+                    await reply('control_applied' if accepted_control else 'unconfirmed')
                     return
                 if is_actor_task(candidate_task) and candidate_task.get("status") == "running":
                     internal_task_id = str(candidate_task["id"])
+                    command_input = {"message": message.strip()}
+                    if attachments:
+                        conversation = (get_db().table('conversations').select('scope_type,user_id,org_id')
+                                        .eq('id', str(conversation_id)).maybe_single().execute())
+                        current = conversation.data if conversation else None
+                        if (not current or (current.get('scope_type') or 'user') != 'user'
+                                or str(current.get('user_id')) != user_id or current.get('org_id') != org_id):
+                            await reply('unconfirmed')
+                            return
+                        try:
+                            command_input["attachments"] = await asyncio.to_thread(
+                                steer_attachments.bind, attachments, user_id=user_id, org_id=org_id,
+                                conversation_id=str(conversation_id))
+                        except (ValueError, PermissionError, OSError):
+                            await reply('unconfirmed')
+                            return
                     async_db = await get_async_db()
-                    steer_result = await DatabaseConversationCommandStore(
-                        async_db
-                    ).append(
-                        conversation_id=str(candidate_task["conversation_id"]),
-                        task_id=internal_task_id,
-                        turn_id=(
-                            str(candidate_task["turn_id"])
-                            if candidate_task.get("turn_id") else None
-                        ),
-                        command_type=CommandType.STEER,
-                        dedupe_key=f"steer:{uuid.uuid4()}",
-                        payload={"message": str(message)},
-                    )
+                    try:
+                        steer_result = await DatabaseConversationCommandStore(
+                            async_db
+                        ).append(
+                            conversation_id=str(candidate_task["conversation_id"]),
+                            task_id=internal_task_id,
+                            turn_id=(
+                                str(candidate_task["turn_id"])
+                                if candidate_task.get("turn_id") else None
+                            ),
+                            command_type=CommandType.STEER,
+                            dedupe_key=f"steer:{request_id or uuid.uuid4()}",
+                            payload=command_input,
+                        )
+                    except Exception as error:
+                        if not attachments or not any(code in str(error) for code in (
+                                'ACTOR_STEER_SCOPE_MISMATCH', 'ACTOR_STEER_ATTACHMENT_WINDOW_CLOSED')):
+                            raise
+                        await reply('unconfirmed')
+                        return
                     from services.conversation_worker import RedisConversationWakeup
                     await RedisConversationWakeup().publish(
                         str(candidate_task["conversation_id"]), org_id,
                     )
+                    if request_id:
+                        same_input = steer_result.get('payload') == command_input
+                        await reply('enqueued' if same_input and steer_result.get('outcome') == 'enqueued'
+                                    else 'unconfirmed', steer_result.get('event_id'))
                     logger.info(
                         "Actor steer persisted | "
                         f"task_id={internal_task_id} | "
@@ -395,6 +489,11 @@ async def _handle_message(
                         f"already_enqueued={steer_result.get('already_enqueued', False)}"
                     )
                     return
+            if request_id:
+                # A current-protocol client can retain the draft for reconciliation.
+                # Do not fall through to an unscoped ephemeral waiter.
+                await reply('unconfirmed')
+                return
             resolved = ws_manager.resolve_steer(task_id, message)
             logger.info(
                 f"User steer | conn={conn_id} | task={task_id} | "

@@ -46,6 +46,8 @@ interface TaskRequestParams {
   thinking_mode?: string;
   _media_request_v1?: { model: string; source_task_id?: string; origin: { destination?: string } };
   _media_lifecycle_v1?: { phase: string };
+  _agent_video_request_v1?: { model: string; aspect_ratio: string; duration_seconds: number };
+  _agent_video_lifecycle_v1?: { phase: string };
   [key: string]: unknown;
 }
 
@@ -128,13 +130,14 @@ export async function fetchPendingTasks(): Promise<PendingTask[] | null> {
 export function restoreMediaTask(task: PendingTask) {
   const store = useMessageStore.getState();
   const snapshot = task.request_params?._media_request_v1;
+  const video = task.request_params?._agent_video_request_v1;
   if (snapshot?.origin.destination === 'skill_trial' || snapshot?.origin.destination === 'detail_project') return;
 
   const maxDuration = task.type === 'image' ? IMAGE_TASK_TIMEOUT : VIDEO_TASK_TIMEOUT;
   const elapsed = Date.now() - new Date(task.started_at).getTime();
 
   // 超时检查：已超时的任务不恢复（后端会标记为失败）
-  if (!snapshot && elapsed > maxDuration) {
+  if (!snapshot && !video && elapsed > maxDuration) {
     logger.warn('task:restore', '任务已超时,跳过恢复', { taskId: task.external_task_id });
     return;
   }
@@ -158,7 +161,7 @@ export function restoreMediaTask(task: PendingTask) {
   if (snapshot && staleImageAttempt(existing, task.id, { context_revision: task.message_context_revision, generation_params: {
     origin: 'chat_image', task_id: task.id, source_task_id: snapshot.source_task_id,
   } })) return;
-  if (snapshot && existing?.generation_params?.task_id === task.id
+  if ((snapshot || video) && existing?.generation_params?.task_id === task.id
       && (existing.status === 'completed' || existing.status === 'failed')) return;
   const restored: Message = {
     id: placeholderId, context_revision: task.message_context_revision ?? existing?.context_revision,
@@ -169,9 +172,11 @@ export function restoreMediaTask(task: PendingTask) {
     created_at: task.placeholder_created_at || existing?.created_at || task.created_at || new Date().toISOString(),
     generation_params: {
       type: task.type,
-      model: snapshot?.model || task.request_params?.model,
+      model: snapshot?.model || video?.model || task.request_params?.model,
       ...(snapshot ? { origin: 'chat_image', task_id: task.id, num_images: 1,
         submission_state: task.request_params._media_lifecycle_v1?.phase, source_task_id: snapshot.source_task_id } : {}),
+      ...(video ? { origin: 'agent_video', task_id: task.id, aspect_ratio: video.aspect_ratio,
+        duration_seconds: video.duration_seconds, submission_state: task.request_params._agent_video_lifecycle_v1?.phase } : {}),
       ...(task.request_params?.num_images ? { num_images: task.request_params.num_images } : {}),
       ...(renderHints ? { _render: renderHints } : {}),
     },
@@ -357,6 +362,34 @@ async function reconcileChatTaskStatesOnce(
     } catch (error) { logger.error('task:reconcile', '图片完成消息读取失败，保留刷新标记', error); }
   }));
 
+  const completedVideos = tasks.filter(task => task.type === 'video'
+    && task.request_params?._agent_video_request_v1
+    && RECONCILE_TASK_STATUSES.has(task.status) && task.conversation_id);
+  await Promise.all(completedVideos.map(async task => {
+    const messageId = task.assistant_message_id || task.placeholder_message_id;
+    if (!messageId) return;
+    const store = useMessageStore.getState();
+    const current = store.getMessage(messageId);
+    if (current?.generation_params?.task_id === task.id
+        && (current.status === 'completed' || current.status === 'failed')) return;
+    try {
+      const { getMessage } = await import('../services/message');
+      const raw = await getMessage(task.conversation_id, messageId);
+      const result = normalizeMessage(raw);
+      if (result.id !== messageId || result.conversation_id !== task.conversation_id
+          || result.generation_params?.origin !== 'agent_video'
+          || result.generation_params.task_id !== task.id
+          || (result.status !== 'completed' && result.status !== 'failed')) return;
+      const latest = store.getMessage(messageId);
+      if (latest?.context_revision != null && (result.context_revision ?? -1) < latest.context_revision) return;
+      store.updateMessage(messageId, result);
+      store.addMessage(task.conversation_id, result);
+    } catch (error) {
+      store.markForceRefresh(task.conversation_id);
+      logger.error('task:reconcile', '视频完成消息读取失败', error, { conversationId: task.conversation_id, taskId: task.id });
+    }
+  }));
+
   for (const task of tasks) {
     if (
       task.type !== 'chat'
@@ -510,10 +543,11 @@ export function subscribeRestoredTasks(
     }
   }
 
-  // 订阅 media 任务（优先用 client_task_id，与后端推送 ID 一致）
+  // 聊天内派发的媒体按本地子任务 ID 推送，其余媒体沿用客户端或供应商 ID。
   for (const task of result.mediaTasks) {
     if (task.conversation_id) {
-      const subscribeId = task.request_params._media_request_v1 ? task.id : task.client_task_id || task.external_task_id;
+      const managed = task.request_params._media_request_v1 || task.request_params._agent_video_request_v1;
+      const subscribeId = managed ? task.id : task.client_task_id || task.external_task_id;
       subscribeToTask(subscribeId, task.conversation_id);
       logger.info('task:restore:p2', 'Media 任务已订阅 WS', {
         taskId: subscribeId,

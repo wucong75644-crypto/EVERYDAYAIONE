@@ -1,0 +1,51 @@
+第五阶段本地验收
+任务分支 codex/task/20261120175146-conversation-runtime-diagnosis
+基线 4ca37b6703aef49147bec23a533ebb2acc769cc0，含第一至第五阶段工作树改动
+
+后端主回归，共 309 项，287 通过、22 跳过
+  test_content_objects_postgres.py
+  test_chat_latency_chain_postgres.py
+  test_model_directed_loop.py
+  test_tool_production_integration.py
+  test_scheduled_task_chat_results.py
+  test_scheduled_task_colloquial_request.py
+  test_chat_image_sources.py
+  跳过项需要私有历史对话、原始附件或指定版本 Skill 的本地副本。
+  包含即时生图和编辑、两种中断恢复、实际 Word 文件打开校验、业务工具路由和权限。
+  即时图片四种场景各核对一个子任务、一份供应商请求及一笔积分交易，供应商响应为测试桩。
+  文本问答、图片理解、知识及工具读取场景使用模拟模型输出、隔离 PostgreSQL 和 Redis。
+
+补充数据库回归，共 114 项，全部通过
+  test_model_directed_file_postgres.py
+  test_task_execution_revision_files_postgres.py
+  test_task_execution_file_delete_resume_postgres.py
+  test_task_execution_file_restores_postgres.py
+  test_task_execution_scheduled_postgres.py
+  test_scheduled_notifications_postgres.py
+  test_scheduled_skill_postgres.py
+  验证文件版本、删除与恢复回执、定时创建/接续、通知与 Skill，使用临时数据库。
+
+前端定向回归，共 14 个文件，256 通过、4 跳过
+  npm exec vitest -- run taskRestoration ChatImageControls MessageMedia MediaPlaceholder AiImageGrid ImageContextMenu useImageUpload streamingThinking MessageContentBlocks TaskForm ScheduledTaskPanel FormBlockChangeSet StructuredConsumers wsMessageHandlers
+  npm run build 通过，包括 TypeScript、Vite 与 PDF worker 检查。Vite 提示部分包大于 500 kB。
+
+Chromium 图片回放，4 个场景通过
+  后端 test_chat_executes_from_registration_to_page_receipt 设置 CHAT_EXECUTION_WS_REPLAY_DIR 产生事件文件。
+  前端 scripts/chat-image-replay-acceptance.mjs 使用同一个目录，重放真实测试库产生的 pending/done 事件。
+  inline-text-to-image、inline-image-to-image、inline-resume-before-reserve、inline-resume-after-acceptance。
+  每组验证占位、重复投递去重、晚到的占位事件、刷新后先到的终态、真实图片组件解码。
+  用右键引用测试实际附件控制器的提交快照，核对素材 ID、原图地址、消息 ID、内容序号与图片任务 ID。
+  传输按测试事件回放，图片资源在本地浏览器拦截替代，没有请求外部资源。
+
+Chromium 任务接续，1 套脚本通过
+  前端 scripts/task-page-acceptance.mjs。
+  使用当前「查看任务」入口和 MessageItem，12 个本地模拟 API 请求，无页面脚本错误或外部资源请求。
+  继续、暂停、停止各一次，原规划和两张成果保留，覆盖手机宽度、终态后轮询、访问权限撤销。
+
+Chromium 本地 WebSocket 联合验证，4 项通过
+  test_chat_latency_chain_postgres.py 设置 CHAT_LATENCY_BROWSER=1、CHAT_LATENCY_REAL_MODEL=0，
+  选择 everydayai 角色运行 chat、image_analysis、knowledge、tools 四个场景。
+  Vite 监听 127.0.0.1:5181，打开 tests/browser/chat-latency-live.html?port=<测试输出的环回端口>。
+  每个场景使用独立的测试连接，FastAPI WebSocket 将实际 Actor、PostgreSQL 和 Redis 链路的消息送进浏览器。
+  Chromium 看到最终一段正文，后端确认首段正文在终态之前出现在 DOM。该组与后端主回归中的用例重叠。
+  调整测试夹具按当前每个场景一轮的批次运行；模型输出仍为测试桩。

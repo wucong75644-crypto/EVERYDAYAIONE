@@ -52,7 +52,7 @@ class TestAutoModeE2E:
         prompt = perm.get_reminder(turn=0)
         assert prompt is not None
         assert "自动模式" in prompt
-        assert "立即执行" in prompt
+        assert "必要输入明确时直接执行" in prompt
 
     def test_step5_loop_turn1_no_reminder(self):
         """turn 1 不注入 reminder（节流）"""
@@ -136,8 +136,8 @@ class TestPlanModeE2E:
         perm = PermissionMode(mode="plan")
         prompt = perm.get_reminder(turn=0)
         assert "计划模式已激活" in prompt
-        assert "MUST NOT" in prompt
-        assert "erp_analyze" in prompt
+        assert "等待用户确认" in prompt
+        assert "erp_analyze" not in prompt
 
     def test_request1_step6_llm_sees_correct_tools(self):
         """
@@ -199,8 +199,8 @@ class TestPlanModeE2E:
 
         # 模拟 loop 内消费
         text = perm.consume_exit_attachment()
-        assert "计划已确认" in text
-        assert "erp_agent" in text
+        assert "确认的范围" in text
+        assert "本轮实际权限及工具" in text
         assert perm.need_exit_attachment is False
 
     def test_request2_step5_llm_can_call_erp_agent(self):
@@ -254,7 +254,7 @@ class TestAutoToPlanSwitchE2E:
         # Step 6: exit attachment
         assert perm.need_exit_attachment is True
         text = perm.consume_exit_attachment()
-        assert "erp_agent" in text
+        assert "本轮实际权限及工具" in text
 
 
 # ============================================================
@@ -404,7 +404,7 @@ class TestPlanPendingRestoreChain:
         # turn 0: 检查 exit attachment
         assert perm2.need_exit_attachment is True
         exit_text = perm2.consume_exit_attachment()
-        assert "计划已确认" in exit_text
+        assert "确认的范围" in exit_text
         assert perm2.need_exit_attachment is False
 
         # turn 0: reminder（已切回 auto）

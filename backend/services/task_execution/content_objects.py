@@ -36,12 +36,15 @@ class ImageMessageReference(Fact):
 
 
 class ImageContentReference(ContentReference):
+    regenerate: str | None = Field(
+        default=None, min_length=1, max_length=1000,
+        description='用户本轮明确要求再生成一张新图时，逐字填写包含该要求的完整本轮文字。查看或继续已有图片时省略。')
     source_image_indices: tuple[Annotated[int, Field(strict=True, ge=1)], ...] | None = Field(
         default=None, min_length=1, max_length=16,
         description='使用所选成果里尚未绑定的原图时，填写 source_images 序号。')
     image_override: tuple[ImageMessageReference, ...] | None = Field(
         default=None, min_length=1, max_length=16,
-        description='仅当用户明确换图时填写。复制对话中所选图片的 message_id 和 content_index，后台只替换此次执行的参考图。')
+        description='复用完整原稿且用户明确指定不同参考图时填写。修改已生成图的内容时，以所选成图为新编辑指令的素材。复制所选图片的 message_id 和 content_index。')
     without_reference: Literal[True] | None = Field(
         default=None, description='仅当本轮明确不使用方案的候选图片，或图片只作分析时设为 true。')
 
@@ -52,7 +55,22 @@ class ImageContentReference(ContentReference):
             raise ValueError('CONTENT_IMAGE_SELECTION_CONFLICT')
         return self
 
+_MATERIAL_LOCATORS = (
+    {'resource_ref': 'string'}, {'file_id': 'string'}, {'asset_id': 'string'},
+    {'message_id': 'string', 'content_index': 'integer'},
+)
+_MATERIAL_LOCATOR_FIELDS = frozenset(key for locator in _MATERIAL_LOCATORS for key in locator)
+
+
 class MaterialReference(Fact):
+    model_config = {**Fact.model_config, 'json_schema_extra': {
+        'oneOf': [
+            {'required': list(locator), 'properties': {
+                key: {'type': locator.get(key, 'null')} for key in sorted(_MATERIAL_LOCATOR_FIELDS)
+            }}
+            for locator in _MATERIAL_LOCATORS
+        ],
+    }}
     resource_ref: str | None = Field(default=None,min_length=1)
     file_id: str | None = Field(default=None,min_length=1)
     asset_id: str | None = Field(default=None,min_length=1)
@@ -61,14 +79,27 @@ class MaterialReference(Fact):
 
     @model_validator(mode='after')
     def identity(self):
-        if sum(v is not None for v in (self.resource_ref,self.file_id,self.asset_id,self.message_id))!=1 or (self.message_id is not None)!=(self.content_index is not None):
+        supplied = {key for key in _MATERIAL_LOCATOR_FIELDS if getattr(self, key) is not None}
+        if not any(supplied == locator.keys() for locator in _MATERIAL_LOCATORS):
             raise ValueError('CONTENT_MATERIAL_IDENTITY_REQUIRED')
         return self
 
+MATERIAL_REFERENCE_GUIDANCE = (
+    '原样复制系统提供的实际引用。只选 resource_ref、file_id、asset_id 其中一个，'
+    '或成对填写 message_id 和 content_index。'
+)
+MATERIAL_ROLE_GUIDANCE = '用简短自然语言描述素材在任务中的角色，例如“原图配色与构图参考”。'
+MATERIAL_USAGE_GUIDANCE = '只填 input（实际传给执行工具）或 analysis（仅用于理解素材）。'
+MATERIAL_GUIDANCE = (
+    f'每项素材须填写 reference、role、usage。填写 reference 时，{MATERIAL_REFERENCE_GUIDANCE}'
+    f'填写 role 时，{MATERIAL_ROLE_GUIDANCE}usage {MATERIAL_USAGE_GUIDANCE}'
+)
+
+
 class Material(Fact):
-    reference: MaterialReference
-    role: str = Field(min_length=1, max_length=200)
-    usage: Literal['input', 'analysis'] = Field(description='执行时传给工具用input，仅用来理解素材用analysis。')
+    reference: MaterialReference = Field(description=MATERIAL_REFERENCE_GUIDANCE)
+    role: str = Field(min_length=1, max_length=200, description=MATERIAL_ROLE_GUIDANCE)
+    usage: Literal['input', 'analysis'] = Field(description=MATERIAL_USAGE_GUIDANCE)
 
 
 class Presentation(Fact):
@@ -88,7 +119,7 @@ class ContentItem(Presentation):
     title: str = Field(min_length=1, max_length=300, description='条目名称，由页面添加编号。')
     body: str = Field(min_length=1, max_length=20000,description='用户可见并交给目标工具的完整最终原文，包括全部执行要求、限制和禁止项；后台逐字传递，不再拼接其他文字。')
     materials: tuple[Material, ...] = Field(default=(), max_length=16,
-        description='仅有该条专用的素材用途需要登记时填写。只写文字时，当前原图由后台统一记为来源。')
+        description='按用户意图填写实际使用的素材。只交付文字时可省略，后台保留当前原图供后续选择。' + MATERIAL_GUIDANCE)
     options: dict[str, Any] = Field(default_factory=dict,
         description='仅填写已确定的执行规格。缺省由执行工具决定。',
         json_schema_extra={'propertyNames':{'not':{'enum':['prompt','references','source_prompt','content_source','plan_source','chat_input','code']}}})
@@ -164,6 +195,8 @@ class ContentRecord(Fact):
     base_artifact_id: str | None = None
     source_images: tuple[SourceImage, ...] = ()
     presentation_profile: str | None = None
+    confirmation_items: tuple[int, ...] = ()
+    confirmation_tool: Literal['generate_image', 'generate_video'] | None = None
 
     @property
     def display_gaps(self):
@@ -218,9 +251,9 @@ class SaveContent(Fact):
     base: ContentReference | None = None
     message_source: MessageContentSource | None = None
     updates: tuple[ItemUpdate, ...] = Field(default=(), max_length=100)
-    continue_execution: bool = False
+    continue_execution: bool = Field(default=False, description='仅在本轮还要求实际执行时设为 true。保存成功后仍需调用目标工具。')
     new_content: Literal[True] | None = Field(
-        default=None, description='仅当本轮明确是全新制作且无需采用历史正文或素材时，随 document 填 true。')
+        default=None, description='本轮明确撰写新的执行正文时，随 document 填 true。可在 materials 指定已选的历史成图或原图。修订已有提示词用 base 和 updates。')
     show_content: bool | None = Field(default=None, description=(
         '仅在用户同时要求交付文字且继续执行时设为true；只要求执行时省略，输入在后台登记。'))
 
@@ -276,10 +309,10 @@ SCHEMA = {'type': 'function', 'function': {'name': SAVE,
     'description': '交付可供后续选择的方案、提示词或脚本：只提交一次document，每条写title和body，页面直接展示这份原文。普通问答直接回复。'
         '只执行已有成果时，直接将目录条目的content_source交给目标工具。未登记的分条正文用message_source指定原回复消息，后台定位整组原文；continue_execution=true。'
         '仅后台无法识别边界时才按已核实的完整行范围指定条目。'
-        '已有历史稿件或图片时，只有用户明确开启独立制作才可用document和new_content=true交接全新内容。'
-        'body包含最终要求和限制；按用户或方法要求交付的可见结构放display_prefix，内部说明放notes。仅有条目专用素材或已确定执行规格时才填materials或options。'
+        '用户明确修改一张成图时，可用document和new_content=true编写新的编辑指令，在materials绑定这张图。只修订历史文字用base和updates。'
+        'body包含最终要求和限制；按用户或方法要求交付的可见结构放display_prefix，内部说明放notes。materials记录用于执行或分析的素材，options仅记已确定执行规格。'
         '修订既有条目时，base使用该条目的content_source，updates传修订正文。后台绑定版本并保留未改条目、素材和规格。'
-        '本轮实际执行时设continue_execution=true；单一明确的原图由后台关联，多图用途或条目例外再指定。还要求看文字时设show_content=true。',
+        '本轮还要求执行时设continue_execution=true，再调用目标工具。有当前上传图片时，在每条的materials中绑定所用图片。还要求看文字时设show_content=true。',
     'parameters': save_parameters()}}
 
 
@@ -320,16 +353,14 @@ def load(state, reference):
 def content_image_receipts(state):
     if state is None:
         return {}
-    operations = {operation.step_id: operation.status for operation in state.operations}
+    operations = {operation.step_id: operation for operation in state.operations}
     completed = {result.step_id for result in state.results}
     receipts = {}
     for artifact in state.artifacts:
         if 'image.direct.recipe' not in artifact.validations:
             continue
-        if artifact.step_id in completed:
-            status = 'completed'
-        else:
-            status = operations.get(artifact.step_id)
+        operation = operations.get(artifact.step_id)
+        status = 'completed' if artifact.step_id in completed else operation.status if operation else None
         if status not in {'accepted', 'completed', 'uncertain', 'reserved'}:
             continue
         recipe = json.loads(artifact.inline_text)['normalized']
@@ -338,8 +369,11 @@ def content_image_receipts(state):
             continue
         source = proof['source']
         key = (source['artifact_id'], source['item_index'])
-        receipts[key] = {'status': status, 'specs': {name: recipe[name] for name in (
+        receipt = {'status': status, 'selection': source, 'specs': {name: recipe[name] for name in (
             'aspect_ratio', 'resolution', 'output_format') if name in recipe}}
+        if operation and operation.receipt_ref and operation.receipt_ref.startswith('task:'):
+            receipt['image_task_id'] = operation.receipt_ref.removeprefix('task:')
+        receipts[key] = receipt
     # An unchanged slot keeps its receipt across revisions of other slots.
     documents = {}
     for artifact in objects(state):
@@ -352,6 +386,18 @@ def content_image_receipts(state):
                     receipts.setdefault((artifact.id, index), previous)
         documents[artifact.id] = record.document
     return receipts
+
+
+def repeat_image_reference(state, reference):
+    """Reuse the verified original choice when a repeat omits the reference options."""
+    material_fields = ('source_image_indices', 'without_reference', 'image_override')
+    if any(reference.get(field) is not None for field in material_fields):
+        return reference
+    receipt = content_image_receipts(state).get((reference['artifact_id'], reference['item_index']))
+    if receipt is None:
+        return reference
+    return {**reference, **{field: receipt['selection'][field] for field in material_fields
+                            if field in receipt['selection']}}
 
 
 def with_item_sources(row):
@@ -379,6 +425,8 @@ def catalog(state, *, for_model=False, include_image_markers=False):
         items = []
         for index, item in enumerate(record.document.items, 1):
             entry = {'item_index': index, 'title': item.title, 'options': item.options}
+            if index in record.confirmation_items:
+                entry['awaiting_confirmation'] = True
             if for_model:
                 entry['has_bound_inputs'] = any(material.usage == 'input' for material in item.materials)
                 if base and index <= len(base.items) and item != base.items[index - 1]:
@@ -386,12 +434,16 @@ def catalog(state, *, for_model=False, include_image_markers=False):
                 receipt = receipts.get((artifact.id, index))
                 if receipt:
                     entry['image_status'] = receipt['status']
+                    if receipt.get('image_task_id'):
+                        entry['image_task_id'] = receipt['image_task_id']
             else:
                 entry['body_sha256'] = hashlib.sha256(item.body.encode()).hexdigest()
                 entry['materials'] = [material.model_dump(mode='json', exclude_none=True) for material in item.materials]
             items.append(entry)
         row = {'artifact_id': artifact.id, 'object_key': record.object_key,
                'revision': record.revision, 'title': record.document.title, 'items': items}
+        if for_model and record.confirmation_tool:
+            row['confirmation_tool'] = record.confirmation_tool
         if not for_model:
             row['sha256'] = artifact.sha256
         if record.source_images and (not for_model or any(not item['has_bound_inputs'] for item in items)):
@@ -445,6 +497,36 @@ def retry_pending(messages):
     return False
 
 
+
+def save_repair_exhausted(messages):
+    """Count closed, consecutive validation failures since the current input."""
+    repair_codes = {INVALID_OBJECT, ATTACHMENT_USAGE_REQUIRED}
+    count = 0
+    result = None
+    for message in reversed(messages):
+        if message.get('role') == 'system':
+            continue
+        if result is None and message.get('role') == 'tool':
+            try:
+                payload = json.loads(message.get('content', ''))
+            except (ValueError, TypeError):
+                return False
+            if not isinstance(payload, dict) or payload.get('code') not in repair_codes:
+                return False
+            result = message.get('tool_call_id')
+            continue
+        if message.get('role') != 'assistant' or result is None:
+            return False
+        calls = message.get('tool_calls') or ()
+        if len(calls) != 1 or calls[0].get('id') != result or calls[0].get('function', {}).get('name') != SAVE:
+            return False
+        count += 1
+        if count == 3:
+            return True
+        result = None
+    return False
+
+
 def source_images_from_message(row):
     from services.handlers.chat_context.image_sources import image_sources
     return tuple(SourceImage(name=image['name'], reference=image['reference'])
@@ -459,7 +541,9 @@ def current_source_images(request):
     return source_images_from_message(row)
 
 
-def save(runtime, call, registry, *, has_image_attachments=False, source_images=(), checked_message=None, display_gaps=(), author_request=None):
+def save(runtime, call, registry, *, has_image_attachments=False, source_images=(), checked_message=None,
+         display_gaps=(), author_request=None, allow_implicit_execution_materials=False, confirmation_items=(),
+         confirmation_tool=None):
     from services.tools import ToolCall
     from .model_directed import record_calls, call_binding
     from .direct_loop import active_image_methods
@@ -496,9 +580,10 @@ def save(runtime, call, registry, *, has_image_attachments=False, source_images=
     # Layout is produced only from the verified author output, never from model notes.
     if document is not None and '_chat_display_layout' in document.notes:
         raise TaskError(INVALID_OBJECT)
-    if document is not None and source_images and author_request is not None:
+    explicit_execution = value.continue_execution and not allow_implicit_execution_materials
+    if document is not None and source_images and (author_request is not None or explicit_execution):
         from .content_groups import bind_group
-        document = bind_group(document, source_images, author_request)
+        document = bind_group(document, source_images, author_request or '', infer_materials=not explicit_execution)
     message_proof = None
     if value.message_source is not None:
         if checked_message is None:
@@ -522,6 +607,8 @@ def save(runtime, call, registry, *, has_image_attachments=False, source_images=
     if base_record is not None:
         prior_artifact, prior_record, _ = base_record
         previous = prior_record.document
+        confirmation_items = tuple(sorted(set(confirmation_items) | set(prior_record.confirmation_items)))
+        confirmation_tool = prior_record.confirmation_tool or confirmation_tool
         source_images = prior_record.source_images
         presentation_profile = prior_record.presentation_profile or presentation_profile
         if not is_current(state, prior_artifact.id):
@@ -548,11 +635,15 @@ def save(runtime, call, registry, *, has_image_attachments=False, source_images=
         notes['_chat_display_layout'] = [*layout, display_gaps[-1]]
         document = ContentDocument.model_validate({**document.model_dump(),
             'notes': json.dumps(notes, ensure_ascii=False, separators=(',', ':'))})
+    if any(not 1 <= index <= len(document.items) for index in confirmation_items):
+        raise TaskError('CONTENT_CONFIRMATION_ITEMS_REQUIRED')
     body = ContentRecord(object_key=object_key,revision=revision,document=document,source_images=source_images,
                          base_artifact_id=value.base.artifact_id if value.base else None,
-                         presentation_profile=presentation_profile).model_dump_json(exclude={
+                         presentation_profile=presentation_profile, confirmation_items=confirmation_items,
+                         confirmation_tool=confirmation_tool).model_dump_json(exclude={
                              name for name, present in (
-                                 ('source_images', source_images), ('presentation_profile',presentation_profile))
+                                 ('source_images', source_images), ('presentation_profile',presentation_profile),
+                                 ('confirmation_items', confirmation_items), ('confirmation_tool', confirmation_tool))
                              if not present})
     if len(body.encode()) > 50000: raise TaskError('CONTENT_OBJECT_TOO_LARGE')
     checksum = hashlib.sha256(body.encode()).hexdigest()
@@ -622,12 +713,21 @@ def _selected_image_inputs(record, indices, inputs):
     return [{**reference, 'role': '原图参考'} for reference in selected]
 
 
+def is_regeneration_variant(value):
+    return isinstance(value, str) and re.fullmatch(
+        r'regenerate:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}', value
+    ) is not None
+
+
 def compile_input(state, name, arguments, reference, *, allow_old=False):
     """Copy the one saved execution text; adapters only translate parameter names."""
     from services.tools.catalog import build_tool_catalog
     from services.tools.argument_validation import _issues
     selection_type = ImageContentReference if name == 'generate_image' else ContentReference
     selection = selection_type.model_validate(reference)
+    if isinstance(selection, ImageContentReference) and selection.regenerate is not None:
+        # User evidence is used at the chat boundary and never becomes part of a native proof.
+        selection = selection.model_copy(update={'regenerate': None})
     artifact, record, item = _load_record(state, selection)
     if not allow_old and not is_current(state, artifact.id):
         raise TaskError('CONTENT_BASE_VERSION_CHANGED')
@@ -660,9 +760,21 @@ def compile_input(state, name, arguments, reference, *, allow_old=False):
         if result.get('mode',mode)!=mode: raise TaskError('CONTENT_ARGUMENT_CONFLICT')
         result.update(prompt=text,references=inputs,mode=mode)
         result.setdefault('plan_item_id',reference['artifact_id']+':'+str(reference['item_index']))
-        result.setdefault('variant_id',result['plan_item_id']+'/1')
+        variant = arguments.get('variant_id')
+        if is_regeneration_variant(variant):
+            result['variant_id'] = variant
+        else:
+            result.setdefault('variant_id', result['plan_item_id']+'/1')
     elif name == 'generate_video':
         if inputs: raise TaskError('CONTENT_MATERIAL_NOT_SUPPORTED_BY_TOOL')
+        from services.task_execution.video_operations import VIDEO_ASPECT_RATIO
+
+        # The registered draft may repeat the native output ratio as an option.
+        # Its selector is model-facing, while the native tool accepts only prompt.
+        if result.get('aspect_ratio') in ('16:9', VIDEO_ASPECT_RATIO):
+            result.pop('aspect_ratio')
+        if result:
+            raise TaskError('CONTENT_VIDEO_OPTIONS_UNSUPPORTED')
         result['prompt'] = text
     elif name == 'code_execute':
         if inputs: raise TaskError('CONTENT_MATERIAL_NOT_SUPPORTED_BY_TOOL')

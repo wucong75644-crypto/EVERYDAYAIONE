@@ -215,3 +215,24 @@ async def test_compact_tool_context_uses_source_budget(source: str) -> None:
     else:
         compact_web.assert_called_once()
         compact_wecom.assert_not_called()
+
+
+@pytest.mark.parametrize(('outcome', 'expected'), [
+    ('accepted', '本轮首次提交并获得新受理回执'),
+    ('replay', '本轮返回已有任务的受理回执，没有新建视频任务'),
+])
+def test_video_receipt_origin_is_visible_to_the_model(outcome, expected):
+    from services.agent.agent_result import AgentResult
+    from services.handlers.tool_loop_context import ToolLoopContext
+
+    result = AgentResult('视频任务已受理', metadata={
+        'accepted': True, 'outcome': outcome, 'task_id': 'video-1',
+    })
+    messages = []
+    apply_tool_results(
+        tool_results=[({'id': 'call-1', 'name': 'generate_video'}, result, False, result.summary)],
+        messages=messages, content_blocks=[], start_times={}, tool_context=ToolLoopContext(),
+    )
+    assert len(messages) == 1
+    assert messages[0]['tool_call_id'] == 'call-1'
+    assert expected in str(messages[0]['content'])

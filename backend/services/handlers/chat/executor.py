@@ -128,8 +128,10 @@ class ChatGenerationExecutor:
                     response=await followup_db.rpc('adopt_agent_task_followup',parameters).execute()
                 return response.data
             runtime.task_followup_adopt=adopt_followup
-        if (replay_context is None and (task.get('delivery_context') or {}).get('input_kind') == 'agent_task_continuation'):
-            source_kind=(task.get('delivery_context') or {}).get('source_kind','image')
+        delivery = task.get('delivery_context') or {}
+        is_continuation = delivery.get('input_kind') == 'agent_task_continuation'
+        source_kind = delivery.get('source_kind', 'image')
+        if replay_context is None and is_continuation:
             if source_kind in {'scheduled','video'}:
                 from services.task_execution.receipt_continuation import prepare_receipt_continuation as prepare_continuation
             elif source_kind=='image':
@@ -143,8 +145,15 @@ class ChatGenerationExecutor:
             actor_user_id=execution_scope.actor_user_id, org_id=task.get('org_id'),
             execution_scope=execution_scope,
         ) if replay_context and '_task_execution' in replay_context else None
-        runtime.task_native_event_pending=((task.get('delivery_context') or {}).get('input_kind')=='agent_task_continuation'
-            and (task.get('delivery_context') or {}).get('source_kind') in {'scheduled','video'})
+        runtime.task_native_event_pending = is_continuation and source_kind in {'scheduled', 'video'}
+        if is_continuation and source_kind == 'image':
+            from services.task_execution.contracts import ContinuationInput, TaskError
+
+            completion = ContinuationInput.model_validate((replay_context or {}).get('_continuation_input'))
+            if (str(completion.event_id) != delivery.get('event_id') or runtime.task_execution_state is None
+                    or completion.logical_task_id != runtime.task_execution_state.root_task_id):
+                raise TaskError('TASK_CONTINUATION_INPUT_UNVERIFIED')
+            runtime.task_image_completion = completion
         if runtime.task_execution_state is not None:
             runtime.committed_task_execution_revision = runtime.task_execution_state.revision
         if (replay_context or {}).get('_task_requirement_review') is not None:
@@ -356,10 +365,16 @@ class ChatGenerationExecutor:
                 "credits_cost": result.credits_cost,
                 "tool_digest": result.tool_digest,
             }
-            await runtime.safe_point(
-                SafePoint.BEFORE_COMMIT,
-                replay_payload=replay_payload,
-            )
+            try:
+                await runtime.safe_point(
+                    SafePoint.BEFORE_COMMIT,
+                    replay_payload=replay_payload,
+                )
+            except Exception as error:
+                if 'ACTOR_STEER_ATTACHMENT_BEFORE_COMMIT' not in str(error):
+                    raise
+                diagnostic_outcome = 'steer_before_commit'
+                return await self.execute(task, claim, cancellation_event)
             diagnostic_outcome = "generated"
             return GenerationOutcome(
                 result_content=serialize_content_parts(result.parts),
@@ -422,19 +437,26 @@ class ChatGenerationExecutor:
                 boundary=boundary,
                 payload=dict(payload),
             )
-        except Exception:
+        except Exception as error:
+            if 'ACTOR_STEER_ATTACHMENT_BEFORE_COMMIT' in str(error):
+                raise
             # An acknowledgement can be lost after commit. Reconcile the whole
             # checkpoint, not merely a matching composition ID, before proceeding.
-            if not any(key in payload for key in ('_skill_composition', '_task_execution', '_task_bootstrap')):
+            from services.handlers.chat.tool_argument_repairs import KEY as ARGUMENT_REPAIRS
+            task_checkpoint = any(key in payload for key in ('_task_execution', '_task_bootstrap'))
+            if not task_checkpoint and '_skill_composition' not in payload and ARGUMENT_REPAIRS not in payload:
                 raise
             read = getattr(self._replay_checkpoint_store, 'read_latest', None)
             if read is None:
                 raise
             expected = dict(payload)
             expected.setdefault('safe_point', boundary.value)
-            unconfirmed = ('TASK_EXECUTION_SAVE_UNCONFIRMED' if any(
-                key in payload for key in ('_task_execution', '_task_bootstrap'))
-                           else 'SKILL_COMPOSITION_SAVE_UNCONFIRMED')
+            if task_checkpoint:
+                unconfirmed = 'TASK_EXECUTION_SAVE_UNCONFIRMED'
+            elif '_skill_composition' in payload:
+                unconfirmed = 'SKILL_COMPOSITION_SAVE_UNCONFIRMED'
+            else:
+                unconfirmed = 'TOOL_ARGUMENT_REPAIR_SAVE_UNCONFIRMED'
             try:
                 saved = await read(task_id=claim.task_id, execution_token=claim.execution_token,
                                    boundary=boundary)

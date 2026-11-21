@@ -6,6 +6,10 @@ import type { WSMessage } from '../hooks/useWebSocket';
 import type { ContentPart, MessageStatus, TextPart, ToolStepPart } from '../types/message';
 import type { Message } from '../stores/useMessageStore';
 
+export function isIndependentMediaChild(origin: unknown): boolean {
+  return origin === 'chat_image' || origin === 'agent_video';
+}
+
 export interface WSIncomingMessage extends WSMessage {
   message_id?: string;
   stream_id?: string;

@@ -193,3 +193,46 @@ def test_original_org_steer_capture_requires_current_active_member(change_db,rev
         else:assert capture(c,f,event)['outcome']=='captured'
     with psycopg.connect(change_db) as c:
         assert c.execute('SELECT status FROM conversation_control_events WHERE id=%s',(event,)).fetchone()[0]==('pending' if revoked else 'applied')
+
+
+def test_attachment_steer_keeps_scope_and_immutable_original_across_retries(change_db):
+    migration = ROOT / 'migrations/380_conversation_steer_attachments.sql'
+    with psycopg.connect(change_db) as c:
+        c.execute(migration.read_text())
+    try:
+        f, p = prepared(change_db, binding_version=3)
+        material = {'kind': 'file', 'workspace_path': 'uploads/report.csv', 'resource_ref': 'fref1_fixture'}
+        message = {'message': '把这个文件接到原任务', 'attachments': [material]}
+        key = str(uuid4())
+        with connect(f) as c:
+            def put(payload):
+                return c.execute('SELECT append_conversation_steer(%s,%s,%s,%s,%s)',
+                    (f['conv'], f['task'], f['turn'], key, Jsonb(payload))).fetchone()[0]
+
+            accepted = put(message)
+            duplicate = put({'message': message['message'], 'attachments': [
+                {**material, 'workspace_path': 'uploads/another.csv'}]})
+            assert duplicate['already_enqueued']
+            assert duplicate['event_id'] == accepted['event_id']
+            assert duplicate['payload'] == message
+            with pytest.raises(psycopg.Error, match='ACTOR_STEER_ATTACHMENT_BEFORE_COMMIT'), c.transaction():
+                save(c, f, {**p, 'checkpoint_kind': 'commit_ready'}, expected=p['_task_execution']['revision'])
+            inbox = capture(c, f, accepted['event_id'])['inbox']
+            assert inbox['items'][0]['attachments'] == [material]
+            assert capture(c, f, accepted['event_id'])['inbox'] == inbox
+            checkpoint = c.execute('SELECT state FROM conversation_turn_checkpoints WHERE task_id=%s',
+                                   (f['task'],)).fetchone()[0]
+            with pytest.raises(psycopg.Error, match='ACTOR_STEER_ATTACHMENT_BEFORE_COMMIT'), c.transaction():
+                save(c, f, {**checkpoint, 'checkpoint_kind': 'commit_ready'}, expected=p['_task_execution']['revision'])
+            checkpoint['_task_user_changes']['items'][0]['attachments'][0]['workspace_path'] = 'different.csv'
+            with pytest.raises(psycopg.Error, match='IMMUTABLE|SOURCE_INVALID'), c.transaction():
+                save(c, f, checkpoint, expected=p['_task_execution']['revision'])
+            checkpoint['_task_user_changes']['items'][0]['attachments'] = [material]
+            checkpoint['_task_user_changes']['items'][0]['delivered'] = True
+            assert save(c, f, {**checkpoint, 'checkpoint_kind': 'commit_ready'},
+                        expected=p['_task_execution']['revision'])['outcome'] == 'saved'
+            with pytest.raises(psycopg.Error, match='ACTOR_STEER_ATTACHMENT_WINDOW_CLOSED'), c.transaction():
+                put(message)
+    finally:
+        with psycopg.connect(change_db) as c:
+            c.execute((ROOT / 'migrations/rollback/380_conversation_steer_attachments_rollback.sql').read_text())

@@ -6,7 +6,7 @@ from copy import deepcopy
 from dataclasses import replace
 import json
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, call as mock_call
 
 import pytest
 
@@ -109,11 +109,18 @@ async def test_skill_cannot_restore_retired_chat_tool(settings):
     assert {t["function"]["name"] for t in tools} == {"generate_image"}
 
 
-def test_both_system_prompt_paths_direct_chat_to_single_image_tool(settings):
+def test_active_system_prompt_leaves_image_usage_to_the_current_tool(settings):
     from config.chat_tools import get_tool_system_prompt
-    for prompt in (get_tool_system_prompt(), StaticLayer.render()):
-        assert "image_agent" not in prompt
-        assert "generate_image" in prompt and "task_id" in prompt
+
+    legacy = get_tool_system_prompt()
+    assert "image_agent" not in legacy
+    assert "generate_image" in legacy and "task_id" in legacy
+
+    prompt = StaticLayer.render()
+    strategy = prompt.split("<tool_strategy>", 1)[1].split("</tool_strategy>", 1)[0]
+    assert "generate_image" not in strategy
+    assert "有匹配的可用图片 Skill 时先激活" not in prompt
+    assert "受理不表示完成" in strategy
 
 
 async def test_actor_auto_activates_skill_then_accepts_two_single_calls(monkeypatch, settings):
@@ -143,7 +150,7 @@ async def test_actor_auto_activates_skill_then_accepts_two_single_calls(monkeypa
     p = SimpleNamespace(execution_context=catalog_context("o1", "auto"),
         adapter=SimpleNamespace(stream_chat=stream_chat), core_tools=get_core_tools("o1"),
         permission=PermissionMode(mode="auto"), tool_context=ToolLoopContext(org_id="o1", agent_domain="general"),
-        messages=[], stream_kwargs={}, budget=ExecutionBudget(max_turns=8, max_wall_time=60))
+        messages=[{"role": "system", "content": StaticLayer.render()}], stream_kwargs={}, budget=ExecutionBudget(max_turns=8, max_wall_time=60))
     exe = MockHandlerExecutor(user_id="user-1", org_id="o1", conversation_id="conv-1",
         agent_domain="general", permission_mode="auto", tool_entrypoint="model")
     async def accept(name, args):
@@ -168,9 +175,10 @@ async def test_actor_auto_activates_skill_then_accepts_two_single_calls(monkeypa
     assert totals.text == ""  # Child placeholders replace the redundant synthesis round.
     source.load.assert_awaited_once()
     assert exe.handler.await_count == 2
-    assert [call.args for call in exe.handler.await_args_list] == [("generate_image", args) for args in inputs]
+    exe.handler.assert_has_awaits([mock_call("generate_image", args) for args in inputs], any_order=True)
     for request in received:
         assert "image_agent" not in {t["function"]["name"] for t in request["tools"]}
+    assert source.body not in json.dumps(received[0]["messages"], ensure_ascii=False)
     injected = json.dumps(received[1]["messages"], ensure_ascii=False)
     assert source.body in injected
     assert any(b.get("type") == "skill_step" and b.get("status") == "completed" for b in blocks)

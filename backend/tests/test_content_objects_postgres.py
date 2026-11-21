@@ -19,13 +19,13 @@ from tests.test_task_execution_followup_reuse_postgres import (followup_db,new_t
 def content_db(dispatch_db):
     root=__import__('pathlib').Path(__file__).parents[1]
     with psycopg.connect(dispatch_db) as c:
-        for migration in ('376_agent_task_image_method_handoff','377_agent_task_content_objects','378_agent_content_followup_groups'):
+        for migration in ('347_agent_task_image_reconciliation','376_agent_task_image_method_handoff','377_agent_task_content_objects','378_agent_content_followup_groups','381_agent_media_confirmation_slots'):
             c.execute((root/f'migrations/{migration}.sql').read_text())
     yield dispatch_db
     with psycopg.connect(dispatch_db) as c:
         c.execute("DELETE FROM conversation_turn_checkpoints WHERE state ? '_task_execution'")
         c.execute('DELETE FROM agent_task_events');c.execute('DELETE FROM agent_task_states');c.execute('SET CONSTRAINTS ALL IMMEDIATE')
-        for migration in ('378_agent_content_followup_groups','377_agent_task_content_objects','376_agent_task_image_method_handoff'):
+        for migration in ('381_agent_media_confirmation_slots','378_agent_content_followup_groups','377_agent_task_content_objects','376_agent_task_image_method_handoff','347_agent_task_image_reconciliation'):
             c.execute((root/f'migrations/rollback/{migration}_rollback.sql').read_text())
 
 @pytest.mark.asyncio
@@ -180,8 +180,8 @@ async def test_direct_content_selection_adopts_saved_task_before_business_dispat
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('scenario', [
-    'text-to-image', 'image-to-image', 'recorded-first', 'recorded-fifth', 'recorded-write-once', 'recorded-retired',
-    'recorded-third-output', 'new-third-output', 'recorded-quoted-output',
+    'text-to-image', 'image-to-image', 'inline-text-to-image', 'inline-image-to-image', 'inline-first-turn-upload', 'inline-repair-then-image', 'inline-resume-before-reserve', 'inline-resume-after-acceptance', 'recorded-first', 'recorded-fifth', 'recorded-write-once', 'recorded-retired',
+    'recorded-third-output', 'new-third-output', 'new-regeneration-output', 'recorded-quoted-output',
     'recorded-third-history', 'new-third-history',
 ])
 async def test_chat_executes_from_registration_to_page_receipt(content_db, monkeypatch, tmp_path, scenario):
@@ -235,11 +235,17 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
     monkeypatch.setattr('api.deps.get_task_limit_service', AsyncMock(return_value=limiter))
     monkeypatch.setattr(FileExecutor, 'get_cdn_url', lambda self, path: 'https://local.invalid/' + path)
 
-    with_original = scenario != 'text-to-image'
+    inline = scenario.startswith('inline-')
+    image_repair = scenario == 'inline-repair-then-image'
+    interrupted = scenario.startswith('inline-resume-')
+    crashed = False
+    with_original = scenario not in {'text-to-image', 'inline-text-to-image'} and not interrupted
     recorded = scenario.startswith('recorded-')
     history_import = scenario.endswith('-history')
     recorded_output = scenario in {'recorded-third-output', 'recorded-third-history'}
-    new_output = scenario in {'new-third-output', 'new-third-history'}
+    regeneration = scenario == 'new-regeneration-output'
+    tool_omission = regeneration or scenario == 'new-third-output'
+    new_output = scenario in {'new-third-output', 'new-third-history'} or regeneration
     quoted = scenario == 'recorded-quoted-output'
     automatic_output = recorded_output or new_output or quoted
     followup = recorded or automatic_output
@@ -248,9 +254,12 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
     retired = scenario == 'recorded-retired'
     item_index = 3 if recorded_output or new_output else 2 if write_once else 5 if fifth else 1
     body = '  纸品封面，保留细纹理。\n避免改变装订孔及商标。  '
-    ratio = '3:4' if scenario == 'image-to-image' or new_output else '1:1'
+    synthetic_original = scenario in {'image-to-image', 'inline-image-to-image', 'inline-first-turn-upload'} or image_repair
+    ratio = '3:4' if synthetic_original or new_output else '1:1'
     resolution = '2K' if new_output else '1K'
     question = '参考这张原图修改封面，只生成一张' if with_original else '帮我直接生成一张纸品封面图'
+    if scenario == 'inline-first-turn-upload':
+        question = '这个是图片。你用你写的提示词帮我生成新的图片'
     first_document = None
     first_arguments = None
     if quoted:
@@ -297,7 +306,7 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
             body += '\n'
     elif new_output:
         question = '参考上传图写五套产品封面提示词。每条输出比例为3:4，输出分辨率为2K。'
-        later_question = '用第三条和原图生成一张图片。'
+        later_question = ('第三个方案 你不能再帮我生成一次？' if regeneration else '用第三条和原图生成一张图片。')
         body = '  保留纸品的标识和边缘。\n输出比例：3:4\n输出分辨率：2K\n不要添加水印。  '
         output_items = [{'title': f'封面方向{i}', 'body': body if i == 3 else f'第{i}套独立正文。'} for i in range(1, 6)]
         first_output = model_content_output('五套封面', output_items)
@@ -371,7 +380,12 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
     file_path = 'original/product.png'
     if with_original:
         source_name = 'product.png'
-        if not automatic_output:
+        if synthetic_original:
+            from io import BytesIO
+            fixture = BytesIO()
+            Image.new('RGB', (1254, 1254), 'white').save(fixture, format='PNG')
+            original = fixture.getvalue()
+        elif not automatic_output:
             evidence = os.getenv('REAL_INPUT_RETEST_DIR') if fifth or write_once else os.getenv('CHAT_CONTENT_DUPLICATE_RECORD')
             if not evidence:
                 pytest.skip('Original image for private replay is unavailable')
@@ -396,12 +410,22 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
         connection.execute("UPDATE messages SET status='completed', context_revision=0, turn_id=%s, content=%s WHERE id=%s",
             (f['turn'], json.dumps([p.model_dump(mode='json', exclude_none=True) for p in parts]), f['message']))
 
+    class RestartTest(Exception):
+        pass
+
     async def checkpoint(point, payload):
+        nonlocal crashed
         with connect(f) as connection:
             if '_task_execution' in payload:
-                return save(connection, f, payload, expected=payload['_task_execution_expected_revision'])
-            return connection.execute('SELECT save_generation_checkpoint(%s,%s,%s,%s)',
-                (f['task'], f['token'], point.value, Jsonb({**payload, 'safe_point': point.value}))).fetchone()[0]
+                result = save(connection, f, payload, expected=payload['_task_execution_expected_revision'])
+            else:
+                result = connection.execute('SELECT save_generation_checkpoint(%s,%s,%s,%s)',
+                    (f['task'], f['token'], point.value, Jsonb({**payload, 'safe_point': point.value}))).fetchone()[0]
+        if scenario == 'inline-resume-before-reserve' and payload.get('_inline_media_action') and not crashed:
+            assert result['outcome'] == 'saved' and not payload['_task_execution']['operations']
+            crashed = True
+            raise RestartTest
+        return result
 
     def runtime_case(request_parts):
         r, p, h, q = case(checkpoint)
@@ -413,7 +437,8 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
         p.execution_context = replace(p.execution_context, task_id=f['task'], conversation_id=f['conv'],
             actor_user_id=f['user'], workspace_owner_id=f['user'])
         q = replace(q, task_id=f['task'], conversation_id=f['conv'], user_id=f['user'], content=request_parts,
-                    context_anchor=SimpleNamespace(input_message_id=f['message']))
+                    context_anchor=SimpleNamespace(input_message_id=f['message'],
+                        base_revision=0 if scenario == 'inline-first-turn-upload' else None))
         p.messages = [{'role':'user','content':request_parts[0].text}]
         p.core_tools.append(build_tool_catalog().require('generate_image').to_schema())
         return r, p, h, q
@@ -522,23 +547,48 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
             r.task_followup_candidate = previous
             r.task_followup_adopt = transfer
 
+            selection_rounds = 0
+
             async def select(**kwargs):
+                from services.handlers.chat.content_tools import IMAGE_CALL_REPAIR
+
+                nonlocal selection_rounds
+                selection_rounds += 1
+                if tool_omission and selection_rounds == 1:
+                    yield StreamChunk(content='图片已提交。', finish_reason='stop')
+                    return
+                if tool_omission:
+                    assert any(m.get('content') == IMAGE_CALL_REPAIR for m in kwargs['messages'])
                 tool = next(tool['function'] for tool in kwargs['tools'] if tool['function']['name'] == 'generate_image')
                 selector = tool['parameters']['properties']['content_source']
                 assert selector['required'] == ['artifact_id','item_index'] and 'sha256' not in selector['properties']
                 assert 'activate_skill' not in {tool['function']['name'] for tool in kwargs['tools']}
                 if write_once or automatic_output:
-                    facts = json.loads(kwargs['messages'][-1]['content'].split('\n')[-1])
+                    context = next(m for m in kwargs['messages'] if m['role'] == 'system' and
+                                   str(m.get('content', '')).startswith('[Model-directed execution]'))
+                    facts = json.loads(context['content'].split('\n')[-1])
                     offered, = facts['previous_content_objects']
                     if saved_item.materials:
                         assert offered['items'][item_index-1]['has_bound_inputs']
                     else:
                         assert offered['source_images'] == [{'index': 1, 'name': source.name}]
                         assert 'source_image_indices' in selector['properties']
-                yield tool_chunk('generate_image', arguments=json.dumps({'content_source':selection}))
+                selected = {**selection, 'regenerate': later_question} if regeneration else selection
+                if regeneration and selection_rounds == 2:
+                    selected = {**selected, 'sha256': '0' * 64}
+                if regeneration and selection_rounds == 3:
+                    error = next(m['content'] for m in reversed(kwargs['messages']) if m['role'] == 'tool')
+                    result = json.loads(error.splitlines()[0])
+                    assert result['recovery'] == {'action': 'reload_source'}
+                    assert result['submission_state'] == 'not_dispatched'
+                yield tool_chunk('generate_image', arguments=json.dumps({'content_source': selected}))
 
             with pytest.raises(FollowupRestart):
                 await run_content_loop(r, p, h, q, select)
+            assert selection_rounds == (3 if regeneration else 2 if tool_omission else 1)
+            if tool_omission:
+                from services.handlers.chat import content_tools
+                assert content_tools.checkpoint_state(r)['image_call_repair_input'] == f['message']
             h._execute_tool_calls.assert_not_awaited()
             with connect(f) as connection:
                 checkpoint_state = connection.execute('SELECT state FROM conversation_turn_checkpoints WHERE task_id=%s',
@@ -563,6 +613,7 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
     receipts = []
 
     async def dispatch(calls, *args, task_image_operations, **kwargs):
+        nonlocal crashed
         assert len(calls) == 1
         raw = calls[0]
         native = json.loads(raw['arguments'])
@@ -575,6 +626,16 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
             assert raw['id'].endswith(':continued') != history_import
         parsed = ToolCall(raw['id'], raw['name'], native)
         binding = task_image_operations.bindings[raw['id']]
+        if kwargs.get('recovery_only'):
+            assert scenario == 'inline-resume-after-acceptance' and crashed
+            context = replace(p.execution_context, call_id=parsed.call_id)
+            actor = SimpleNamespace(_actor_enabled=True, _actor_invocation_store=object(),
+                                    _actor_turn_id=f['turn'], _actor_execution_token=f['token'])
+            lifecycle = task_image_operations.lifecycle(actor, context, parsed.call_id, recovery_only=True)
+            replay = await lifecycle.replay(parsed, context, ToolPolicy(store.registry).decide(parsed.name, context, native))
+            assert replay.metadata.get('reconciled') and replay.execution.replayed
+            receipts.append(replay.metadata)
+            return [(raw, replay, False, '原任务已受理')]
         result = await store.begin(r.task_execution_state, step_id=binding.step_id, effect_key=binding.effect_key,
                                    effect_version=binding.effect_version, call=parsed)
         assert result.outcome == 'execute'
@@ -593,6 +654,10 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
                     await ImageHandler(scoped).accept_chat_image(owner, {**native, 'prompt': '不完整'})
             result_from_tool = await MediaToolMixin._generate_image(owner, native)
             receipt = result_from_tool.metadata
+            if scenario == 'inline-resume-after-acceptance' and not crashed:
+                assert receipt['accepted'] is True
+                crashed = True
+                raise RestartTest
             repeated = await ImageHandler(scoped).accept_chat_image(owner, native)
         finally:
             _dispatch_call_id.reset(token)
@@ -655,12 +720,25 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
         elif followup:
             assert receipts and seen == 1, 'A checked selection should resume before asking the model again'
             yield StreamChunk(content='图片任务已受理。')
+        elif inline:
+            if image_repair and seen == 1:
+                yield tool_chunk('generate_image', arguments='{"draft": <invalid>}')
+                return
+            if seen == (2 if image_repair else 1):
+                if image_repair:
+                    rejection = next(m['content'] for m in reversed(kwargs['messages']) if m['role'] == 'tool')
+                    assert json.loads(rejection.splitlines()[0])['recovery']['action'] == 'repair_arguments'
+                    assert not receipts and not co.objects(r.task_execution_state)
+                offered = next(tool['function']['parameters'] for tool in kwargs['tools']
+                               if tool['function']['name'] == 'generate_image')
+                assert 'draft' in offered['properties']
+                assert offered['$defs']
+                yield tool_chunk('generate_image', arguments=json.dumps({'draft': doc['items'][0]}, ensure_ascii=False))
+            else:
+                assert receipts and seen == (3 if image_repair else 2), kwargs['messages'][-4:]
+                yield StreamChunk(content='图片任务已受理。')
         elif seen == 1:
             args = {'document':copy.deepcopy(doc),'continue_execution':True}
-            if scenario == 'image-to-image':
-                # The live request supplies the original; the model supplies only the authored text.
-                for item in args['document']['items']:
-                    item.pop('materials', None)
             yield StreamChunk(tool_calls=[ToolCallDelta(index=0,id='save',name=co.SAVE,
                                                         arguments_delta=json.dumps(args, ensure_ascii=False))])
         elif seen == 2:
@@ -674,8 +752,39 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
             yield StreamChunk(content='图片任务已受理。')
 
     try:
-        sink, blocks, _ = await run_content_loop(r, p, h, q, model)
-        assert seen == (4 if history_import else 1 if followup else 3) and len(receipts) == 1, blocks
+        if interrupted:
+            with pytest.raises(RestartTest):
+                await run_content_loop(r, p, h, q, model)
+            assert crashed and seen == 1 and not receipts
+            with psycopg.connect(content_db) as connection:
+                restored = connection.execute('SELECT state FROM conversation_turn_checkpoints WHERE task_id=%s',
+                    (f['task'],)).fetchone()[0]
+            r, p, h, q = runtime_case(parts)
+            r.checkpoint_base = copy.deepcopy(restored)
+            r.task_execution_state = TaskState.model_validate(restored['_task_execution'])
+            r.committed_task_execution_revision = r.task_execution_state.revision
+            p.messages = copy.deepcopy(restored['messages'])
+            h.db = scoped
+            h._actor_runtime = r
+            r.task_image_resource_resolver = create_resolver(h, q, p.execution_context)
+            r.task_operation_store = store
+            h._execute_tool_calls.side_effect = dispatch
+            monkeypatch.setattr(settings, 'chat_inline_image_enabled', False)
+        else:
+            restored = {}
+        sink, blocks, _ = await run_content_loop(r, p, h, q, model, blocks=copy.deepcopy(restored.get('content_blocks', [])))
+        expected_rounds = 4 if history_import else 1 if followup else 2 if inline and not image_repair else 3
+        assert seen == expected_rounds and len(receipts) == 1, blocks
+        if inline:
+            from services.task_execution.inline_image_action import read_record
+            from services.task_execution.pending_batch import pending_calls
+            record = read_record(r)
+            saved, = co.objects(r.task_execution_state)
+            assert saved.id == record.reference.artifact_id and saved.source_call_id == record.save_id
+            assert not pending_calls(p.messages)[0]
+            external_calls = [c for msg in p.messages for c in msg.get('tool_calls') or []]
+            assert [item['function']['name'] for item in external_calls] == ['generate_image'] * (2 if image_repair else 1)
+            assert json.loads(external_calls[-1]['function']['arguments']) == {'draft': doc['items'][0]}
         assert body not in sink.text and not any(body in block.get('text','') for block in blocks)
         receipt = receipts[0]
         assert receipt['accepted'] is True and receipt['completed'] is False
@@ -690,6 +799,8 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
             [(file_path, input_sha)] if with_original else [])
         assert (snapshot['aspect_ratio'],snapshot['resolution'],snapshot['output_format']) == (ratio,resolution,'png')
         assert snapshot['origin']['input_message_id'] == f['message']
+        if regeneration:
+            assert snapshot['variant_id'] == f"regenerate:{f['message']}"
         if with_original:
             assert snapshot['references'][0]['width'] == snapshot['references'][0]['height'] == (1024 if fifth or write_once or automatic_output else 1254)
 
@@ -753,6 +864,11 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
             assert prompt == body and metadata['request_hash'] == snapshot['request_hash']
             assert connection.execute('SELECT count(*) FROM credit_transactions WHERE task_id=%s',
                 (receipt['task_id'],)).fetchone()[0] == 1
+            if inline:
+                assert connection.execute(
+                    "SELECT count(*) FROM tasks WHERE type='image' AND user_id=%s",
+                    (f['user'],),
+                ).fetchone()[0] == 1
     finally:
         database.pool.close()
 
@@ -1162,3 +1278,156 @@ async def test_real_remaining_plans_keep_original_and_new_upload_can_replace_it(
     finally:
         await client._client.aclose()
         database.pool.close()
+
+
+@pytest.mark.asyncio
+async def test_tool_argument_failure_checkpoint_survives_actor_replacement(content_db, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from uuid import uuid4
+
+    from psycopg.types.json import Jsonb
+    from services.conversation_commands import SafePoint
+    from services.handlers.chat import tool_argument_repairs as repairs
+    from services.handlers.chat.execution_engine import _run_loop
+    from services.handlers.chat.execution_sink import CollectingExecutionSink
+    from services.handlers.chat.stream_session import StreamTotals
+    from services.task_execution.pending_batch import pending_calls
+    from tests.test_chat_tool_argument_repairs import error_code, setup
+
+    facts = seed(content_db)
+    monkeypatch.setattr('services.handlers.chat.execution_engine.compact_tool_context', AsyncMock())
+
+    class Interrupted(Exception):
+        pass
+
+    crash_at_next_validated_batch = False
+
+    async def checkpoint(point, payload):
+        with connect(facts) as connection:
+            result = connection.execute('SELECT save_generation_checkpoint(%s,%s,%s,%s)',
+                (facts['task'], facts['token'], point.value, Jsonb(payload))).fetchone()[0]
+        assert result['outcome'] == 'saved'
+        if crash_at_next_validated_batch and point == SafePoint.BEFORE_TOOL:
+            raise Interrupted
+        return result
+
+    def owner():
+        runtime, prepared, handler, request = setup(checkpoint)
+        runtime.task_id, runtime.turn_id, runtime.conversation_id = facts['task'], facts['turn'], facts['conv']
+        runtime.task_bootstrap = None
+        request = replace(request, task_id=facts['task'], conversation_id=facts['conv'], user_id=facts['user'],
+                          context_anchor=SimpleNamespace(input_message_id=UUID(facts['message'])))
+        return runtime, prepared, handler, request
+
+    runtime, prepared, handler, request = owner()
+    for number in range(2):
+        await execute(runtime, prepared, handler, request, [call('web_search', {f'invalid{number}': True},
+                                                                 f'miss-{number}')])
+    crash_at_next_validated_batch = True
+    final = call('web_search', {'query': 42}, 'last-miss')
+    with pytest.raises(Interrupted):
+        await execute(runtime, prepared, handler, request, [final])
+    handler._execute_tool_calls.assert_not_awaited()
+
+    previous_token = facts['token']
+    facts['token'] = str(uuid4())
+    with psycopg.connect(content_db) as connection:
+        connection.execute('UPDATE tasks SET execution_token=%s WHERE id=%s', (facts['token'], facts['task']))
+    with connect(facts) as connection:
+        lost = connection.execute('SELECT save_generation_checkpoint(%s,%s,%s,%s)',
+            (facts['task'], previous_token, 'before_model', Jsonb({'messages': []}))).fetchone()[0]
+        assert lost['outcome'] == 'ownership_lost'
+        loaded = connection.execute('SELECT load_generation_checkpoint(%s,%s)',
+            (facts['task'], facts['token'])).fetchone()[0]
+        assert loaded['outcome'] == 'loaded' and loaded['safe_point'] == 'before_tool'
+        saved = loaded['state']
+        assert error_code(saved['messages'], 'last-miss') == repairs.EXHAUSTED
+        assert not pending_calls(saved['messages'])[0]
+
+    crash_at_next_validated_batch = False
+    restarted, prepared, handler, request = owner()
+    restarted.checkpoint_base = saved
+    prepared.messages = copy.deepcopy(saved['messages'])
+    resumed_blocks = copy.deepcopy(saved['content_blocks'])
+    sample = AsyncMock(side_effect=AssertionError('exhausted target must not sample again'))
+    monkeypatch.setattr('services.handlers.chat.execution_engine._read_turn', sample)
+    await _run_loop(
+        prepared=prepared, runtime=restarted, request=request, handler=handler,
+        sink=CollectingExecutionSink(), totals=StreamTotals(), blocks=resumed_blocks,
+        cancellation_event=restarted.cancellation_event,
+    )
+    assert resumed_blocks[-1]['text'] == repairs.STOP
+    sample.assert_not_awaited()
+    assert error_code(prepared.messages, 'last-miss') == repairs.EXHAUSTED
+    assert repairs.stopped(restarted, request)
+    assert list(repairs.read(restarted).counts.values()) == [3]
+    handler._execute_tool_calls.assert_not_awaited()
+
+
+async def test_confirmed_sibling_has_an_independent_slot_and_preserves_previous_dispatch_fence(content_db):
+    from dataclasses import replace
+    from types import SimpleNamespace
+    from uuid import uuid4
+    from psycopg.types.json import Jsonb
+
+    from schemas.message import TextPart
+    from services.task_execution.item_confirmation import slot
+    from services.task_execution.model_directed import record_calls
+    from services.task_execution.reducer import digest
+    from services.tools import ToolCall
+    from services.tools.catalog import build_capability_catalog
+
+    runtime, prepared, handler, request = case()
+    prepared.content_controls_available = True
+    user_text = '写三条视频脚本。第1条直接生成视频，第2条和第3条分别等我确认。'
+    request = replace(request, content=[TextPart(text=user_text)])
+    draft = {'title': '三条短片', 'items': [{'title': str(i), 'body': f'视频脚本{i}'} for i in range(1, 4)]}
+    await execute(runtime, prepared, handler, request, [call(co.SAVE, {'document': draft}, 'save')])
+    state = runtime.task_execution_state
+    row, = co.catalog(state)
+    registry = build_capability_catalog()
+    first = ToolCall('first', 'generate_video', {'prompt': '视频脚本1'})
+    second = ToolCall('second', 'generate_video', {'prompt': '视频脚本2'})
+    first_slot = slot(state, first.name, ref(row, 1))
+    second_slot = slot(state, second.name, ref(row, 2))
+    state = record_calls(state, runtime.task_bootstrap, [first], registry, media_slots={first.call_id: first_slot})
+    from services.task_execution.reducer import reserve_operation, record_operation
+    first_binding = state.call_bindings[-1]
+    state, operation, _ = reserve_operation(state, expected_revision=state.revision,
+        step_id=first_binding.step_id, capability='platform.generate_video', effect_key='video:first',
+        effect_version=1, arguments={'prompt': '视频脚本1'}, owner_task_id=runtime.task_id, invocation_id=first.call_id)
+    state = state.model_copy(update={'operations': (operation.model_copy(update={'tool_name': first.name}),)})
+    state = record_operation(state, operation.id, owner_task_id=runtime.task_id,
+                             status='accepted', receipt_ref=f'task:{uuid4()}')
+    approved_id = str(uuid4())
+    next_state = record_calls(state, runtime.task_bootstrap, [second], registry,
+        input_sha256=digest([approved_id]), media_slots={second.call_id: second_slot})
+    assert next_state.call_bindings[-1].step_id != first_binding.step_id
+    assert len(next_state.operations) == 1
+    persisted = next_state.model_dump(mode='json')
+    checkpoint = {
+        '_task_direct_seen': [approved_id],
+        '_task_user_changes': {'items': [{'event_id': approved_id, 'message': '确认第2条', 'delivered': True}]},
+    }
+    with psycopg.connect(content_db) as db:
+        def current(checkpoint):
+            return db.execute('SELECT agent_task_direct_operation_current(%s,%s,%s)',
+                (Jsonb(persisted), Jsonb(checkpoint), operation.id)).fetchone()[0]
+
+        assert db.execute('SELECT agent_task_direct_records_valid(%s)', (Jsonb(persisted),)).fetchone()[0]
+        assert db.execute("SELECT agent_media_confirmed_index('确认第2条')").fetchone()[0] == 2
+        assert db.execute('SELECT agent_task_direct_input_hash(%s)', (Jsonb(checkpoint),)).fetchone()[0] == digest([approved_id])
+        assert current(checkpoint)
+        changed = copy.deepcopy(checkpoint)
+        changed['_task_user_changes']['items'][0]['message'] = '取消上一条，改用新图'
+        assert not current(changed)
+        changed = copy.deepcopy(checkpoint)
+        changed['_task_user_changes']['items'][0]['message'] = '确认第3条'
+        assert not current(changed)
+        changed = copy.deepcopy(checkpoint)
+        changed['_task_user_changes']['items'][0]['attachments'] = [{}]
+        assert not current(changed)
+        tampered = copy.deepcopy(persisted)
+        tampered['call_bindings'][-1]['media_slot'] = 'object-' + '0' * 32 + ':2'
+        assert not db.execute('SELECT agent_task_direct_records_valid(%s)', (Jsonb(tampered),)).fetchone()[0]

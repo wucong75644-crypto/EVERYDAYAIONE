@@ -8,6 +8,7 @@ ToolLoopExecutor 并行执行单元测试
 """
 
 import asyncio
+import json
 import sys
 from pathlib import Path
 from typing import Any, Dict
@@ -115,7 +116,13 @@ class TestPhase1Preprocess:
             completed, [], "", hook_ctx,
         )
 
-        assert "JSON格式错误" in result
+        rejection = json.loads(result)
+        assert rejection["code"] == "MODEL_TOOL_ARGUMENTS_INVALID"
+        assert rejection["stage"] == "validate"
+        assert rejection["recovery"]["action"] == "repair_arguments"
+        assert rejection["issues"][0]["path"] == "$"
+        assert hook_ctx.messages[-1] == {"role": "tool", "tool_call_id": "tc1", "content": result}
+        tle.executor.handler.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_empty_ready_after_all_filtered(self):

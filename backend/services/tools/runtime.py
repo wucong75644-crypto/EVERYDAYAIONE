@@ -65,10 +65,13 @@ class ToolRuntime:
         return context
 
     def advertised(self, initial_names=None, discovered_names=()):
-        return self.registry.resolve(
+        from .model_contracts import project_model_tool
+
+        schemas = self.registry.resolve(
             self.context(), policy=self.policy,
             advertisement=LegacyAdvertisement(initial_names), discovered_names=discovered_names,
         ).advertised_schemas()
+        return [project_model_tool(tool) for tool in schemas]
 
     def batches(self, calls):
         return self.policy.plan_batches(calls, self.context())
@@ -157,6 +160,13 @@ class ToolRuntime:
             if name == "generate_image" and context.entrypoint == "model":
                 from .argument_validation import validate_model_image_arguments
                 validate_model_image_arguments(self.registry.get(name), call.arguments)
+            if context.entrypoint == "model" and not getattr(self.executor, "_task_recovery_only", False):
+                from .model_contracts import REVIEWED_MODEL_TOOLS, model_argument_error
+                if name in REVIEWED_MODEL_TOOLS:
+                    parameters = self.registry.require(name).to_schema()["function"]["parameters"]
+                    error = model_argument_error(name, original_call.arguments, parameters)
+                    if error:
+                        raise ValueError(error)
             if file_call is not None:
                 prepare_resume=getattr(lifecycle,'prepare_file_resume',None)
                 if prepare_resume is not None:

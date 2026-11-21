@@ -1,14 +1,17 @@
 import { useCallback, useEffect, useRef } from 'react';
 
 interface DraftTransactionOptions {
+  conversationId?: string | null;
   prompt: string;
   setPrompt: (value: string) => void;
 }
 
 /** 管理编辑器草稿的立即移出和明确拒绝恢复，不覆盖等待期间的新草稿。 */
 export function useInputDraftTransaction(options: DraftTransactionOptions) {
-  const { prompt, setPrompt } = options;
+  const { prompt, setPrompt, conversationId } = options;
   const promptRef = useRef(prompt);
+  const conversationRef = useRef(conversationId);
+  conversationRef.current = conversationId;
 
   useEffect(() => {
     promptRef.current = prompt;
@@ -32,6 +35,12 @@ export function useInputDraftTransaction(options: DraftTransactionOptions) {
     setPrompt('');
   }, [setPrompt]);
 
+  const clearConfirmedSteer = useCallback((submittedPrompt: string, submittedConversation: string | null) => {
+    if (conversationRef.current === submittedConversation && promptRef.current.trim() === submittedPrompt) {
+      clearPromptForSubmission();
+    }
+  }, [clearPromptForSubmission]);
+
   const restorePromptAfterRejection = useCallback((submittedPrompt: string) => {
     const current = promptRef.current;
     const restored = current.trim() ? `${submittedPrompt}\n${current}` : submittedPrompt;
@@ -41,6 +50,7 @@ export function useInputDraftTransaction(options: DraftTransactionOptions) {
 
   return {
     clearPromptForSubmission,
+    clearConfirmedSteer,
     restorePromptAfterRejection,
   };
 }

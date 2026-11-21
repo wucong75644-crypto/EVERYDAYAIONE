@@ -94,6 +94,14 @@ export async function getMessages(
   });
 }
 
+/** Read one persisted message without replacing the conversation history. */
+export function getMessage(conversationId: string, messageId: string): Promise<RawApiMessage> {
+  return request<RawApiMessage>({
+    url: `/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}`,
+    method: 'GET',
+  });
+}
+
 /**
  * 搜索对话内消息（关键词模糊匹配）
  *

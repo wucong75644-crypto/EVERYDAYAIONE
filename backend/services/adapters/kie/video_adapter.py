@@ -10,6 +10,8 @@ from decimal import Decimal
 
 from loguru import logger
 
+from config.kie_models import KLING_TEXT_VIDEO
+
 from services.oss_service import normalize_external_oss_url
 
 from ..base import (
@@ -232,11 +234,17 @@ class KieVideoAdapter(BaseVideoAdapter):
         legacy generate/create-and-wait behavior is unchanged unless opted in.
         """
         if request.model!=self.model_id:raise ValueError('Video snapshot model mismatch')
-        if request.input.get('n_frames')!=str(duration):raise ValueError('Video snapshot duration mismatch')
+        duration_field = 'duration' if self.model == KLING_TEXT_VIDEO else 'n_frames'
+        if request.input.get(duration_field) != str(duration):
+            raise ValueError('Video snapshot duration mismatch')
         self.validate_frames(str(duration))
         self.validate_prompt(request.input.get('prompt'))
         self.validate_image_urls(request.input.get('image_urls'))
-        self.validate_aspect_ratio(request.input.get('aspect_ratio'))
+        if self.model == KLING_TEXT_VIDEO:
+            if request.input.get('sound') is not False or request.input.get('aspect_ratio') not in ('16:9', '9:16'):
+                raise ValueError('Invalid Kling video submission options')
+        else:
+            self.validate_aspect_ratio(request.input.get('aspect_ratio'))
         payload=request.model_dump(mode='json',exclude_none=True)
         if observer is not None:await observer('dispatch',request=payload)
         try:
@@ -266,6 +274,15 @@ class KieVideoAdapter(BaseVideoAdapter):
             [normalize_external_oss_url(url) for url in image_urls]
             if image_urls else image_urls
         )
+
+        if self.model == KLING_TEXT_VIDEO:
+            from services.kie_video_models import build_video_input
+
+            if image_urls:
+                raise ValueError("Kling text-to-video does not accept image inputs")
+            return build_video_input(self.model, prompt or "", int(n_frames),
+                "9:16" if aspect_ratio == "portrait" else "16:9",
+                image_url=None, sound=False, resolution=None, end_image_url=None, reference_image_urls=None)
 
         # 转换宽高比枚举
         ar = AspectRatio.PORTRAIT if aspect_ratio == "portrait" else AspectRatio.LANDSCAPE

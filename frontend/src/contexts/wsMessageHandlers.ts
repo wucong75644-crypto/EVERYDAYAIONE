@@ -21,6 +21,7 @@ import { getAgentStepText, getToolCallText } from '../constants/placeholder';
 import { handleRoutingComplete } from './wsRoutingCompleteHandler';
 import {
   flushChunkBuffer,
+  isIndependentMediaChild,
   type HandlerDeps,
   type WSIncomingMessage,
 } from './wsMessageHandlerShared';
@@ -54,7 +55,7 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
       const raw = msg.payload?.message as RawApiMessage | undefined;
       const params = raw?.generation_params as Record<string, unknown> | undefined;
       if (!raw?.id || !raw.conversation_id || !msg.task_id
-          || params?.origin !== 'chat_image'
+          || !isIndependentMediaChild(params?.origin)
           || params?.task_id !== msg.task_id) return;
       const existing = deps.getStore().getMessage(raw.id);
       if (staleImageAttempt(existing, msg.task_id, raw as unknown as Record<string, unknown>)) return;

@@ -5,7 +5,7 @@
 
 设计原则：
 - Schema 来源 = selected_tools（传给模型的工具定义本身），单一数据源
-- 幻觉参数静默丢弃 + 日志记录（不中断执行）
+- 已审核模型合同拒绝未知字段；尚未迁移的工具保留旧校验行为
 - 必填缺失 → 返回错误信息让模型重试
 - generate_image 使用完整当前合同，未知/错误字段拒绝，不清洗；聊天 Actor 限制纠错轮
 - 纯函数，无状态，可独立单测
@@ -37,6 +37,8 @@ def validate_tool_args(
     tool_name: str,
     args: Dict[str, Any],
     selected_tools: List[Dict[str, Any]],
+    *,
+    model_entrypoint: bool = False,
 ) -> Tuple[Dict[str, Any], Optional[str]]:
     """校验并清洗工具参数。
 
@@ -52,6 +54,9 @@ def validate_tool_args(
             return args, "IMAGE_TOOL_CONTRACT_UNAVAILABLE：当前轮未提供此工具，不能执行或猜测参数。"
         issues = _issues(args, schema)
         return args, str(ToolArgumentValidationError(issues, schema)) if issues else None
+    from services.tools.model_contracts import REVIEWED_MODEL_TOOLS, model_argument_error
+    if schema is not None and (tool_name == 'web_search' or model_entrypoint and tool_name in REVIEWED_MODEL_TOOLS):
+        return args, model_argument_error(tool_name, args, schema)
     if schema is None:
         # 工具不在 selected_tools 中（动态注入等场景），跳过校验
         return args, None

@@ -1,5 +1,5 @@
 import type { KnowledgeReference } from '../../../services/knowledgeReferences';
-import { useCallback, type Dispatch, type SetStateAction } from 'react';
+import { useCallback, useRef, type Dispatch, type SetStateAction } from 'react';
 import { toast } from 'react-hot-toast';
 import { uploadAudio } from '../../../services/audio';
 import type { SkillSelection, SkillTaskMode } from '../../../services/skills';
@@ -13,6 +13,8 @@ import type {
   AttachmentDraftTransaction,
   AttachmentSubmissionSnapshot,
 } from '../attachments/ChatAttachment.types';
+
+import type { SteerAttachment } from './useInputTaskControls';
 
 export interface UseInputSubmissionOptions {
   knowledgeRefs?: KnowledgeReference[];
@@ -63,7 +65,9 @@ export interface UseInputSubmissionOptions {
   effectiveModelType: ModelType;
   smartSubMode: string;
   isStreaming: boolean;
-  sendSteer: (message: string) => boolean;
+  sendSteer: (message: string, attachments?: SteerAttachment[]) => Promise<boolean> | null;
+  hasPendingSteer?: (message: string, attachments?: SteerAttachment[]) => boolean;
+  clearConfirmedSteer: (message: string, conversationId: string | null) => void;
   isUploading: boolean;
   hasImages: boolean;
   hasFiles: boolean;
@@ -73,6 +77,8 @@ export interface UseInputSubmissionOptions {
 }
 
 export function useInputSubmission(options: UseInputSubmissionOptions) {
+  const currentConversation = useRef(options.conversationId);
+  currentConversation.current = options.conversationId;
   const handleAudioSubmit = useCallback(async (blob: Blob) => {
     if (options.isSubmitting || options.skillScopeBlocked) return;
     options.setIsSubmitting(true);
@@ -141,13 +147,42 @@ export function useInputSubmission(options: UseInputSubmissionOptions) {
     }
 
     const message = options.prompt.trim();
-    // 流式任务中的文本统一进入当前 Actor turn：后端会在同一条入口上
-    // 判断 pause/resume/cancel，普通文本则作为 steer 注入原任务。
-    // 成功发出 steer 后不能再创建第二个 HTTP turn，否则“暂停”会变成
-    // 暂停旧任务 + 新建任务。
-    if (options.isStreaming && message && !hasAttachments && !options.knowledgeRefs?.length) {
-      if (options.sendSteer(message)) {
-        options.clearPromptForSubmission();
+    const canSteer = !options.knowledgeRefs?.length && !options.hasSkillIntent
+      && (!hasAttachments || (options.effectiveModelType === 'chat' && !options.isEcomMode));
+    const steerAttachments = hasAttachments ? attachments.orderedAttachments.flatMap(item => {
+      const path = item.kind === 'image' ? item.image.workspace_path : item.file.workspace_path;
+      return path ? [{ kind: item.kind, workspace_path: path }] : [];
+    }) : undefined;
+    const steerMessage = message || '请将本条附件用于当前任务。';
+    if ((message || hasAttachments) && canSteer
+        && (options.isStreaming || options.hasPendingSteer?.(steerMessage, steerAttachments))) {
+      if (hasAttachments && (steerAttachments?.length !== attachments.attachments.length
+          || steerAttachments.length > 16)) {
+        options.setSendError('追加素材需要已上传的工作区文件，每次最多 16 个。');
+        return;
+      }
+      const receipt = steerAttachments
+        ? options.sendSteer(steerMessage, steerAttachments) : options.sendSteer(steerMessage);
+      if (receipt) {
+        const transaction = hasAttachments ? options.detachAttachmentsForSubmission() : null;
+        options.setIsSubmitting(true);
+        try {
+          const accepted = await receipt;
+          if (!accepted) transaction?.restore();
+          if (currentConversation.current !== options.conversationId) return;
+          if (accepted) {
+            options.clearConfirmedSteer(message, options.conversationId);
+            options.setSendError(null);
+          } else {
+            options.setSendError('补充要求的送达状态未确认，输入已保留。可重试发送这条补充。');
+          }
+        } finally {
+          if (currentConversation.current === options.conversationId) options.setIsSubmitting(false);
+        }
+        return;
+      }
+      if (hasAttachments) {
+        options.setSendError('尚未找到可接收素材的当前任务，输入已保留。');
         return;
       }
     }

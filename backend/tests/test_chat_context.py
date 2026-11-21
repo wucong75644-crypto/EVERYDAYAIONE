@@ -1613,8 +1613,9 @@ class TestBuildContextMessagesInterruptMarker:
         assert "分钟前" in last["content"]
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize('with_silent_completion', [False, True])
     async def test_latest_interrupted_turn_preserves_tool_recovery_protocol(
-        self, chat_handler, mock_db,
+        self, chat_handler, mock_db, with_silent_completion,
     ):
         """最新中断 Turn 保留完整工具配对，供服务重启后恢复。"""
         marker_content = [
@@ -1632,6 +1633,7 @@ class TestBuildContextMessagesInterruptMarker:
             },
         ]
         mock_db.set_table_data("messages", [
+            *([_make_msg("assistant", [])] if with_silent_completion else []),
             _make_msg("assistant", marker_content, status="interrupted"),
             _make_msg("user", "分析当前文件"),
         ])

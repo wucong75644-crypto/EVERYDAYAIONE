@@ -35,7 +35,11 @@ def resolve_action(spec: ToolSpec, arguments: Mapping[str, Any], *, context=None
             request = ReachRequest.model_validate(resolve_link_args(
                 thaw(arguments), getattr(context, 'web_link_refs', None)))
         except ReachError as error:
-            return ActionFacts(operation, risk, 'invalid_web_link_reference' if error.code == 'INVALID_URL_REFERENCE' else 'invalid_agent_reach_arguments')
+            reason = {
+                'INVALID_URL_REFERENCE': 'invalid_web_link_reference',
+                'INVALID_URL': 'invalid_agent_reach_url',
+            }.get(error.code, 'invalid_agent_reach_arguments')
+            return ActionFacts(operation, risk, reason)
         except Exception:
             return ActionFacts(operation, risk, 'invalid_agent_reach_arguments')
         if request.action in WRITE_ACTIONS:

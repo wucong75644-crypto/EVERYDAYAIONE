@@ -80,7 +80,7 @@ vi.mock('../../../hooks/useMessageAnimation', () => ({
 }));
 
 const mockUpdateMessage = vi.fn();
-vi.mock('../../../stores/useMessageStore', () => ({
+vi.mock('../../../stores/useMessageStore', async () => ({
   useMessageStore: { getState: () => ({ updateMessage: mockUpdateMessage }) },
   getTextContent: (msg: Message) => {
     if (!msg.content || msg.content.length === 0) return '';
@@ -94,7 +94,7 @@ vi.mock('../../../stores/useMessageStore', () => ({
         originalUrl: p.original_url || p.url!,
         thumbnailUrl: p.thumbnail_url,
       })),
-  getVideoUrls: () => [],
+  getVideoUrls: (await import('../../../utils/messageUtils')).getVideoUrls,
   getFiles: () => [],
 }));
 
@@ -616,6 +616,33 @@ it('does not turn a completed progress-only message into a cancelled placeholder
   })} />);
   expect(container.querySelector('[data-message-id]')).toBeNull();
   expect(screen.queryByText(/已取消/)).not.toBeInTheDocument();
+});
+
+it.each([
+  { content: [] }, { content: [{ type: 'text' as const, text: '' }] },
+])(
+  'hides the completed internal reply after its media was published separately', ({ content }) => {
+    const { container } = render(<MessageItem message={makeMessage({
+      role: 'assistant', status: 'completed', content,
+    })} />);
+    expect(container.querySelector('[data-message-id]')).toBeNull();
+  },
+);
+
+it('renders a video placeholder and replaces it with the player in the same message', () => {
+  const queued = makeMessage({
+    role: 'assistant', status: 'pending', content: [{ type: 'text', text: '视频任务排队中' }],
+    generation_params: { type: 'video', origin: 'agent_video', task_id: 'video-child' },
+  });
+  const { rerender } = render(<MessageItem message={queued} />);
+  expect(capturedMediaProps).toMatchObject({ isGenerating: true, generatingType: 'video' });
+
+  rerender(<MessageItem message={{ ...queued, status: 'completed',
+    content: [{ type: 'video', url: 'https://example.com/result.mp4' }],
+  }} />);
+  expect(capturedMediaProps).toMatchObject({
+    isGenerating: false, videoUrls: ['https://example.com/result.mp4'],
+  });
 });
 
 it('keeps the original answer when its task progress marker moves to the header', () => {

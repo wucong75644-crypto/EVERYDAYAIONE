@@ -182,6 +182,14 @@ def build_message_error(
     )
 
 
+def build_steer_result(*, request_id: str, outcome: str, task_id: str,
+                       conversation_id: str, event_id: Optional[str] = None) -> Dict[str, Any]:
+    return _build_ws_message(
+        WSMessageType.STEER_RESULT, {"request_id": request_id, "outcome": outcome, "event_id": event_id},
+        task_id=task_id, conversation_id=conversation_id,
+    )
+
+
 def build_control_result(
     *,
     action: str,

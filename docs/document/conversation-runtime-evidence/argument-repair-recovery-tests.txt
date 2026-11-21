@@ -1,0 +1,29 @@
+Actor 工具参数纠错与恢复验收
+任务分支 codex/task/20261120175146-conversation-runtime-diagnosis
+
+隔离 PostgreSQL 与本地 Redis 联合回归，399 项通过、22 项跳过
+运行文件 test_chat_tool_argument_repairs.py、test_chat_generation_executor.py、
+test_chat_execution_engine.py、test_model_directed_loop.py、test_task_execution_pending_batch.py、
+test_tool_production_integration.py、test_content_objects_postgres.py、
+test_chat_latency_chain_postgres.py、test_task_execution_continuation_postgres.py、
+test_task_execution_followup_reuse_postgres.py、test_task_execution_requirement_changes_postgres.py。
+跳过项需要私有历史对话、原始附件或指定版本 Skill 的本地材料。
+
+关键断言
+- 变换错误字段、类型和 JSON 写法仍计入原目标，单轮重复调用只记一次。
+- 真实对话主循环到三次失败后结束，不再采样。同批合法查询、连续翻页与独立动作不被拦截。
+- 真实数据库保存第三次拒绝后注入中断，更换执行令牌后读取成对的工具结果。旧执行令牌不能覆盖状态，恢复不采样、不派发。
+- 含有效和无效调用的混合批次，在原有 pending_calls 读取器只留下有效调用。恢复沿用原调用 ID，已拒绝的调用不重放、不重复计数。
+- 新输入与已交付追加消息切换输入版本；服务端自动接续原请求时沿用已有计数。
+- 检查点写入回执丢失时，只有完整读取结果与原快照相等才继续。
+
+工具结果投影、上下文与检查点兼容性回归，211 项全部通过
+运行文件 test_chat_tool_loop.py、test_tool_loop_context.py、test_context_result_restoration.py、
+test_tool_result_consumption.py、test_tool_result.py、test_replay_checkpoint_store.py、
+test_replay_checkpoint_migration.py。
+
+Chromium 本地 WebSocket 回归，4 项全部通过
+普通对话、图片理解、知识问答和文件工具调用走隔离 Actor、PostgreSQL、Redis 及浏览器组件，
+复测首段可在终态前显示。此组与联合回归用例重叠。
+文件读取场景的测试模型参数已按实际合同使用 keyword。
+本次模型和外部工具均用测试桩，没有使用付费模型或生产环境。

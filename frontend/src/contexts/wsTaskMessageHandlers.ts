@@ -10,6 +10,7 @@ import { parseContentPart } from '../schemas/messageProtocol';
 import {
   cleanupTaskSubscription,
   flushChunkBuffer,
+  isIndependentMediaChild,
   type HandlerDeps,
   type WSIncomingMessage,
 } from './wsMessageHandlerShared';
@@ -99,7 +100,10 @@ function notifyMessageDone(messageData: Record<string, unknown> | undefined, ena
   if (!enabled) return;
   const isFailed = messageData?.status === 'failed';
   if (isFailed) toast.error('生成失败');
-  else toast.success('生成完成');
+  else if (!(messageData?.role === 'assistant'
+    && Array.isArray(messageData.content) && messageData.content.length === 0)) {
+    toast.success('生成完成');
+  }
 }
 
 function notifyWorkspaceChanged(messageData: Record<string, unknown> | undefined): void {
@@ -132,13 +136,14 @@ export function handleMessageDone(deps: HandlerDeps, msg: WSIncomingMessage): vo
   const effectiveMessageId = message_id
     || (typeof messageData?.id === 'string' ? messageData.id : undefined);
   const params = messageData?.generation_params as Record<string, unknown> | undefined;
-  const childImage = params?.origin === 'chat_image'
-    || (!!effectiveMessageId && deps.getStore().getMessage(effectiveMessageId)?.generation_params?.origin === 'chat_image');
+  const childMedia = isIndependentMediaChild(params?.origin)
+    || isIndependentMediaChild(effectiveMessageId
+      ? deps.getStore().getMessage(effectiveMessageId)?.generation_params?.origin : undefined);
   if (staleImageAttempt(effectiveMessageId ? deps.getStore().getMessage(effectiveMessageId) : undefined, task_id, messageData)) {
     if (task_id) cleanupTaskSubscription(deps, task_id);
     return;
   }
-  if (!childImage) flushPendingChunks(deps);
+  if (!childMedia) flushPendingChunks(deps);
 
   logger.info('ws:message', 'done received', {
     taskId: task_id,
@@ -168,9 +173,9 @@ export function handleMessageDone(deps: HandlerDeps, msg: WSIncomingMessage): vo
     finishMessageWithoutTask(deps, message_id, messageData);
   }
 
-  if (!childImage) completeConversation(deps, effectiveConversationId, effectiveMessageId, isNewlyCompleted);
+  if (!childMedia) completeConversation(deps, effectiveConversationId, effectiveMessageId, isNewlyCompleted);
   // Child tasks have no input-operation callback to refresh their settled balance.
-  if (childImage && isNewlyCompleted) void useAuthStore.getState().refreshUser();
+  if (childMedia && isNewlyCompleted) void useAuthStore.getState().refreshUser();
   notifyMessageDone(messageData, isNewlyCompleted);
   notifyWorkspaceChanged(messageData);
 }
@@ -221,12 +226,13 @@ export function handleMessageError(deps: HandlerDeps, msg: WSIncomingMessage): v
   const error = (msg.error ?? msg.payload?.error) as { code?: string; message?: string } | undefined;
   const snapshot = (msg.message ?? msg.payload?.message) as Record<string, unknown> | undefined;
 
-  const childImage = !!message_id && deps.getStore().getMessage(message_id)?.generation_params?.origin === 'chat_image';
+  const childMedia = isIndependentMediaChild(message_id
+    ? deps.getStore().getMessage(message_id)?.generation_params?.origin : undefined);
   if (staleImageAttempt(message_id ? deps.getStore().getMessage(message_id) : undefined, task_id, snapshot)) {
     if (task_id) cleanupTaskSubscription(deps, task_id);
     return;
   }
-  if (!childImage) flushPendingChunks(deps);
+  if (!childMedia) flushPendingChunks(deps);
 
   logger.error('ws:message', 'error received', undefined, {
     taskId: task_id,
@@ -241,11 +247,11 @@ export function handleMessageError(deps: HandlerDeps, msg: WSIncomingMessage): v
   const ownsStreamingSlot = !!conversation_id
     && !!message_id
     && store.getStreamingMessageId(conversation_id) === message_id;
-  if (ownsStreamingSlot && !childImage) {
+  if (ownsStreamingSlot && !childMedia) {
     store.completeStreaming(conversation_id);
     store.setIsSending(false);
   }
-  if (childImage) void useAuthStore.getState().refreshUser();
+  if (childMedia) void useAuthStore.getState().refreshUser();
   toast.error(error?.message || '生成失败');
 }
 

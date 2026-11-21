@@ -535,7 +535,10 @@ class ModelGatewaySession:
             emit(SamplingEventType.FAILED, error_type=type(error).__name__)
             raise
         except (asyncio.CancelledError, GeneratorExit):
-            await self._stop_provider_stream(provider_iterator, next_chunk)
+            # A consumer can discard one stream while keeping the chat alive
+            # for a newly received user input. The request token still owns
+            # terminal cancellation.
+            await self._stop_provider_stream(provider_iterator, next_chunk, close_session=self._is_cancelled())
             emit(SamplingEventType.CANCELLED)
             raise
         except Exception as error:
@@ -791,8 +794,10 @@ class ModelGatewaySession:
         self,
         provider_iterator: Any,
         next_chunk: asyncio.Task[Any] | None = None,
+        *,
+        close_session: bool = True,
     ) -> None:
-        """停止 iterator 后关闭 adapter；收尾失败不能掩盖 cancel/timeout。"""
+        """Stop the provider attempt; close the adapter on terminal exits."""
         if next_chunk is not None and not next_chunk.done():
             next_chunk.cancel()
         if next_chunk is not None:
@@ -804,8 +809,9 @@ class ModelGatewaySession:
                     await close_iterator()
                 except Exception:
                     pass
-        self._closed = True
-        await self._close_attempt_adapter()
+        if close_session:
+            self._closed = True
+            await self._close_attempt_adapter()
 
 
 class ModelGateway:

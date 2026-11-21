@@ -178,6 +178,41 @@ describe('independent chat image delivery', () => {
     expect(mockAuthStore.refreshUser).toHaveBeenCalledOnce();
   });
 
+  it('updates the accepted video placeholder in place without ending a chat stream', () => {
+    const store = createMockStore();
+    const deps = createMockDeps(store);
+    const handlers = createWSMessageHandlers(deps);
+    const taskId = 'video-task';
+    const placeholder = {
+      id: 'video-message', conversation_id: 'conv', role: 'assistant' as const,
+      status: 'pending' as const, content: [{ type: 'text' as const, text: '视频任务排队中' }],
+      generation_params: { origin: 'agent_video', type: 'video' as const, task_id: taskId },
+    };
+    const pending = { type: 'message_pending', task_id: taskId, payload: { message: placeholder } };
+    handlers.message_pending(pending);
+    expect(store.addMessage).toHaveBeenCalledWith('conv', expect.objectContaining({ id: placeholder.id, status: 'pending' }));
+    expect(deps.send).toHaveBeenCalledWith({ type: 'subscribe', payload: { task_id: taskId } });
+
+    vi.mocked(store.getMessage).mockReturnValue(placeholder as Message);
+    deps.chunkBufferRef.current.set('parent-msg', { chunk: 'active chat', conversationId: 'conv' });
+    const complete = { ...placeholder, status: 'completed' as const,
+      content: [{ type: 'video' as const, url: 'https://example.com/video.mp4' }],
+    };
+    handlers.message_done({ type: 'message_done', task_id: taskId, conversation_id: 'conv',
+      payload: { message: complete } });
+    expect(store.updateMessage).toHaveBeenCalledWith(placeholder.id, expect.objectContaining({
+      status: 'completed', content: complete.content,
+    }));
+    expect(store.completeStreaming).not.toHaveBeenCalled();
+    expect(store.markConversationCompleted).not.toHaveBeenCalled();
+    expect(deps.chunkBufferRef.current.get('parent-msg')?.chunk).toBe('active chat');
+    expect(mockAuthStore.refreshUser).toHaveBeenCalledOnce();
+
+    vi.mocked(store.getMessage).mockReturnValue(complete as Message);
+    handlers.message_pending(pending);
+    expect(store.updateMessage).toHaveBeenCalledOnce();
+  });
+
   it('refreshes refunded credits on a child error without touching parent streaming', () => {
     const store = createMockStore(); const deps = createMockDeps(store);
     vi.mocked(store.getMessage).mockReturnValue({ id: 'image-msg', status: 'pending',
@@ -514,6 +549,20 @@ describe('wsMessageHandlers', () => {
       expect(store.completeStreaming).toHaveBeenCalledWith('conv_1');
       expect(store.markConversationCompleted).toHaveBeenCalledWith('conv_1');
       expect(store.setIsSending).toHaveBeenCalledWith(false);
+    });
+
+    it('completes an empty assistant reply without a second completion toast', async () => {
+      const { toast } = await import('react-hot-toast');
+      (store.getMessage as ReturnType<typeof vi.fn>).mockReturnValue(null);
+
+      handlers.message_done({
+        task_id: 'task_1',
+        conversation_id: 'conv_1',
+        message: { id: 'msg_1', role: 'assistant', status: 'completed', content: [] },
+      });
+
+      expect(store.completeTask).toHaveBeenCalledWith('task_1');
+      expect(toast.success).not.toHaveBeenCalled();
     });
 
     it('should still updateMessage when already completed (DB data覆盖)', () => {

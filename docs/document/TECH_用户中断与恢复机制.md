@@ -95,7 +95,7 @@ whether you should retry.
 | **不喂工具参数详情**（已在 `tool_calls` 里） | Cline / LiteLLM |
 | **不喂 partial 长度等 metadata**（已在历史里） | 全部 |
 | 时间用**相对自然语言**（"5 minutes ago"），不用 ISO | Cline |
-| 核心指令只两条："被打断"+"未配对工具按未成功处理" | Cline / LiteLLM |
+| 会话中断与原操作状态分开记录；缺回执时按原操作核实 | Cline / LiteLLM |
 | **内部存储可结构化，喂 LLM 必须扁平化** | LangGraph payload 自由，各家渲染时扁平化 |
 | **「继续」不是 resume API**，就是发隐式 user 消息 | Cline / 其他工业实践 |
 
@@ -169,21 +169,22 @@ whether you should retry.
 ```python
 INTERRUPTED_TOOL_RESULT = (
     "[系统: 用户在工具 '{tool_name}' 执行完成前中断了对话。"
-    "该工具结果未知，请视为未成功。]"
+    "原操作状态待核实，先查原调用或回执。]"
 )
 ```
 
 **注入位置**：
 1. **取消瞬间落锚时**：扫描内存 `messages` 数组，未配对的 `assistant.tool_calls[*].id` 追加一条 `role=tool` 配对
 2. **history_loader 兜底时**：从 DB 重建后再扫一次，防御性补对
+3. **发送给模型前**：兼容历史和检查点中的旧系统提示及补对结果。沿用原调用 ID，修正模型可见文本。
 
 #### 4.1.3 TASK RESUMPTION 渲染模板
 
 ```python
 TASK_RESUMPTION_TEMPLATE = (
-    "[任务恢复] 此任务在 {ago_text} 被用户中断。可能未完成，请重新评估任务上下文。\n\n"
-    "注意：如果之前调用的工具没有收到结果，请假设该工具未成功执行；"
-    "根据当前需要判断是否重试。"
+    "[任务恢复] 此任务在 {ago_text} 被用户中断。用原调用或回执核实工具状态。"
+    "已受理的操作沿用原任务查询或等待，状态不明时不重复提交。"
+    "确认未派发且用户仍要求继续时，按当前权限恢复执行。"
 )
 
 USER_MESSAGE_WRAPPER = (
@@ -284,7 +285,7 @@ def _fix_orphan_tool_calls(messages: list[dict]) -> list[dict]:
 
     设计原则（参考 LiteLLM）：
     - 不删除孤儿 tool_call（保留语义"我尝试过 X"）
-    - 用 synthetic tool_result 补对，让 LLM 看到"未成功"明确信号
+    - 用 synthetic tool_result 补对，记录原操作状态待核实
     """
     fixed: list[dict] = []
     i = 0

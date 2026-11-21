@@ -130,4 +130,5 @@ class TestTaskResumptionTemplate:
         assert "[任务恢复]" in rendered
         assert "约 5 分钟前" in rendered
         assert "工具" in rendered
-        assert "重试" in rendered
+        assert "状态不明时不重复提交" in rendered
+        assert "确认未派发" in rendered

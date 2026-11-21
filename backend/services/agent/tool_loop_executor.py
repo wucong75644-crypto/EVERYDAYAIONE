@@ -482,7 +482,7 @@ class ToolLoopExecutor:
         async for chunk in self.model_gateway.stream_chat(
             messages=messages, tools=selected_tools, temperature=0.1,
             thinking_mode=self.config.thinking_mode,
-            enable_builtin_tools=any(t.get("function", {}).get("name") == "web_search" for t in selected_tools),
+            enable_builtin_tools=True,
         ):
             event = getattr(chunk, "builtin_tool_event", None)
             if isinstance(event, dict) and event.get("status") == "completed":
@@ -641,6 +641,8 @@ class ToolLoopExecutor:
         from services.agent.tool_args_validator import validate_tool_args
 
         accumulated = turn_text
+        from services.tools.model_contracts import REVIEWED_MODEL_TOOLS, decode_model_arguments
+
         ready: List[Tuple[Dict, str, Dict]] = []  # (tc, tool_name, args)
         exit_hit = False
 
@@ -659,12 +661,15 @@ class ToolLoopExecutor:
 
             # JSON 解析失败 → 错误信息回灌给 LLM
             try:
-                args = json.loads(tc["arguments"]) if tc["arguments"] else {}
-            except (json.JSONDecodeError, TypeError) as e:
+                if tool_name in REVIEWED_MODEL_TOOLS:
+                    args = decode_model_arguments(tool_name, tc.get("arguments"))
+                else:
+                    args = json.loads(tc["arguments"]) if tc["arguments"] else {}
+            except (ValueError, TypeError) as e:
                 logger.warning(
                     f"ToolLoop bad JSON | tool={tool_name} | error={e}"
                 )
-                result = f"工具参数JSON格式错误: {e}，请检查参数格式"
+                result = str(e) if tool_name in REVIEWED_MODEL_TOOLS else f"工具参数JSON格式错误: {e}，请检查参数格式"
                 messages.append({
                     "role": "tool", "tool_call_id": tc["id"], "content": result,
                 })
@@ -684,7 +689,7 @@ class ToolLoopExecutor:
                 accumulated = str(error)
                 continue
             args, validation_error = validate_tool_args(
-                tool_name, args, selected_tools,
+                tool_name, args, selected_tools, model_entrypoint=True,
             )
             if validation_error:
                 messages.append({

@@ -479,3 +479,99 @@ def test_knowledge_input_extension_survives_original_followup_adoption(followup_
         assert restored.input_message_id==new['message'] and restored.history_evidence and restored.changed
         assert checkpoint['opaque_context']=={'keep':True}
         assert c.execute('SELECT count(*) FROM credit_transactions WHERE task_id=%s',(new['task'],)).fetchone()[0]==0
+
+
+def test_new_followup_preserves_the_original_tool_repair_checkpoint(followup_db):
+    from types import SimpleNamespace
+    from services.handlers.chat import tool_argument_repairs
+
+    old, new, _, obs, _ = new_turn(followup_db)
+    repair = tool_argument_repairs.Checkpoint(
+        input_id=old['message'], input_version='a' * 64, counts={'b' * 64: 2}, stopped=True,
+    ).model_dump(mode='json')
+    with psycopg.connect(followup_db) as connection:
+        connection.execute('UPDATE conversation_turn_checkpoints SET state=state || %s WHERE task_id=%s',
+            (Jsonb({tool_argument_repairs.KEY: repair}), old['task']))
+    with connect(new) as connection:
+        fresh = connection.execute('SELECT state FROM conversation_turn_checkpoints WHERE task_id=%s',
+            (new['task'],)).fetchone()[0]
+        source = connection.execute('SELECT read_agent_task_followup(%s,%s)',
+            (new['task'], new['token'])).fetchone()[0]['source']
+        merged = payload(source, fresh, task_id=new['task'], turn_id=new['turn'], model_round=1, usage={},
+            observation=FollowupObservation.model_validate(obs))
+        reply = adopt(connection, new, source, obs, merged)
+    assert reply['outcome'] == 'saved'
+    assert reply['payload'][tool_argument_repairs.KEY] == repair
+    runtime = SimpleNamespace(checkpoint_base=reply['payload'], turn_id=new['turn'], task_user_changes=None)
+    request = SimpleNamespace(context_anchor=SimpleNamespace(input_message_id=new['message']))
+    assert not tool_argument_repairs.stopped(runtime, request)
+
+
+def test_followup_restores_current_video_discovery_for_selected_call(followup_db):
+    from types import SimpleNamespace
+    from services.handlers.chat import content_tools
+    from services.handlers.chat.tool_loop import prepare_tool_turn
+    from services.task_execution.direct_loop import restored_content_calls
+    from services.task_execution.contracts import TaskState
+    from tests.test_model_directed_loop import case
+
+    old, new, _, obs, _ = new_turn(followup_db, text='继续原任务，用第四条脚本生成视频')
+    previous_tools = {'task_id': old['task'], 'names': ['knowledge_discover']}
+    selected_call = {'name': 'generate_video', 'arguments': json.dumps({
+        'content_source': {'artifact_id': str(uuid4()), 'sha256': 'a' * 64, 'item_index': 4},
+    })}
+    with psycopg.connect(followup_db) as connection:
+        connection.execute(
+            'UPDATE conversation_turn_checkpoints SET state=state || %s WHERE task_id=%s',
+            (Jsonb({content_tools.STATE: previous_tools}), old['task']),
+        )
+    with connect(new) as connection:
+        fresh = connection.execute('SELECT state FROM conversation_turn_checkpoints WHERE task_id=%s',
+            (new['task'],)).fetchone()[0]
+        fresh[content_tools.STATE] = {'task_id': new['task'], 'names': ['generate_video']}
+        fresh['messages'].extend([
+            {'role': 'assistant', 'content': None, 'tool_calls': [
+                {'id': 'video-selection', 'type': 'function', 'function': selected_call},
+            ]},
+            {'role': 'tool', 'tool_call_id': 'video-selection', 'content': json.dumps({
+                'content_followup': True, 'status': 'resuming', 'accepted': False,
+            })},
+        ])
+        written = connection.execute("SELECT save_generation_checkpoint(%s,%s,'before_model',%s)",
+            (new['task'], new['token'], Jsonb(fresh))).fetchone()[0]
+        assert written['outcome'] == 'saved'
+        source = connection.execute('SELECT read_agent_task_followup(%s,%s)',
+            (new['task'], new['token'])).fetchone()[0]['source']
+        obs['evidence'] = [source['message']]
+        merged = payload(source, fresh, task_id=new['task'], turn_id=new['turn'],
+                         model_round=1, usage={}, observation=FollowupObservation.model_validate(obs))
+        reply = adopt(connection, new, source, obs, merged)
+    assert reply['outcome'] == 'saved'
+    checkpoint = reply['payload']
+    assert checkpoint[content_tools.STATE] == previous_tools
+
+    runtime, prepared, _, _ = case()
+    runtime.task_id = new['task']
+    runtime.checkpoint_base = checkpoint
+    runtime.task_execution_state = TaskState.model_validate(checkpoint['_task_execution'])
+    change = checkpoint['_task_user_changes']['items'][-1]
+    runtime.task_direct_seen = set()
+    runtime.task_user_changes = SimpleNamespace(items=[SimpleNamespace(**{**change, 'delivered': True})])
+    state = content_tools.checkpoint_state(runtime)
+    assert state['names'] == ['generate_video']
+    offered = prepare_tool_turn(
+        core_tools=[], discovered_names=set(state['names']), org_id=None, turn=0,
+        messages=[], tool_context=prepared.tool_context, permission=prepared.permission,
+        execution_context=prepared.execution_context,
+    )
+    visible = {tool['function']['name'] for tool in content_tools.model_tools(offered)}
+    assert restored_content_calls(runtime, visible) == [{**selected_call, 'id': 'video-selection:continued'}]
+    assert restored_content_calls(runtime, visible - {'generate_video'}) == []
+
+    # A newer checkpoint for the current owner supersedes the original window.
+    current_tools = {'task_id': new['task'], 'names': []}
+    runtime.checkpoint_base = {**checkpoint, content_tools.STATE: current_tools}
+    assert content_tools.checkpoint_state(runtime) == current_tools
+    # Neither the historical top-level scope nor an unrelated owner may supply tools.
+    runtime.task_id = str(uuid4())
+    assert content_tools.checkpoint_state(runtime) == {'task_id': runtime.task_id}

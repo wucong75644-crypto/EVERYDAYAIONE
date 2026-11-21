@@ -12,6 +12,9 @@ from typing import Dict, Any, List, Optional
 from enum import Enum
 
 
+KLING_TEXT_VIDEO = "kling-2.6/text-to-video"
+
+
 class KieModelCategory(str, Enum):
     """模型分类"""
     CHAT = "chat"
@@ -416,6 +419,25 @@ KIE_MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
     # ========================================
     # 视频模型 (异步任务)
     # ========================================
+    KLING_TEXT_VIDEO: {
+        "display_name": "Kling 2.6 文生视频",
+        "description": "可灵 2.6 无声文生视频，支持 5/10 秒",
+        "category": KieModelCategory.VIDEO,
+        "api_pattern": KieAPIPattern.ASYNC_TASK,
+        "provider": "kie",
+        "model_id": KLING_TEXT_VIDEO,
+        "api_endpoint": "https://api.kie.ai/api/v1/jobs/createTask",
+        "max_prompt_length": 2500,
+        "requires_image_input": False,
+        "requires_prompt": True,
+        "supported_durations": [5, 10],
+        "supported_aspect_ratios": ["portrait", "landscape"],
+        "supports_watermark_removal": False,
+        "kie_cost_by_duration": {5: 63, 10: 126},
+        "user_credits_by_duration": {5: 64, 10: 127},
+        "is_active": True,
+        "priority": 39,
+    },
     "sora-2-text-to-video": {
         "display_name": "Sora 2 文生视频",
         "description": "文本描述生成视频，支持10/15秒",

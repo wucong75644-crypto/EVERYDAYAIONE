@@ -627,6 +627,15 @@ async def test_prepare_chat_stream_opens_gateway_for_shared_web_actor_path(
     assert prepared.model_gateway is not None
     assert prepared.model_gateway.request.request_id == "request-1"
     assert prepared.model_gateway.request.budget is prepared.budget
+    prepare_attempt = prepared.model_gateway.request.retry_policy.prepare_stream
+    search = {"type": "function", "function": {"name": "web_search"}}
+    attempt = prepare_attempt(prepared.model_gateway, {"tools": [search]})
+    assert attempt["tools"] == [search]
+    assert attempt["enable_builtin_tools"] is True
+    explicit_off = prepare_attempt(
+        prepared.model_gateway, {"tools": [search], "enable_builtin_tools": False},
+    )
+    assert explicit_off["enable_builtin_tools"] is False
     await prepared.model_gateway.close()
     adapter.close.assert_awaited_once()
 

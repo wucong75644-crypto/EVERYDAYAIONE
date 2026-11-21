@@ -32,7 +32,7 @@ def test_prompt_and_tool_advertise_the_same_palette():
     assert PRESENTATION_COLORS_TEXT in prompt
     assert PRESENTATION_COLORS_TEXT in description
     assert '<span data-color="颜色名">内容</span>' in prompt
-    assert "cell_styles" in prompt and "cell_styles" in description
+    assert "cell_styles" not in prompt and "cell_styles" in description
     assert "{{presentation_colors}}" not in prompt
     assert "上涨红色、下跌绿色" not in prompt
 

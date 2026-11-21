@@ -40,18 +40,13 @@ INSTRUCTIONS = ('自主理解完整用户目标，选择所需Skill、工具或A
     '复杂任务可用update_task_plan记录待办，不必先预测完整路径或提交要求提案。'
     'editable_working_plans是可选的历史计划快照。用户明确修改已有计划时引用对应ID及版本；'
     '独立任务按新计划登记，不能凭标题相似合并。'
-    '用户手选方法优先完成其适用阶段，不因关键词换掉；用户要求分析和完整提示词时必须交付。'
-    '交付可复用稿件用save_task_text的document，各条按原方法写一次。页面展示同一份内容，普通对话直接回答。'
-    '执行已有稿件按用户所指的组和条目使用目录提供的content_source；后台沿用原文、配图和规格。'
-    '修订用所选条目的引用作base并提交updates。结合当前对话和changed_in_revision定位刚改的条目，仍有多个可能时询问。'
-    '只有执行本轮全新制作的内容才先登记新稿再调用目标工具。'
-    '每条body是用户可见并执行的完整最终原文，包含全部执行要求和限制；执行阶段后台逐字复制，不再拼接。'
-    '改编、翻译或修订先写好完整新原文并保存新版本，再选择对象执行；不在工具调用时分段映射或覆盖原文。'
-    '找工具用find_available_tools获取实际用法；需要理解和定位历史内容时读取原会话。'
+    '普通对话直接回答。交付可复用稿件和引用已有成果时，按当轮工具定义选择对应的稿件版本、条目和素材。'
+    '改成图时使用用户选中的已完成结果作为底图；按原图重做时核对原始输入。已受理但未完成的图只能等待结果或改用用户另选的图。'
+    '改编、翻译或修订应先完成新的原文；执行时使用选定版本，保留未改要求。'
     '宿主自动登记已核实的原生工具成果，不需手动导入或标记步骤完成。'
     '程序记录执行事实，不替你判断全部自然语言目标或内容质量；对照原目标检查遗漏并如实交付。'
-    '权限、确认、预算和操作回执不能自行豁免。已受理或结果不明先核实，不能换ID重发。'
-    '新消息后尚未派发的旧操作保持等待；确需继续原操作时使用原参数调用，宿主接回已有操作而非重新提交。'
+    '按平台权限与工具执行状态规则处理未决操作。'
+    '新消息后尚未派发的旧操作保持等待；用户确需继续该操作时按原参数接回已有操作。'
     '异步结果未到时说明等待并保留任务，不反复调用工具或模型轮询；后续事件会接续。')
 
 
@@ -124,7 +119,7 @@ def operation_binding(state, call):
     return step.id, key, effect_version(state, key)
 
 
-def record_calls(state, bootstrap, calls, registry,*,input_sha256=None):
+def record_calls(state, bootstrap, calls, registry,*,input_sha256=None,media_slots=None):
     """Prepare append-only, concrete tool obligations, not guessed user goals.
 
     Previously accepted calls bind back to their original slot. Separate calls
@@ -141,7 +136,9 @@ def record_calls(state, bootstrap, calls, registry,*,input_sha256=None):
     bindings = list(state.call_bindings) if state else []
     previous_operations = tuple(state.operations) if state else ()
     input_sha256=input_sha256 or digest([])
+    media_slots = media_slots or {}
     for call in calls:
+        slot = media_slots.get(call.call_id)
         spec = registry.get(call.name)
         if call.name in {SAVE_IMAGE_PLAN, 'save_task_text'}:
             capability = 'task.image_plan.save' if call.name == SAVE_IMAGE_PLAN else 'task.text.save'
@@ -152,14 +149,22 @@ def record_calls(state, bootstrap, calls, registry,*,input_sha256=None):
         checksum = digest(thaw(call.arguments))
         known = next((v for v in bindings if v.call_id == call.call_id), None)
         if known is not None:
-            if (known.tool_name, known.arguments_sha256) != (call.name, checksum):
+            if ((known.tool_name, known.arguments_sha256) != (call.name, checksum)
+                    or slot is not None and slot != known.media_slot):
                 raise TaskError('TASK_DIRECT_CALL_ARGUMENTS_CHANGED')
             continue
         # A changed call ID is not proof of a new authorized effect. Equally,
         # identical parameters are not proof that two earlier outputs are one
         # slot: do not choose an arbitrary operation from a parallel batch.
+        prior_slots = {b.step_id: b.media_slot for b in bindings if b.media_slot}
+        siblings = {step for step, prior in prior_slots.items() if slot and prior != slot
+                    and prior.split(':', 1)[0] == slot.split(':', 1)[0]}
+        same_slot = [v for v in previous_operations if slot and prior_slots.get(v.step_id) == slot
+                     and v.status != 'failed_before_dispatch']
+        if any(v.arguments_sha256 != checksum or v.status in {'completed', 'failed_after_dispatch'} for v in same_slot):
+            raise TaskError('TASK_DIRECT_RESULT_REUSE_REQUIRED')
         matches = [v for v in previous_operations
-            if v.tool_name == call.name and (v.arguments_sha256 == checksum or any(
+            if v.tool_name == call.name and v.step_id not in siblings and (v.arguments_sha256 == checksum or any(
                 b.step_id==v.step_id and b.tool_name==call.name and b.arguments_sha256==checksum for b in bindings))
             and v.status!='failed_before_dispatch'
             and (v.status in {'reserved','accepted','uncertain'} or any(
@@ -170,7 +175,8 @@ def record_calls(state, bootstrap, calls, registry,*,input_sha256=None):
         if original is not None and original.status in {'completed', 'failed_after_dispatch'}:
             raise TaskError('TASK_DIRECT_RESULT_REUSE_REQUIRED')
         if any(v.capability == capability and v.status in {'reserved', 'accepted', 'uncertain'}
-               and v is not original for v in previous_operations):
+               and v is not original and not (v.status == 'accepted' and v.step_id in siblings)
+               for v in previous_operations):
             raise TaskError('TASK_DIRECT_EFFECT_UNRESOLVED')
         if original is not None:
             step_id = original.step_id
@@ -187,7 +193,7 @@ def record_calls(state, bootstrap, calls, registry,*,input_sha256=None):
                 capability=capability, requirement_ids=(rid,),
                 image_item_index=1 if kind == 'image' else None))
         bindings.append(CallBinding(call_id=call.call_id, tool_name=call.name,
-            arguments_sha256=checksum, step_id=step_id,input_sha256=input_sha256))
+            arguments_sha256=checksum, step_id=step_id,input_sha256=input_sha256,media_slot=slot))
     if state is None:
         if not requirements:
             return None

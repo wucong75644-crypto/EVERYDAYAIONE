@@ -361,16 +361,26 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
   // 用户打断（steer）— InputArea 通过 CustomEvent 触发
   useEffect(() => {
     const handler = (e: Event) => {
-      const { taskId, conversationId, message } = (e as CustomEvent).detail;
+      const { taskId, conversationId, message, attachments, requestId, retry, onUnsent } = (e as CustomEvent).detail;
       if (!taskId || !message) return;
-      ws.send({
-        type: 'user_steer' as const,
-        payload: { task_id: taskId, conversation_id: conversationId, message },
-      });
-      logger.info('ws:steer', 'user_steer sent', { taskId, msgLen: message.length });
+      try {
+        const sent = ws.send({
+          type: 'user_steer',
+          payload: { task_id: taskId, conversation_id: conversationId, message, attachments, request_id: requestId, retry },
+        });
+        if (sent === false) onUnsent?.();
+      } catch {
+        onUnsent?.();
+      }
     };
+    const unsubscribe = ws.subscribe('steer_result', msg => {
+      window.dispatchEvent(new CustomEvent('chat:steer-result', { detail: msg }));
+    });
     window.addEventListener('chat:user-steer', handler);
-    return () => window.removeEventListener('chat:user-steer', handler);
+    return () => {
+      unsubscribe();
+      window.removeEventListener('chat:user-steer', handler);
+    };
   }, [ws]);
 
   // 表单提交 — FormBlock 通过 CustomEvent 触发

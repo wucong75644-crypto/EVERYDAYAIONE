@@ -2,8 +2,9 @@
 import hashlib
 from typing import Literal
 from uuid import UUID
-from pydantic import Field, model_validator
+from pydantic import Field, model_serializer, model_validator
 from .contracts import Fact, TaskError
+from .steer_attachments import Attachment
 
 
 class UserChange(Fact):
@@ -12,6 +13,14 @@ class UserChange(Fact):
     message: str = Field(min_length=1, max_length=20000)
     message_sha256: str = Field(pattern=r'^[a-f0-9]{64}$')
     delivered: bool = False
+    attachments: tuple[Attachment, ...] = Field(default=(), max_length=16)
+
+    @model_serializer(mode='wrap')
+    def omit_empty_attachments(self, handler):
+        result = handler(self)
+        if not self.attachments:
+            result.pop('attachments', None)
+        return result
 
     @model_validator(mode='after')
     def original_text(self):

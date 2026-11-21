@@ -1,0 +1,132 @@
+{
+  "code_commit": "4ca37b6703aef49147bec23a533ebb2acc769cc0",
+  "scope": "offline function probes; no provider, database or generation IO",
+  "discovery": [
+    {
+      "query": "换背景",
+      "matches": []
+    },
+    {
+      "query": "图片",
+      "matches": [
+        "generate_image",
+        "code_execute",
+        "file_analyze",
+        "generate_video"
+      ]
+    },
+    {
+      "query": "generate_image",
+      "matches": [
+        "generate_image",
+        "generate_video"
+      ]
+    },
+    {
+      "query": "帮我删除一个文件",
+      "matches": [
+        "code_execute"
+      ]
+    },
+    {
+      "query": "删除文件",
+      "matches": [
+        "restore_file",
+        "code_execute"
+      ]
+    },
+    {
+      "query": "file_delete",
+      "matches": [
+        "file_delete",
+        "restore_file",
+        "code_execute",
+        "file_analyze",
+        "file_search"
+      ]
+    },
+    {
+      "query": "查一下之前保存的提示词",
+      "matches": []
+    },
+    {
+      "query": "save_task_text",
+      "matches": [
+        "manage_scheduled_task"
+      ]
+    }
+  ],
+  "language_helpers": [
+    {
+      "text": "保留这张图里的福字，背景改成木桌",
+      "image_execution_request": false,
+      "selects_previous_item": false
+    },
+    {
+      "text": "帮我改图，背景换成木桌",
+      "image_execution_request": true,
+      "selects_previous_item": false
+    },
+    {
+      "text": "第二张背景再浅一点",
+      "image_execution_request": false,
+      "selects_previous_item": false
+    },
+    {
+      "text": "把第二个方案生成图片",
+      "image_execution_request": true,
+      "selects_previous_item": true
+    },
+    {
+      "text": "把第二个方案做出来",
+      "image_execution_request": false,
+      "selects_previous_item": false
+    }
+  ],
+  "binding": [
+    {
+      "request": "保留这张图里的红色福字，把背景换成棕红色实木桌子",
+      "materials": 0,
+      "save": "CONTENT_ATTACHMENT_USAGE_REQUIRED"
+    },
+    {
+      "request": "参考这张图，保留主体，把背景换成棕红色实木桌子",
+      "materials": 1,
+      "save": "saved"
+    }
+  ],
+  "first_save_description": "写方案、提示词或脚本时只交付一次document。每条body保留完整原文和限制，页面直接展示；后台关联当前原图。同时要求执行时设continue_execution=true。",
+  "materials_defined": true,
+  "changed_invalid_field_guard": [
+    {
+      "field": "attachments",
+      "decision": "continue"
+    },
+    {
+      "field": "image_usage",
+      "decision": "continue"
+    },
+    {
+      "field": "attachment_usage",
+      "decision": "continue"
+    },
+    {
+      "field": "image_refs",
+      "decision": "continue"
+    }
+  ],
+  "unknown_parameter": [
+    {
+      "query": "完整问题"
+    },
+    null
+  ],
+  "wrong_type": [
+    {
+      "query": {
+        "text": "完整问题"
+      }
+    },
+    null
+  ]
+}

@@ -5,6 +5,7 @@ def build_schema():
         'description': (
             '查询或读取GitHub、视频字幕、RSS、指定网页和社交平台资料。'
             '定时任务和预检仅允许搜索、读取、字幕、评论读取及列出连接；禁止发布、上传、评论和点赞。'
+            '工作区上传附件按附件的 action 使用文件工具读取，普通 TXT 用 code_execute。'
             '普通新闻/网页搜索继续用web_search。每次只执行一个明确操作。组织平台只读查询会自动选用唯一连接；多个账号时先 list_connections 再指定 connection_id。'
             '返回实际资料、来源与缺口；不能把摘要当全文、视频简介当字幕。'
             '同一社交账号的详情读取应逐条执行；遇到ACCESS_BUDGET_WAIT或返回最早可再次尝试时间时，禁止在该时间前立即重试，先使用已有资料并说明缺口。'
@@ -25,7 +26,7 @@ def build_schema():
                 'url_ref': {'type': 'string', 'pattern': '^wref1_[0-9a-f]{64}$',
                     'description': '用户网页链接的服务器引用ID，照抄SERVER_WEB_LINK_REFERENCES中的ID；服务器取回原始完整URL。与url互斥，翻页续读保持同一ID'},
                 'url': {'type': 'string', 'maxLength': 2048,
-                    'description': '没有服务器网页引用时使用的完整网址；已登记的用户链接使用url_ref'},
+                    'description': '没有网页引用时填写完整公开 HTTP/HTTPS 网址；工作区路径和文件引用不可填写。已登记的用户链接使用 url_ref'},
                 'max_results': {'type': 'integer', 'minimum': 1, 'maximum': 10, 'description':'搜索结果数量或店铺每页商品数量；店铺默认10，其他默认5，不是平台固定每页条数。翻页保持此值不变'},
                 'cursor': {'type':'string','maxLength':160,'description':'照抄返回的next_cursor续读当前页，其他参数不变'},
                 'page': {'type':'integer','minimum':1,'maximum':100,'description':'评论或小红书店铺商品页码，默认1；仅在返回next_page时继续'},

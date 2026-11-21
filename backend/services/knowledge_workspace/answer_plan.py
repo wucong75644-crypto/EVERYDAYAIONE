@@ -18,7 +18,25 @@ ANALYTICS=re.compile(r'统计|销售额|营收|库存|利润|报表|昨天|今�
 QUESTION=re.compile(r'怎么|如何|什么|多少|是否|能否|可以|吗|规则|流程|要求|期限|查询|查阅|查一下')
 
 
+def requires_delivery(request):
+    from services.handlers.chat import content_tools
+
+    if content_tools.image_execution_request(request) or content_tools.requested_delivery_tools(request):
+        return True
+    return any(re.search(r'(?:生成|绘制|做(?:成)?|画)[^，。！？；,!?;]{0,10}(?:流程图|架构图|思维导图)', clause)
+               and not re.search(r'不要|不用|别|无需|暂不', clause)
+               for part in request.content if part.type == 'text'
+               for clause in content_tools.action_clauses(part.text))
+
+
 def eligible(question, *, hierarchical=False):
+    if not isinstance(question, str):
+        return False
+    from types import SimpleNamespace
+    from schemas.message import TextPart
+
+    if requires_delivery(SimpleNamespace(content=[TextPart(text=question)])):
+        return False
     if hierarchical and isinstance(question,str) and re.search(r'(?:帮我|替我|请|直接)(?:把[^，。？?]{0,60})?(?:下载|上传|发送|删除|修改|创建|提交|执行|导出)',question):return False
     if hierarchical:return bool(isinstance(question,str) and 0<len(question)<=500 and (QUESTION.search(question) or '？' in question or '?' in question) and not COMPLEX.search(question))
     return bool(isinstance(question,str) and 0<len(question)<=500 and QUESTION.search(question)
@@ -233,6 +251,8 @@ async def prepare(handler,prepared,request,skills=None):
     if plan is None:
         if not eligible(question,hierarchical=hierarchical):return
         plan=await asyncio.to_thread(collect,run,question)
+    if plan['mode'] in ('answer', 'missing') and requires_delivery(request):
+        plan = {**plan, 'mode': 'expand'}
     prepared.knowledge_answer_plan=plan
     if plan['mode'] in ('answer','missing'):
         prepared.messages[:]=[m for m in prepared.messages if not(m.get('role')=='system' and str(m.get('content','')).startswith('知识画布运行快照：'))]

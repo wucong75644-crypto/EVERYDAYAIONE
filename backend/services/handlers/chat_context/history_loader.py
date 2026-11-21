@@ -14,7 +14,6 @@ from typing import Any, Dict, List, Optional
 from loguru import logger
 
 from services.handlers.chat_context.content_extractors import (
-    extract_image_urls_from_content,
     extract_interrupt_marker,
     extract_oai_messages_from_content,
     extract_text_from_content,
@@ -54,9 +53,14 @@ def _build_history_query(
 def _append_image_locators(messages, row, *, org_id=None, visible_indices=()):
     if not row.get("id"):
         return  # Legacy non-persisted caller fixtures have no selectable source.
-    from .image_sources import image_sources, format_image_sources
-    text = format_image_sources(row.get("_trusted_image_sources") or image_sources(row, org_id, visible_indices))
-    from .image_sources import content_parts
+    from .image_sources import content_parts, image_sources, format_image_sources
+    sources = row.get("_trusted_image_sources")
+    if sources is None:
+        sources = image_sources(row, org_id)
+    text = format_image_sources([
+        {**source, "visually_present": source.get("content_index") in visible_indices}
+        for source in sources
+    ])
     import hashlib
     text_sources = [{'message_id': str(row['id']), 'content_index': i, 'role': row['role'],
                      'context_revision': row.get('context_revision'), 'chars': len(part['text']),
@@ -94,14 +98,19 @@ def _row_to_oai_messages(
     if role == "assistant" and not preserve_tool_protocol:
         text = project_completed_assistant(raw_content)
         messages = [{"role": "assistant", "content": text}] if text else []
-        images = extract_image_urls_from_content(raw_content)[:remaining_images]
         _append_image_locators(messages, row, org_id=org_id)
-        return messages, len(images)  # Image delivery is already in the outcome view.
+        return messages, 0  # Completed assistant results are represented by metadata.
     else:
         messages = extract_oai_messages_from_content(
             raw_content, role=role, ts_prefix="",
         )
-    images = extract_image_urls_from_content(raw_content)[:remaining_images]
+    from .image_sources import content_parts
+    image_parts = [
+        (index, part["url"]) for index, part in enumerate(content_parts(raw_content))
+        if isinstance(part, dict) and part.get("type") == "image"
+        and part.get("url") and not part.get("failed")
+    ][:remaining_images]
+    images = [url for _, url in image_parts]
     if not images:
         _append_image_locators(messages, row, org_id=org_id)
         return messages, 0
@@ -145,12 +154,9 @@ def _row_to_oai_messages(
             })
         else:
             messages[target_index]["content"] += image_hint
-    from .image_sources import content_parts
-    visible = [index for index, part in enumerate(content_parts(raw_content))
-               if isinstance(part, dict) and part.get("type") == "image" and part.get("url")
-               and not part.get("failed")][:len(images)] if role == "user" else []
+    visible = [index for index, _ in image_parts] if role == "user" else []
     _append_image_locators(messages, row, org_id=org_id, visible_indices=visible)
-    return messages, len(images)
+    return messages, len(visible)
 
 
 def _estimate_message_tokens(messages: List[Dict[str, Any]]) -> int:
@@ -283,7 +289,8 @@ async def build_context_messages(
             for row in rows:
                 if row.get("status")=="failed" and (row.get("generation_params") or {}).get("origin")!="chat_image":
                     continue
-                if any(isinstance(part, dict) and part.get("type") == "image" for part in content_parts(row.get("content"))):
+                parts = content_parts(row.get("content"))
+                if any(isinstance(part, dict) and part.get("type") == "image" for part in parts):
                     if not owner_loaded:
                         conversation = db.table("conversations").select("user_id,scope_type").eq("id", conversation_id).maybe_single().execute().data
                         owner_id = conversation.get("user_id") if isinstance(conversation, dict) else None
@@ -294,7 +301,7 @@ async def build_context_messages(
                         row["_trusted_image_sources"] = discovered_image_sources(
                             row, db, org_id=org_id, owner_id=owner_id, scope=owner_scope)
                 preserve_tool_protocol = False
-                if (row["role"] == "assistant" and not first_assistant_seen
+                if (row["role"] == "assistant" and parts and not first_assistant_seen
                         and (row.get("generation_params") or {}).get("origin") != "chat_image"):
                     first_assistant_seen = True
                     latest_marker = extract_interrupt_marker(row.get("content"))

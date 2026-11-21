@@ -10,6 +10,8 @@ import {
 } from '../useInputSubmission';
 import { createAttachmentSubmissionSnapshot } from '../../attachments/attachmentSubmission';
 import type { ChatAttachment } from '../../attachments/ChatAttachment.types';
+import { useInputTaskControls } from '../useInputTaskControls';
+import { useMessageStore } from '../../../../stores/useMessageStore';
 
 vi.mock('../../../../services/conversation', () => ({
   createConversation: vi.fn(),
@@ -43,6 +45,7 @@ function makeOptions(
     selectedModel: { id: 'model-1', type: 'chat' } as UnifiedModel,
     prompt: '保留这段输入',
     clearPromptForSubmission: vi.fn(),
+    clearConfirmedSteer: vi.fn(),
     restorePromptAfterRejection: vi.fn(),
     audioBlob: null,
     clearRecording: vi.fn(),
@@ -102,13 +105,13 @@ describe('useInputSubmission', () => {
     const options = makeOptions({ takeSelectedSkill, getSendButtonState: () => ({ disabled: true }) });
     const { result, rerender } = renderHook((o) => useInputSubmission(o), { initialProps: options });
     await act(() => result.current.handleSubmit());
-    rerender({ ...options, getSendButtonState: () => ({ disabled: false }), isStreaming: true, sendSteer: () => true });
+    rerender({ ...options, getSendButtonState: () => ({ disabled: false }), isStreaming: true, sendSteer: async () => true });
     await act(() => result.current.handleSubmit());
     expect(takeSelectedSkill).not.toHaveBeenCalled();
   });
 
   it('流式任务中的文本只进入当前 turn，不重复创建 HTTP 任务', async () => {
-    const sendSteer = vi.fn(() => true);
+    const sendSteer = vi.fn(async () => true);
     const options = makeOptions({ isStreaming: true, sendSteer });
     const { result } = renderHook(() => useInputSubmission(options));
 
@@ -116,7 +119,40 @@ describe('useInputSubmission', () => {
 
     expect(sendSteer).toHaveBeenCalledWith('保留这段输入');
     expect(options.handleChatMessage).not.toHaveBeenCalled();
-    expect(options.clearPromptForSubmission).toHaveBeenCalledOnce();
+    expect(options.clearConfirmedSteer).toHaveBeenCalledWith('保留这段输入', 'conversation-1');
+    expect(options.clearPromptForSubmission).not.toHaveBeenCalled();
+  });
+
+  it('保留未收到服务器回执的补充要求，不启动新任务', async () => {
+    const options = makeOptions({ isStreaming: true, sendSteer: vi.fn(async () => false) });
+    const { result } = renderHook(() => useInputSubmission(options));
+    await act(() => result.current.handleSubmit());
+    expect(options.clearConfirmedSteer).not.toHaveBeenCalled();
+    expect(options.clearPromptForSubmission).not.toHaveBeenCalled();
+    expect(options.handleChatMessage).not.toHaveBeenCalled();
+    expect(options.setSendError).toHaveBeenCalledWith(expect.stringContaining('输入已保留'));
+  });
+
+  it.each([true, false])('流式任务通过同一命令追加图片和文件，回执为 %s', async (accepted) => {
+    const restore = vi.fn();
+    const sendSteer = vi.fn(async () => accepted);
+    const options = makeOptions({
+      isStreaming: true,
+      sendSteer,
+      attachmentSnapshot: snapshot([image('参考.png', 'https://cdn.example.com/original.png'),
+        file('资料.pdf', 'https://cdn.example.com/doc.pdf')]),
+      detachAttachmentsForSubmission: vi.fn(() => ({ restore })),
+    });
+    const { result } = renderHook(() => useInputSubmission(options));
+    await act(() => result.current.handleSubmit());
+
+    expect(sendSteer).toHaveBeenCalledWith('保留这段输入', [
+      { kind: 'image', workspace_path: '上传/参考.png' },
+      { kind: 'file', workspace_path: '上传/资料.pdf' },
+    ]);
+    expect(options.handleChatMessage).not.toHaveBeenCalled();
+    expect(restore).toHaveBeenCalledTimes(accepted ? 0 : 1);
+    expect(options.clearConfirmedSteer).toHaveBeenCalledTimes(accepted ? 1 : 0);
   });
 
   it('后端拒绝请求时保留输入和附件', async () => {
@@ -478,10 +514,46 @@ describe('knowledge input submission',()=>{
   });
   it('does not turn a knowledge-scoped submission into a plain steer',async()=>{
     const refs=[{root:{kind:'container' as const,id:'root-1'},policy:'latest_saved' as const}];
-    const options=makeOptions({knowledgeRefs:refs,isStreaming:true,sendSteer:vi.fn(()=>true)});
+    const options=makeOptions({knowledgeRefs:refs,isStreaming:true,sendSteer:vi.fn(async()=>true)});
     const {result}=renderHook(()=>useInputSubmission(options));
     await act(()=>result.current.handleSubmit());
     expect(options.sendSteer).not.toHaveBeenCalled();
     expect(options.handleChatMessage).toHaveBeenCalled();
   });
+});
+
+
+it('retries an unconfirmed steer with the original task and request ID', async () => {
+  const original = useMessageStore.getState();
+  const store = vi.spyOn(useMessageStore, 'getState').mockReturnValue({
+    ...original, getMessage: vi.fn(() => ({ task_id: 'target-task' })) as typeof original.getMessage,
+  });
+  const sends: { requestId: string; retry: boolean; taskId: string; onUnsent: () => void }[] = [];
+  const listener = (event: Event) => {
+    const payload = (event as CustomEvent).detail;
+    sends.push(payload);
+    if (sends.length === 1) payload.onUnsent();
+    else window.dispatchEvent(new CustomEvent('chat:steer-result', { detail: {
+      task_id: 'target-task', conversation_id: 'conversation-1',
+      payload: { request_id: payload.requestId, outcome: 'enqueued' },
+    } }));
+  };
+  window.addEventListener('chat:user-steer', listener);
+  try {
+    const { result, rerender } = renderHook(useInputTaskControls, { initialProps: {
+      conversationId: 'conversation-1', isStreaming: true, streamingMessageId: 'chat-window' as string | null,
+    } });
+    await expect(result.current.sendSteer('改白底')).resolves.toBe(false);
+    rerender({ conversationId: 'conversation-1', isStreaming: false, streamingMessageId: null });
+    expect(result.current.hasPendingSteer('改白底')).toBe(true);
+    await expect(result.current.sendSteer('改白底')).resolves.toBe(true);
+    expect(sends.map(({ requestId, retry, taskId }) => ({ requestId, retry, taskId }))).toEqual([
+      { requestId: sends[0].requestId, retry: false, taskId: 'target-task' },
+      { requestId: sends[0].requestId, retry: true, taskId: 'target-task' },
+    ]);
+    expect(result.current.hasPendingSteer('改白底')).toBe(false);
+  } finally {
+    window.removeEventListener('chat:user-steer', listener);
+    store.mockRestore();
+  }
 });
