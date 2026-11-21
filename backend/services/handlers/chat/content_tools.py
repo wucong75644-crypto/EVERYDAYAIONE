@@ -282,8 +282,20 @@ def unconfirmed_image_reply(text, has_calls):
 
 
 def checkpoint_state(runtime):
-    state = runtime.checkpoint_base.get(STATE) or {}
-    return state if state.get('task_id') == str(runtime.task_id) else {'task_id': str(runtime.task_id)}
+    task_id = str(runtime.task_id)
+    checkpoint = runtime.checkpoint_base
+    state = checkpoint.get(STATE) or {}
+    if state.get('task_id') == task_id:
+        return state
+
+    # Followup adoption preserves the previous owner's top-level state and
+    # stores this turn's discoveries in the authenticated input checkpoint.
+    if checkpoint.get('_task_followup'):
+        initial = checkpoint.get('_task_followup_input_checkpoint') or {}
+        state = initial.get(STATE) or {}
+        if state.get('task_id') == task_id:
+            return state
+    return {'task_id': task_id}
 
 
 def enabled(runtime, context):
