@@ -36,6 +36,10 @@ def text(request):
     return '\n'.join(part.text for part in request.content if getattr(part, 'type', None) == 'text')
 
 
+def referenced_items(value):
+    return {_index(match.group(1)) for match in _ITEM_PATTERN.finditer(value)}
+
+
 def waits(value):
     return tuple(sorted({_index(item.group(1)) for group in _WAIT.finditer(value)
                          for item in _ITEM_PATTERN.finditer(group['items'])}))

@@ -179,7 +179,7 @@ def requested_delivery_tools(request):
         elif isinstance(part, dict) and part.get('type') == 'text' and isinstance(part.get('text'), str):
             texts.append(part['text'])
     text = ' '.join(texts)
-    actions = re.sub(r'(?:不要|不用|别|无需|不必|暂不)(?:实际|立即|直接)?(?:生成|制作|做成|转成|整理成|导出)[^，。！？；,!?;\n]*',
+    actions = re.sub(r'(?:不要|不用|别|无需|不必|暂不|(?<!能)(?<!可)不)(?:实际|立即|直接)?(?:生成|制作|做成|转成|整理成|导出)[^，。！？；,!?;\n]*',
                      '', '\n'.join(action_clauses(text)))
     requested = {}
     if _VIDEO_ACTION.search(actions):
@@ -224,7 +224,26 @@ def delivery_status(runtime, prepared, blocks, tool):
     return None
 
 
-def verified_video_status_text(text):
+def video_receipt_kind(result):
+    metadata = getattr(result, 'metadata', {})
+    if metadata.get('accepted') is not True or not metadata.get('task_id'):
+        return None
+    if getattr(getattr(result, 'execution', None), 'replayed', False) or metadata.get('outcome') == 'replay':
+        return 'existing'
+    return 'new' if metadata.get('outcome') == 'accepted' else None
+
+
+def verified_video_status_text(text, *, fresh=False, confirmed_item=None):
+    if fresh:
+        from services.task_execution.item_confirmation import referenced_items
+
+        parts = re.split(r'([。！？；\n])', text)
+        for index in range(0, len(parts), 2):
+            mentioned = referenced_items(parts[index])
+            if not mentioned or confirmed_item is None or mentioned == {confirmed_item}:
+                parts[index] = re.sub(r'(?:此前|先前|之前|早前|早已)\s*(?:就\s*)?(?:已经|已)?\s*受理',
+                                      '本轮已受理', parts[index])
+        text = ''.join(parts)
     return re.sub(r'(?:视频|短片)(?:任务)?(?:已经|已)(?:成功)?(?:生成(?:完成)?|制作完成|完成|发布)',
                   '视频任务已受理', text)
 

@@ -1343,7 +1343,9 @@ async def _read_turn(
                 and request is not None and not defer_narrative else {})
     delivery_status = {tool: content_tools.delivery_status(runtime, prepared, blocks, tool) for tool in delivery}
     missing_delivery = {tool: label for tool, label in delivery.items() if delivery_status[tool] is None}
-    video_pending = delivery_status.get('generate_video') == 'accepted'
+    video_receipts = set(getattr(prepared, 'video_acceptance_by_task', {}).values()) if (
+        not task_review and not native_continuation) else set()
+    video_pending = delivery_status.get('generate_video') == 'accepted' or bool(video_receipts)
     defer_narrative = defer_narrative or image_reply or silent_delivery or bool(missing_delivery) or video_pending
     from services.handlers.interrupt_anchor import project_interrupt_history
 
@@ -1440,7 +1442,7 @@ async def _read_turn(
             cancel_waiter.cancel()
             await asyncio.gather(cancel_waiter, return_exceptions=True)
             await runtime.safe_point(SafePoint.MODEL_CHUNK)
-            continue
+            break
 
         if command_waiter is not None and not command_waiter.done():
             command_waiter.cancel()
@@ -1455,6 +1457,13 @@ async def _read_turn(
             break
         if runtime:
             await runtime.safe_point(SafePoint.MODEL_CHUNK)
+            if runtime.task_user_changes and any(item.attachments and not item.delivered
+                                                 for item in runtime.task_user_changes.items):
+                _accumulate_usage(totals, chunk)
+                close = getattr(stream_iterator, 'aclose', None)
+                if close is not None:
+                    await close()
+                break
         await _check_cancelled(
             cancellation_event, request, prepared.messages, blocks,
             totals, "stream",
@@ -1610,7 +1619,12 @@ async def _read_turn(
         if not turn_text.strip() and not ordered_calls:
             turn_text = turn_thinking = ''
     if video_pending and not content_output:
-        turn_text = content_tools.verified_video_status_text(turn_text)
+        from services.task_execution import item_confirmation
+
+        confirmed_item = item_confirmation.approved(item_confirmation.text(request)) if request else None
+        turn_text = content_tools.verified_video_status_text(
+            turn_text, fresh=video_receipts == {'new'}, confirmed_item=confirmed_item,
+        )
     if (image_reply or silent_delivery or missing_delivery or video_pending) and not content_output and turn_text:
         totals.text += turn_text
         await sink.on_text(turn_text)
@@ -2643,6 +2657,16 @@ async def _execute_tools_impl(
                        and getattr(result, 'metadata', {}).get('task_id')}
     if native_receipts:
         prepared.delivery_receipts = set(getattr(prepared, 'delivery_receipts', ())) | native_receipts
+        video_acceptance = dict(getattr(prepared, 'video_acceptance_by_task', {}))
+        for call, result, is_error, _ in results:
+            if call['name'] != 'generate_video' or is_error:
+                continue
+            kind = content_tools.video_receipt_kind(result)
+            if kind is not None:
+                task_id = result.metadata['task_id']
+                if video_acceptance.get(task_id) != 'new':
+                    video_acceptance[task_id] = kind
+        prepared.video_acceptance_by_task = video_acceptance
     if any(call['name'] == 'generate_image' for call, *_ in results):
         prepared.image_receipt_seen = len(accepted_images) == sum(call['name'] == 'generate_image' for call, *_ in results)
     handler._terminal_image_pending = bool(results) and len(accepted_images) == len(results)

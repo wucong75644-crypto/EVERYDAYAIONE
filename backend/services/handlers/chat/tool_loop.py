@@ -162,6 +162,9 @@ def apply_tool_results(
     """把工具结果写回模型消息和 tool_step，返回待注入的图片 URL。"""
     image_urls: list[str] = []
     from services.tools.result import ToolResult
+    from services.handlers.chat.content_tools import video_receipt_kind
+    from services.handlers.tool_loop_context import append_context_metadata
+
     tool_context.update_from_batch(tool_results)
     for call, result, is_error, display_text in tool_results:
         if isinstance(result, ToolResult):
@@ -173,10 +176,16 @@ def apply_tool_results(
         ):
             image_urls.append(result.image_url)
         if call["id"] not in recorded_tool_call_ids:
+            content = unpack_tool_result(result)
+            receipt = video_receipt_kind(result) if call['name'] == 'generate_video' and not is_error else None
+            if receipt:
+                fact = ('本轮首次提交并获得新受理回执，正在生成。' if receipt == 'new'
+                        else '本轮返回已有任务的受理回执，没有新建视频任务。')
+                content = append_context_metadata(content, fact)
             messages.append({
                 "role": "tool",
                 "tool_call_id": call["id"],
-                "content": unpack_tool_result(result),
+                "content": content,
             })
         _complete_tool_step(
             content_blocks,
@@ -186,7 +195,6 @@ def apply_tool_results(
             start_times.get(call["id"]),
         )
     if tool_results:
-        from services.handlers.tool_loop_context import append_context_metadata
         message = messages[-1]
         message["content"] = append_context_metadata(
             message["content"], tool_context.build_context_prompt(),

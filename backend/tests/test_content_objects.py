@@ -1517,6 +1517,8 @@ def test_prompt_authoring_can_be_followed_by_explicit_image_execution():
     ('查近期的文具趋势，再生成一张图', {}, True),
     ('怎么生成图片？', {}, False),
     ('只写一份视频脚本，不要生成视频', {}, False),
+    ('写一份推广方案，只写文字，不生成图片或视频。', {}, False),
+    ('不生成视频，另外把现有讲稿导出为 PDF', {'code_execute': '文件'}, False),
 ])
 def test_compound_requests_preserve_the_independent_delivery(text, delivery, image):
     from schemas.message import TextPart
@@ -1649,3 +1651,115 @@ async def test_steer_attachments_project_to_original_turn_with_verified_workspac
     with pytest.raises(PermissionError):
         media.bind(media.normalize([{'kind': 'file', 'workspace_path': '../outside.txt'}]),
                    user_id=request.user_id, org_id=None, conversation_id=request.conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_inflight_attachment_restarts_real_gateway_with_the_original_task(tmp_path, monkeypatch):
+    import asyncio
+    from dataclasses import replace
+    from unittest.mock import AsyncMock
+
+    from PIL import Image
+    from core.config import get_settings
+    from schemas.message import TextPart
+    from services.adapters.types import StreamChunk
+    from services.conversation_commands import CommandType, ConversationCommand
+    from services.file_executor import FileExecutor
+    from services.model_gateway import ModelCallRequest, ModelGatewaySession
+    from services.task_execution import steer_attachments as media
+    from services.task_execution.user_changes import UserChange, UserChanges
+
+    monkeypatch.setattr('services.agent.observability.chat_lifecycle.chat_phase', lambda *args, **kwargs: None)
+    runtime, prepared, handler, request = case()
+    request = replace(request, content=[TextPart(text='写策划书，只写文字，不生成图片或视频。')])
+    monkeypatch.setattr(get_settings(), 'file_workspace_root', str(tmp_path))
+    monkeypatch.setattr(FileExecutor, 'get_cdn_url', lambda self, relative: 'https://cdn.example.test/ref.png')
+    files = FileExecutor(str(tmp_path), request.user_id, None)
+    root = Path(files.workspace_root)
+    Image.new('RGB', (8, 8), 'blue').save(root / 'ref.png')
+    (root / 'brief.txt').write_text('A6，潜入深蓝')
+    attachments = media.bind(media.normalize([
+        {'kind': 'image', 'workspace_path': 'ref.png'},
+        {'kind': 'file', 'workspace_path': 'brief.txt'},
+    ]), user_id=request.user_id, org_id=None, conversation_id=request.conversation_id)
+    directive = '用这张参考图和文件继续原来的任务'
+    change = UserChange(event_id=uuid4(), owner_task_id=runtime.task_id, message=directive,
+                        message_sha256=hashlib.sha256(directive.encode()).hexdigest(), attachments=attachments)
+    inbox = UserChanges(root_task_id=runtime.task_id, items=(change,))
+    runtime.task_user_change_capture = AsyncMock(return_value=inbox.model_dump(mode='json'))
+    started = asyncio.Event()
+    interrupted = asyncio.Event()
+    calls = []
+
+    async def provider(messages, **kwargs):
+        calls.append(messages)
+        if len(calls) == 1:
+            try:
+                started.set()
+                await asyncio.Event().wait()
+            finally:
+                interrupted.set()
+        entry, = [m['content'] for m in messages if m['role'] == 'user'
+                  and '本条补充上传的素材' in str(m['content'])]
+        assert entry[1]['image_url']['url'] == 'https://cdn.example.test/ref.png'
+        assert entry[0]['text'].startswith(directive)
+        for item in attachments:
+            assert item['resource_ref'] in entry[0]['text']
+        from services.file_resources import FileTargetResolver
+        owner = SimpleNamespace(user_id=request.user_id, org_id=None, conversation_id=request.conversation_id)
+        target = FileTargetResolver(owner).resolve(attachments[1]['resource_ref'])
+        target.validate()
+        yield StreamChunk(content='策划书采用深蓝配色。' + target.path.read_text(), finish_reason='stop')
+
+    adapter = SimpleNamespace(stream_chat=provider, close=AsyncMock())
+    prepared.model_gateway = ModelGatewaySession(adapter, ModelCallRequest(
+        model_id='test-model', task_id=runtime.task_id, cancel_token=runtime.cancellation_event, timeout=5))
+    running = asyncio.create_task(run_content_loop(runtime, prepared, handler, request, provider))
+    try:
+        await asyncio.wait_for(started.wait(), 3)
+        runtime.push(ConversationCommand(command_id=f'steer:{change.event_id}',
+            event_id=str(change.event_id), command_type=CommandType.STEER,
+            conversation_id=runtime.conversation_id, task_id=runtime.task_id, turn_id=runtime.turn_id,
+            payload={'message': directive, 'attachments': attachments}))
+        sink, blocks, _ = await asyncio.wait_for(running, 3)
+        assert interrupted.is_set()
+        assert len(calls) == 2
+        assert '策划书采用深蓝配色。A6，潜入深蓝' in sink.text
+        assert '未提交视频' not in str(blocks)
+        assert runtime.task_user_changes.items[0].delivered
+        assert str(change.event_id) in runtime.task_direct_seen
+        adapter.close.assert_not_awaited()
+    finally:
+        await prepared.model_gateway.close()
+    adapter.close.assert_awaited_once()
+
+
+@pytest.mark.parametrize(('outcome', 'reply'), [
+    ('accepted', '第1条此前已受理。第 2 条「鲸背」的视频生成任务 本轮已受理，正在生成。'),
+    ('replay', '第1条此前已受理。第 2 条「鲸背」的视频生成任务 此前已受理，正在生成。'),
+])
+async def test_confirmed_video_message_uses_actual_receipt_before_streaming(outcome, reply, monkeypatch):
+    from dataclasses import replace
+    from schemas.message import TextPart
+    from services.adapters.types import StreamChunk
+    from services.handlers.chat.content_tools import video_receipt_kind
+    from services.agent.agent_result import AgentResult
+
+    monkeypatch.setattr('services.agent.observability.chat_lifecycle.chat_phase', lambda *args, **kwargs: None)
+    runtime, prepared, handler, request, _ = await registered()
+    request = replace(request, content=[TextPart(text='确认第2条')])
+    result = AgentResult('视频任务已受理', metadata={
+        'outcome': outcome, 'task_id': 'video-id', 'accepted': True,
+    })
+    prepared.video_acceptance_by_task = {'video-id': video_receipt_kind(result)}
+
+    async def stream(**kwargs):
+        yield StreamChunk(content='第1条此前已受理。第 2 条「鲸背」的视频生成任务 此前')
+        assert not sink.text
+        yield StreamChunk(content='已受理，正在生成。', finish_reason='stop')
+
+    from services.handlers.chat.execution_sink import CollectingExecutionSink
+    sink = CollectingExecutionSink()
+    _, blocks, _ = await run_content_loop(runtime, prepared, handler, request, stream, sink=sink)
+    assert sink.text == reply
+    assert [block['text'] for block in blocks if block['type'] == 'text'] == [reply]
