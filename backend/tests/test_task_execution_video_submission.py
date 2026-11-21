@@ -8,10 +8,10 @@ import pytest
 from services.adapters.kie.video_adapter import KieVideoAdapter,KieVideoSubmissionUncertainError
 
 
-def case():
+def case(model='sora-2-text-to-video'):
     client=SimpleNamespace(create_task_once=AsyncMock(return_value=SimpleNamespace(is_success=True,task_id='native-video-1')),
         create_task=AsyncMock(return_value=SimpleNamespace(task_id='legacy-video')),create_and_wait=AsyncMock())
-    return KieVideoAdapter(client,'sora-2-text-to-video'),client
+    return KieVideoAdapter(client,model),client
 
 
 @pytest.mark.asyncio
@@ -74,3 +74,24 @@ async def test_frozen_request_cannot_change_model_or_priced_duration_before_disp
     observer=AsyncMock()
     with pytest.raises(ValueError):await adapter.submit_prepared_once(request,10,observer=observer)
     client.create_task_once.assert_not_awaited();observer.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('aspect_ratio,provider_ratio', [('landscape', '16:9'), ('portrait', '9:16')])
+async def test_kling_chat_video_submits_exactly_once_with_its_own_format(aspect_ratio, provider_ratio):
+    from config.kie_models import KLING_TEXT_VIDEO, calculate_video_cost
+    from services.task_execution.video_operations import CHAT_VIDEO_MODEL_ID
+
+    adapter, client = case(KLING_TEXT_VIDEO)
+    observer = AsyncMock()
+    result = await adapter.generate(prompt='原视频脚本', duration_seconds=10, aspect_ratio=aspect_ratio,
+        wait_for_result=False, _chat_video_single_submit=True, _native_video_observer=observer)
+    assert result.task_id == 'native-video-1'
+    request, = client.create_task_once.await_args.args
+    assert request.model == CHAT_VIDEO_MODEL_ID
+    assert request.input == {'prompt': '原视频脚本', 'duration': '10',
+                             'aspect_ratio': provider_ratio, 'sound': False}
+    assert calculate_video_cost(request.model, 10)['user_credits'] == 127
+    assert observer.await_count == 2
+    client.create_task_once.assert_awaited_once()
+    client.create_task.assert_not_awaited()

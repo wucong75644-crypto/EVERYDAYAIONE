@@ -10,6 +10,8 @@ from typing import Dict, Optional
 
 from loguru import logger
 
+from config.kie_models import KIE_MODEL_CONFIGS, KLING_TEXT_VIDEO
+
 from core.config import get_settings
 from core.exceptions import ConfigurationError
 from .base import (
@@ -523,7 +525,15 @@ DEFAULT_IMAGE_MODEL_ID = DEFAULT_IMAGE_MODEL
 # 视频模型注册表
 # ============================================================
 
+
 VIDEO_MODEL_REGISTRY: Dict[str, Dict] = {
+    KLING_TEXT_VIDEO: {
+        "provider": ModelProvider.KIE,
+        "provider_model": KLING_TEXT_VIDEO,
+        "display_name": "Kling 2.6 Text-to-Video",
+        "credits_by_duration": {str(seconds): cost for seconds, cost in
+                                KIE_MODEL_CONFIGS[KLING_TEXT_VIDEO]["user_credits_by_duration"].items()},
+    },
     # KIE 平台视频模型
     "sora-2-text-to-video": {
         "provider": ModelProvider.KIE,

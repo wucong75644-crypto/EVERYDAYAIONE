@@ -479,3 +479,29 @@ def test_knowledge_input_extension_survives_original_followup_adoption(followup_
         assert restored.input_message_id==new['message'] and restored.history_evidence and restored.changed
         assert checkpoint['opaque_context']=={'keep':True}
         assert c.execute('SELECT count(*) FROM credit_transactions WHERE task_id=%s',(new['task'],)).fetchone()[0]==0
+
+
+def test_new_followup_preserves_the_original_tool_repair_checkpoint(followup_db):
+    from types import SimpleNamespace
+    from services.handlers.chat import tool_argument_repairs
+
+    old, new, _, obs, _ = new_turn(followup_db)
+    repair = tool_argument_repairs.Checkpoint(
+        input_id=old['message'], input_version='a' * 64, counts={'b' * 64: 2}, stopped=True,
+    ).model_dump(mode='json')
+    with psycopg.connect(followup_db) as connection:
+        connection.execute('UPDATE conversation_turn_checkpoints SET state=state || %s WHERE task_id=%s',
+            (Jsonb({tool_argument_repairs.KEY: repair}), old['task']))
+    with connect(new) as connection:
+        fresh = connection.execute('SELECT state FROM conversation_turn_checkpoints WHERE task_id=%s',
+            (new['task'],)).fetchone()[0]
+        source = connection.execute('SELECT read_agent_task_followup(%s,%s)',
+            (new['task'], new['token'])).fetchone()[0]['source']
+        merged = payload(source, fresh, task_id=new['task'], turn_id=new['turn'], model_round=1, usage={},
+            observation=FollowupObservation.model_validate(obs))
+        reply = adopt(connection, new, source, obs, merged)
+    assert reply['outcome'] == 'saved'
+    assert reply['payload'][tool_argument_repairs.KEY] == repair
+    runtime = SimpleNamespace(checkpoint_base=reply['payload'], turn_id=new['turn'], task_user_changes=None)
+    request = SimpleNamespace(context_anchor=SimpleNamespace(input_message_id=new['message']))
+    assert not tool_argument_repairs.stopped(runtime, request)

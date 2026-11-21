@@ -71,6 +71,7 @@ class MediaToolMixin:
         from config.kie_models import calculate_video_cost
         from core.exceptions import InsufficientCreditsError
         from services.adapters.factory import create_video_adapter
+        from services.task_execution.video_operations import CHAT_VIDEO_MODEL_ID
         from services.agent.agent_result import AgentResult
 
         from services.task_execution.contracts import TaskState
@@ -97,7 +98,7 @@ class MediaToolMixin:
 
         # 1. 计算积分
         try:
-            cost_result = calculate_video_cost(model_name=None, duration_seconds=duration)
+            cost_result = calculate_video_cost(model_name=CHAT_VIDEO_MODEL_ID, duration_seconds=duration)
             credits_needed = cost_result["user_credits"]
         except Exception as e:
             return AgentResult(
@@ -124,7 +125,7 @@ class MediaToolMixin:
             )
 
         # 3. 调用 adapter 同步等待
-        adapter = create_video_adapter()
+        adapter = create_video_adapter(CHAT_VIDEO_MODEL_ID)
         try:
             result = await adapter.generate(
                 prompt=prompt,
