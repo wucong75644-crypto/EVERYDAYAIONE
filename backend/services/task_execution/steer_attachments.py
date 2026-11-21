@@ -6,6 +6,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
+from config.file_call_contract import file_analyze_arguments
+from services.handlers.chat_context.attachments import attachment_action, attachment_status
 from services.file_resources import FileTargetResolver, file_version
 
 
@@ -69,17 +71,20 @@ def project(owner, attachments, *, visual_budget):
                 raise ValueError('STEER_ATTACHMENT_CHANGED')
             target.validate()
             record.update(reference={'resource_ref': item.resource_ref}, path=item.workspace_path)
-            if item.kind == 'image':
+            record['status'] = 'image' if item.kind == 'image' else attachment_status(record['name'])
+            if record['status'] == 'raw':
+                record['read_call'] = {'tool': 'file_analyze',
+                                       'arguments': file_analyze_arguments(resource_ref=item.resource_ref)}
+            if record['status'] == 'image':
                 url = resolver.files.get_cdn_url(item.workspace_path) if len(images) < visual_budget else None
                 record['visually_present'] = bool(url)
                 if url:
                     images.append({'type': 'image_url', 'image_url': {'url': url}})
         except (ValueError, PermissionError, OSError):
             record = {'kind': item.kind, 'name': record['name'], 'status': 'unavailable'}
+        record['action'] = attachment_action(record['status'], visually_present=record.get('visually_present'))
         records.append(record)
     return (
-        '\n本条补充上传的素材。工具按 reference 读取，path 是工作区相对路径。'
-        'visually_present=true 的图片已作为本条消息的视觉输入。'
-        'status=unavailable 的素材需用户重新选择。\n'
-    ) + json.dumps(
-        records, ensure_ascii=False), images
+        '\n本条补充上传的素材来自工作区。按每项 action 使用，path 是工作区相对路径；'
+        '网页工具的 url 和 url_ref 不接收这些文件定位。\n'
+    ) + json.dumps(records, ensure_ascii=False), images

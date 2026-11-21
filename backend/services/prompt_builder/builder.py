@@ -176,8 +176,11 @@ class PromptBuilder:
         turn_dynamic_content = TurnDynamicLayer.render(turn_dynamic_ctx)
 
         # ── Step 4: Layer 3 用户层 ──
+        visible_image_ids = {source["file_id"] for source in inp.image_sources
+                             if source.get("file_id") and source.get("visually_present")}
         attachments_xml = (
-            format_attachments(inp.workspace_files, inp.conversation_id, inp.org_id)
+            format_attachments(inp.workspace_files, inp.conversation_id, inp.org_id,
+                               visible_image_ids=visible_image_ids)
             if inp.workspace_files else ""
         )
         workspace_prompt = (

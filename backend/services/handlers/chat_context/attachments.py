@@ -32,7 +32,7 @@ _STATUS_ACTIONS: Dict[str, str] = {
     "analyzed": "用 <parquet> 字段在 code_execute 中 pd.read_parquet 读取，不要重复 file_analyze",
     "parquet": "用 <path> 字段在 code_execute 中 pd.read_parquet 读取",
     "doc": "用 code_execute + PyPDF2/python-docx/python-pptx 读取",
-    "text": "用 code_execute open() 读取",
+    "text": "用 code_execute 的 open() 读取工作区相对路径 path",
     "binary": "未知文件类型，询问用户期望如何处理",
 }
 
@@ -54,6 +54,29 @@ def _esc(s: Any) -> str:
 
 def _ext_of(name: str) -> str:
     return ("." + name.rsplit(".", 1)[-1].lower()) if "." in name else ""
+
+
+def attachment_status(name: str) -> str:
+    ext = _ext_of(name)
+    if ext in _IMG_EXTS:
+        return "image"
+    if ext in _DATA_EXTS:
+        return "raw"
+    if ext == ".parquet":
+        return "parquet"
+    if ext in _PDF_EXTS or ext in _WORD_EXTS or ext in _PPT_EXTS:
+        return "doc"
+    return "text" if ext in _TEXT_EXTS else "binary"
+
+
+def attachment_action(status: str, *, visually_present: bool | None = None) -> str:
+    if status == "image" and visually_present is not True:
+        if visually_present is False:
+            return "图片未进入本条视觉输入；需要查看时按工作区路径用 file_search 定位图片。"
+        return "如图片已作为视觉输入，无需工具即可查看；需要补读时用 file_search 定位工作区图片。"
+    if status == "unavailable":
+        return "该素材不可用；如仍需要，请让用户重新选择。"
+    return _STATUS_ACTIONS[status]
 
 
 def format_current_attachment_refs(
@@ -80,6 +103,8 @@ def format_attachments(
     workspace_files: List[Dict[str, Any]],
     conversation_id: Optional[str] = None,
     org_id: Optional[str] = None,
+    *,
+    visible_image_ids: set[str] | None = None,
 ) -> str:
     """渲染结构化附件元数据(行业标准:状态 + 显式 action 行动指引)。
 
@@ -112,39 +137,17 @@ def format_attachments(
         size_str = _fmt_size(f.get("size"))
         ext = _ext_of(raw_name)
 
-        # 状态分流(纯状态,不含指令)
-        if ext in _IMG_EXTS:
-            status = "image"
-            parquet_rel = None
-        elif ext in _DATA_EXTS:
-            analyzed = cache.is_analyzed(wp or raw_name) if cache else False
-            if analyzed:
-                status = "analyzed"
-                # 取 parquet basename,渲染为 staging 相对路径
-                # (沙盒 cwd=/workspace,实际路径 = /workspace/staging/{basename})
-                parquet_rel = None
-                if cache:
-                    entry = cache._resolve_entry(wp or raw_name)
-                    if entry and entry.parquet:
-                        import os as _os
-                        parquet_rel = f"staging/{_os.path.basename(entry.parquet)}"
-            else:
-                status = "raw"
-                parquet_rel = None
-        elif ext == ".parquet":
-            status = "parquet"
-            parquet_rel = None
-        elif ext in _PDF_EXTS or ext in _WORD_EXTS or ext in _PPT_EXTS:
-            status = "doc"
-            parquet_rel = None
-        elif ext in _TEXT_EXTS:
-            status = "text"
-            parquet_rel = None
-        else:
-            status = "binary"
-            parquet_rel = None
+        status = attachment_status(raw_name)
+        parquet_rel = None
+        if status == "raw" and cache and cache.is_analyzed(wp or raw_name):
+            status = "analyzed"
+            entry = cache._resolve_entry(wp or raw_name)
+            if entry and entry.parquet:
+                import os.path
+                parquet_rel = f"staging/{os.path.basename(entry.parquet)}"
 
         lines.append("  <file>")
+        file_id = None
         if wp:
             from services.agent.file_id import compute_fid
             file_id = compute_fid(org_id, wp)
@@ -164,7 +167,8 @@ def format_attachments(
         if parquet_rel:
             lines.append(f"    <parquet>{_esc(parquet_rel)}</parquet>")
         lines.append(f"    <status>{status}</status>")
-        lines.append(f"    <action>{_STATUS_ACTIONS[status]}</action>")
+        visually_present = None if visible_image_ids is None else file_id in visible_image_ids
+        lines.append(f"    <action>{attachment_action(status, visually_present=visually_present)}</action>")
         lines.append("  </file>")
 
     lines.append("</attachments>")
@@ -226,7 +230,7 @@ def build_workspace_prompt(
         fid_prefix = f"[{compute_fid(org_id, wp)}] " if wp else ""
 
         if ext in _IMG_EXTS:
-            kind = "图片（已视觉注入）"
+            kind = "图片"
         elif ext in _DATA_EXTS:
             is_analyzed = cache.is_analyzed(wp or raw_name) if cache else False
             kind = "数据文件（已分析）" if is_analyzed else "数据文件（待治理）"

@@ -1636,6 +1636,21 @@ async def test_steer_attachments_project_to_original_turn_with_verified_workspac
     assert text['text'].startswith(directive)
     assert all(item['resource_ref'] in text['text'] for item in attachments)
     assert visual == {'type': 'image_url', 'image_url': {'url': 'https://cdn.example.test/ref.png'}}
+    from services.handlers.chat_context.attachments import format_attachments
+    initial = format_attachments([{'name': 'brief.txt', 'workspace_path': 'brief.txt'}])
+    records = json.loads(text['text'].split('\n')[-1])
+    assert records[0]['visually_present'] is True
+    assert records[1]['status'] == 'text'
+    assert records[1]['action'] in initial
+    assert 'code_execute' in records[1]['action']
+    assert '工具按 reference 读取' not in text['text']
+    notice, no_images = media.project(
+        SimpleNamespace(user_id=request.user_id, org_id=None, conversation_id=request.conversation_id),
+        change.attachments, visual_budget=0,
+    )
+    image = json.loads(notice.split('\n')[-1])[0]
+    assert not no_images and image['visually_present'] is False
+    assert '未进入' in image['action']
     await _inject_runtime_steers(runtime, prepared)
     assert prepared.messages.count(entry) == 1
 
