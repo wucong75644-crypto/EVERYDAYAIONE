@@ -88,6 +88,17 @@ def _rejection(name, issues, parameters):
     guidance = '本次未执行。按本轮工具定义修正字段，保留用户明确给出的条件和目标。'
     if name == 'web_search':
         guidance += '搜索范围等条件请完整保留在 query 中。'
+    if name == 'read_conversation_text':
+        from services.handlers.chat.content_tools import READ_MODE_GUIDANCE
+
+        guidance += READ_MODE_GUIDANCE
+    if name == 'generate_image' and any(
+        issue['path'] == '$.draft.materials' or issue['path'].startswith(('$.draft.materials.', '$.draft.materials['))
+        for issue in issues
+    ):
+        from services.task_execution.content_objects import MATERIAL_GUIDANCE
+
+        guidance += MATERIAL_GUIDANCE
     return json.dumps({
         'code': 'MODEL_TOOL_ARGUMENTS_INVALID',
         'stage': 'validate',

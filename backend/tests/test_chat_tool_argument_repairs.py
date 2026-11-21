@@ -182,6 +182,7 @@ async def test_a_distinct_declared_operation_still_gets_its_own_attempt():
     prepared.content_visible_tools = {name: {'parameters': {
         'type': 'object',
         'required': ['action'],
+        'additionalProperties': False,
         'properties': {'action': {'type': 'string', 'enum': ['create', 'list']}},
     }}}
     for number in range(2):

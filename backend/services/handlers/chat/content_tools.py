@@ -389,15 +389,18 @@ def material_candidates(images):
     return [image.reference.model_dump(mode='json', exclude_none=True) for image in images[:16]]
 
 
-SCHEMAS = (
-    schema(DISCOVER, '查找当前可用工具。用精确工具名或简短目标查找，只返回当前权限范围内的匹配项。后续按实际提供的定义调用；没有匹配时不要猜工具名。',
-           {'query': {'type': 'string', 'minLength': 1, 'maxLength': 160}}, ('query',)),
-    schema(READ, '在当前会话固定历史中读取资料。修订已保存提示词时用content_source读取指定版本的完整条目。'
+READ_MODE_GUIDANCE = (
+    '每次只选一种读取方式。content_source、view_image、show_image、image_task_id、image_task_status 各自单独传。'
+    '按消息读取时可传 message_id，并在 list_images=true、text_exact、text_exacts 中至多选一个。'
+)
+
+
+READ_SCHEMA = schema(READ, '在当前会话固定历史中读取资料。修订已保存提示词时用content_source读取指定版本的完整条目。'
                  '按原图重做用image_task_id读取所选成图的原始输入、实际提示词和规格。查询当前任务内已登记的图片受理或结果用image_task_status。'
                  '用message_id查看指定消息。定位历史图时设list_images=true，仅返回图片分组和定位。图片序号只在所属消息或成果组内有效，仍有多个候选时请用户选择。'
                  '模型需要看图分析时用view_image。用户要看旧图时用show_image交付，两个参数都复制所选图片的reference。只读动作不会提交生成。'
                  'text_exact/text_exacts读取逐字片段。'
-                 '执行已登记稿件时把其content_source交给目标工具。各读取方式分别调用。',
+                 '执行已登记稿件时把其content_source交给目标工具。' + READ_MODE_GUIDANCE,
            {'content_source': {'type': 'object', 'additionalProperties': False,
                                'required': ['artifact_id', 'item_index'],
                                'properties': {'artifact_id': {'type': 'string'}, 'item_index': {'type': 'integer'},
@@ -408,12 +411,29 @@ SCHEMAS = (
             'show_image': {'type': 'object', 'additionalProperties': False,
                            'required': ['message_id', 'content_index'],
                            'properties': {'message_id': {'type': 'string'}, 'content_index': {'type': 'integer'}}},
-            'image_task_id': {'type': 'string'}, 'image_task_status': {'type': 'string'}, 'list_images': {'type': 'boolean'}, 'message_id': {'type': 'string'}, 'text_exact': {'type': 'string', 'maxLength': 20000},
-            'text_exacts': {'type': 'array', 'minItems': 1, 'maxItems': 100,
+            'image_task_id': {'type': 'string'}, 'image_task_status': {'type': 'string'}, 'list_images': {'type': 'boolean'}, 'message_id': {'type': 'string'}, 'text_exact': {'type': 'string', 'minLength': 1, 'maxLength': 20000},
+            'text_exacts': {'type': 'array', 'minItems': 1, 'maxItems': 100, 'uniqueItems': True,
                             'items': {'type': 'string', 'minLength': 1, 'maxLength': 20000}},
-}),
-)
+})
+READ_PARAMETERS = READ_SCHEMA['function']['parameters']
+READ_PARAMETERS['oneOf'] = [
+    {'type': 'object', 'required': [key], 'additionalProperties': False,
+     'properties': {key: {}}}
+    for key in ('content_source', 'view_image', 'show_image', 'image_task_id', 'image_task_status')
+] + [
+    {'type': 'object', 'required': [key], 'additionalProperties': False,
+     'properties': {'message_id': {}, key: {'const': True} if key == 'list_images' else {}}}
+    for key in ('list_images', 'text_exact', 'text_exacts')
+] + [
+    {'type': 'object', 'additionalProperties': False, 'properties': {'message_id': {}}},
+]
 
+
+SCHEMAS = (
+    schema(DISCOVER, '查找当前可用工具。用精确工具名或简短目标查找，只返回当前权限范围内的匹配项。后续按实际提供的定义调用；没有匹配时不要猜工具名。',
+           {'query': {'type': 'string', 'minLength': 1, 'maxLength': 160}}, ('query',)),
+    READ_SCHEMA,
+)
 
 def model_tools(tools, *, selectable_source_images=False, server_image_plan=False, reuse_source=False, first_delivery=False, current_images=(), inline_image=False):
     """Project the one entry contract selected by the current workflow."""
@@ -446,11 +466,11 @@ def model_tools(tools, *, selectable_source_images=False, server_image_plan=Fals
                 function['description'] = description + (
                     '写方案、提示词或脚本时只交付一次document。每条body保留完整原文和限制，'
                     '只交付文字时页面直接展示正文，后台保留当前原图待选。还要求执行时设continue_execution=true，'
-                    '有上传图片则逐条填写materials（reference、role、usage），保存后再调用目标工具。')
+                    '有上传图片则在每条的materials中绑定所用图片，保存后再调用目标工具。')
             if current_images and not reuse_source:
                 refs = json.dumps(material_candidates(current_images), ensure_ascii=False)
                 function['description'] += (
-                    ' 本轮上传图的可选 reference（仅按用户意图选择，执行用 input，分析用 analysis）：' + refs
+                    ' 本轮上传图的可选 materials[].reference（仅按用户意图选择）：' + refs
                 )
             # Definitions for other forms can include long reference/patch schemas.
             # Only publish definitions reachable from the advertised arguments.
@@ -527,7 +547,7 @@ def model_tools(tools, *, selectable_source_images=False, server_image_plan=Fals
                 tool['function']['description'] += (
                     ' 用户要求创作单张新图或编辑一张已选图时，单独调用本工具传draft。'
                     '用户指定已有提示词时先定位原稿，找不到就请用户补充。'
-                    '填写完整编辑要求body，并在materials逐一标记明确的图片引用和用途。'
+                    '填写完整编辑要求body，并按draft.materials的字段说明绑定所用图片。'
                     '系统保存原稿并提交，不需要先调用save_task_text。'
                     '只改提示词时使用保存工具；多张图或已有策划继续用content_source。'
                 )

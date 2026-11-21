@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
 from services.task_execution.reducer import digest
 from services.tools.model_contracts import (
-    REVIEWED_MODEL_TOOLS, decode_model_arguments, model_argument_error, offered_argument_error,
+    REVIEWED_MODEL_TOOLS, decode_model_arguments, offered_argument_error,
 )
 
 KEY = 'tool_argument_repairs'
@@ -128,7 +128,7 @@ class Batch:
                         }}
                     rejection = offered_argument_error(name, args, parameters, input_type=input_type)
                 else:
-                    rejection = model_argument_error(name, args, parameters)
+                    rejection = offered_argument_error(name, args, parameters)
             if rejection:
                 target = digest([name, _operation(args, parameters), INVALID])
                 targets[call['id']] = target

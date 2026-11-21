@@ -535,6 +535,12 @@ async def test_model_request_assembles_one_current_contract_per_tool(monkeypatch
     assert '保留用户给出的来源、时间' in offered['web_search']['parameters']['properties']['query']['description']
     assert 'keyword' in offered['file_search']['parameters']['properties']
     assert {'find_available_tools', 'read_conversation_text', 'save_task_text'} <= offered.keys()
+    save_material = offered['save_task_text']['parameters']['$defs']['Material']
+    assert set(save_material['required']) == {'reference', 'role', 'usage'}
+    assert save_material['properties']['role']['description'] == co.MATERIAL_ROLE_GUIDANCE
+    assert save_material['properties']['usage']['enum'] == ['input', 'analysis']
+    if 'draft' in image_fields:
+        assert offered['generate_image']['parameters']['$defs']['Material'] == save_material
     system = ' '.join(message['content'] for message in sent['messages'] if message['role'] == 'system')
     assert '目录匹配不等于必须使用' in system
     assert '有匹配的可用图片 Skill 时先激活' not in system
@@ -569,7 +575,12 @@ async def test_first_turn_explicit_history_reference_asks_without_sampling_or_di
     handler._execute_tool_calls.assert_not_awaited()
 
 
-async def test_malformed_image_draft_is_rejected_with_bounded_model_correction():
+@pytest.mark.parametrize(('material', 'error_path'), [
+    (None, '$'),
+    ({'role': 'input', 'usage': '作为原图配色参考'}, '$.draft.materials[0].usage'),
+    ({'usage': 'input'}, '$.draft.materials[0].role'),
+])
+async def test_malformed_image_draft_is_rejected_with_bounded_model_correction(material, error_path):
     from dataclasses import replace
 
     from schemas.message import TextPart
@@ -586,9 +597,13 @@ async def test_malformed_image_draft_is_rejected_with_bounded_model_correction()
 
     async def stream(**kwargs):
         outbound.append(copy.deepcopy(kwargs))
+        arguments = f'{{"draft": <invalid-{len(outbound)}>}}'
+        if material is not None:
+            arguments = json.dumps({'draft': {'title': f'福字-{len(outbound)}', 'body': text, 'materials': [
+                {'reference': {'message_id': 'selected-image', 'content_index': 1}, **material},
+            ]}}, ensure_ascii=False)
         yield StreamChunk(tool_calls=[ToolCallDelta(
-            index=0, id=f'image-{len(outbound)}', name='generate_image',
-            arguments_delta=f'{{"draft": <invalid-{len(outbound)}>}}',
+            index=0, id=f'image-{len(outbound)}', name='generate_image', arguments_delta=arguments,
         )], finish_reason='tool_calls')
 
     _, blocks, totals = await run_content_loop(runtime, prepared, handler, request, stream)
@@ -598,7 +613,10 @@ async def test_malformed_image_draft_is_rejected_with_bounded_model_correction()
     detail = json.loads(second_round[-1]['content'].splitlines()[0])
     assert detail['code'] == tool_argument_repairs.INVALID
     assert detail['recovery']['action'] == 'repair_arguments'
-    assert detail['issues'][0]['path'] == '$'
+    assert detail['issues'][0]['path'] == error_path
+    assert detail['submission_state'] == 'not_dispatched'
+    if material is not None:
+        assert co.MATERIAL_GUIDANCE in detail['message']
     assert tool_argument_repairs.STOP in totals.text
     assert 'CONTENT_SOURCE_REQUIRED' not in json.dumps(blocks)
     assert runtime.task_execution_state is None
@@ -1278,9 +1296,10 @@ async def test_exact_discovery_reads_visible_save_contract_without_registering_a
 async def test_web_search_invalid_filter_cannot_be_dropped_before_chat_dispatch():
     from services.agent.tool_args_validator import validate_tool_args
     from services.tools.catalog import build_tool_catalog
+    from services.tools.model_contracts import project_model_tool
 
     r, p, h, q = case()
-    offer = build_tool_catalog().require('web_search').to_schema()
+    offer = project_model_tool(build_tool_catalog().require('web_search').to_schema())
     p.content_visible_tools = {'web_search': offer['function']}
     raw = {'query': '查询产品', 'domain_filter': 'example.com'}
     untouched, error = validate_tool_args('web_search', raw, [offer])

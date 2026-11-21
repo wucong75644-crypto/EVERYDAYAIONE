@@ -8,6 +8,7 @@ from collections.abc import Mapping
 import json
 import math
 import re
+from urllib.parse import unquote
 
 from .spec import thaw
 
@@ -26,12 +27,49 @@ class ToolArgumentValidationError(ValueError):
         }, ensure_ascii=False))
 
 
-def _issues(value, schema, path="$", depth=0, *, image_hints=True):
-    if depth > 12:
+def _local_schema_reference(root, reference):
+    if reference == '#':
+        return root
+    if not reference.startswith('#/'):
+        raise ValueError('仅支持工具合同内的本地引用')
+    target = root
+    for part in unquote(reference[2:]).split('/'):
+        token = part.replace('~1', '/').replace('~0', '~')
+        target = target[int(token)] if isinstance(target, (list, tuple)) else target[token]
+    if not isinstance(target, (Mapping, bool)):
+        raise ValueError('引用目标不是 Schema')
+    return target
+
+
+class _InvalidSchemaReference(ValueError):
+    pass
+
+
+def _issues(value, schema, *, image_hints=True):
+    try:
+        return _schema_issues(value, schema, schema, "$", 0, image_hints)
+    except _InvalidSchemaReference as error:
+        return [{"path": str(error), "reason": "工具合同引用无效"}]
+
+
+def _schema_issues(value, schema, root, path, depth, image_hints):
+    if depth > 24:
         return [{"path": path, "reason": "结构层级超过限制"}]
+    if isinstance(schema, bool):
+        return [] if schema else [{"path": path, "reason": "不允许该值"}]
+
+    def nested(child, definition, child_path=path):
+        return _schema_issues(child, definition, root, child_path, depth + 1, image_hints)
+
     issues = []
     def add(reason):
         issues.append({"path": path, "reason": reason})
+    if "$ref" in schema:
+        try:
+            target = _local_schema_reference(root, schema["$ref"])
+        except (ValueError, TypeError, KeyError, IndexError, AttributeError):
+            raise _InvalidSchemaReference(path) from None
+        issues.extend(nested(value, target))
     expected = schema.get("type")
     matches = {
         "object": isinstance(value, Mapping), "array": isinstance(value, (list, tuple)),
@@ -41,19 +79,19 @@ def _issues(value, schema, path="$", depth=0, *, image_hints=True):
     if expected and not any(matches.get(kind, False) for kind in (expected if isinstance(expected, list) else [expected])):
         add(f"类型必须为 {expected}")
         return issues
-    if "anyOf" in schema and not any(not _issues(value, branch, path, depth + 1, image_hints=image_hints) for branch in schema['anyOf']):
+    if "anyOf" in schema and not any(not nested(value, branch) for branch in schema['anyOf']):
         add('不符合anyOf参数分支')
     if "allOf" in schema:
         for branch in schema['allOf']:
-            issues.extend(_issues(value, branch, path, depth + 1, image_hints=image_hints))
-    if "not" in schema and not _issues(value, schema['not'], path, depth + 1, image_hints=image_hints):
+            issues.extend(nested(value, branch))
+    if "not" in schema and not nested(value, schema['not']):
         add('命中禁止的参数组合')
     if "const" in schema and value != schema['const']:
         add('值不符合const')
     if "enum" in schema and value not in schema["enum"]:
         add("可选值为 " + json.dumps(schema["enum"], ensure_ascii=False))
     if "oneOf" in schema:
-        count = sum(not _issues(value, branch, path, depth + 1, image_hints=image_hints) for branch in schema["oneOf"])
+        count = sum(not nested(value, branch) for branch in schema["oneOf"])
         if count != 1:
             add("必须且只能选择一种参数形式")
     if isinstance(value, Mapping):
@@ -78,7 +116,7 @@ def _issues(value, schema, path="$", depth=0, *, image_hints=True):
                         reason += "；生图模型由服务器固定，无需选择"
                     issues.append({"path": child_path, "reason": reason})
             else:
-                issues.extend(_issues(child, properties[key], child_path, depth + 1, image_hints=image_hints))
+                issues.extend(nested(child, properties[key], child_path))
     if isinstance(value, (list, tuple)):
         for bound, op in (("maxItems", lambda n: len(value) > n), ("minItems", lambda n: len(value) < n)):
             if bound in schema and op(schema[bound]):
@@ -87,8 +125,9 @@ def _issues(value, schema, path="$", depth=0, *, image_hints=True):
             keys = [json.dumps(thaw(child), sort_keys=True, allow_nan=False) for child in value]
             if len(set(keys)) != len(keys):
                 add('数组元素必须唯一')
-        for index, child in enumerate(value):
-            issues.extend(_issues(child, schema.get("items", {}), f"{path}[{index}]", depth + 1, image_hints=image_hints))
+        if "items" in schema:
+            for index, child in enumerate(value):
+                issues.extend(nested(child, schema["items"], f"{path}[{index}]"))
     if isinstance(value, str):
         for bound, op in (("minLength", lambda n: len(value) < n), ("maxLength", lambda n: len(value) > n)):
             if bound in schema and op(schema[bound]):

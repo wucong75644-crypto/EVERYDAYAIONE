@@ -1844,7 +1844,11 @@ async def _execute_tools_impl(
             state = content_tools.checkpoint_state(runtime)
             names = set(state.get('names', ()))
             observed = dict(state.get('observed_history', {}))
+            from services.tools.model_contracts import offered_argument_error
+
             context = prepared.execution_context
+            visible = getattr(prepared, 'content_visible_tools', {})
+            read_parameters = visible.get(content_tools.READ, {}).get('parameters', content_tools.READ_PARAMETERS)
             viewed_images = []
             delivered_images = []
             for call in calls:
@@ -1869,7 +1873,6 @@ async def _execute_tools_impl(
                             query = args['query']
                             if not isinstance(query, str) or not 1 <= len(query.strip()) <= 160:
                                 raise ValueError('CHAT_TOOL_QUERY_INVALID')
-                            visible = getattr(prepared, 'content_visible_tools', {})
                             exact_tool = visible.get(query.strip().casefold())
                             if exact_tool is not None:
                                 result = {'ok': True, 'tools': [exact_tool], 'status': 'ready'}
@@ -1878,6 +1881,10 @@ async def _execute_tools_impl(
                                 names.update(item['name'] for item in candidates)
                                 result = {'ok': True, 'tools': candidates,
                                           'status': 'check_next_turn' if candidates else 'no_match'}
+                        elif call['name'] == content_tools.READ and (rejection := offered_argument_error(
+                            call['name'], args, read_parameters
+                        )):
+                            result = {'ok': False, **json.loads(rejection)}
                         elif call['name'] == content_tools.READ and set(args) == {'content_source'}:
                             result = {'ok': True, **await content_tools.read_saved_item(
                                 runtime, handler.db, context, args['content_source'])}
@@ -2057,9 +2064,8 @@ async def _execute_tools_impl(
                                 issues=[{'path': f'$.document.items[{index}].materials', 'reason': '缺少素材用途'}
                                         for index, item in enumerate(save_value.document.items) if not item.materials][:16],
                                 references=content_tools.material_candidates(current_images),
-                                message='请在缺失条目的 materials 中填写 reference、role 和 usage。'
-                                        'reference 选用已知实际引用，实际传入目标工具用 input，仅供理解用 analysis。'
-                                        '保留完整正文和规格。素材用途不明确时先询问。',
+                                message='请补全缺失条目的 materials。' + content_objects.MATERIAL_GUIDANCE
+                                        + '保留完整正文和规格。素材用途不明确时先询问。',
                             )
                             if result['references']:
                                 result['material_example'] = {
@@ -2081,6 +2087,8 @@ async def _execute_tools_impl(
                             )
                         if hasattr(error,'errors'):
                             result['issues']=error.errors(include_input=False,include_url=False,include_context=False)[:12]
+                            if any('materials' in issue['loc'] for issue in result['issues']):
+                                result['message'] += content_objects.MATERIAL_GUIDANCE
                 if not content_output_registration:
                     prepared.messages.append({'role':'tool','tool_call_id':call['id'],'content':json.dumps(result,ensure_ascii=False)})
                 blocks[:] = [b for b in blocks if b.get('tool_call_id') != call['id']]
@@ -2145,7 +2153,7 @@ async def _execute_tools_impl(
                 repeated_tool_call_guard=repeated_tool_call_guard))
             if planned_marker is not None:await sink.on_block(planned_marker)
             return None
-        from services.tools.model_contracts import REVIEWED_MODEL_TOOLS, decode_model_arguments, model_argument_error
+        from services.tools.model_contracts import REVIEWED_MODEL_TOOLS, decode_model_arguments, offered_argument_error
 
         projected_calls = []
         media_slots = {}
@@ -2249,7 +2257,7 @@ async def _execute_tools_impl(
                 if not recovery_only and not use_repair_contract and call['name'] in REVIEWED_MODEL_TOOLS:
                     offer = getattr(prepared, 'content_visible_tools', {}).get(call['name'])
                     if offer:
-                        error = model_argument_error(call['name'], args, offer.get('parameters'))
+                        error = offered_argument_error(call['name'], args, offer['parameters'])
                         if error:
                             direct_errors[call['id']] = ('MODEL_TOOL_ARGUMENTS_INVALID', error)
                             projected_calls.append(call)

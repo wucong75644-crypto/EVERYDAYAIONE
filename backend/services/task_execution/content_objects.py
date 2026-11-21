@@ -55,7 +55,22 @@ class ImageContentReference(ContentReference):
             raise ValueError('CONTENT_IMAGE_SELECTION_CONFLICT')
         return self
 
+_MATERIAL_LOCATORS = (
+    {'resource_ref': 'string'}, {'file_id': 'string'}, {'asset_id': 'string'},
+    {'message_id': 'string', 'content_index': 'integer'},
+)
+_MATERIAL_LOCATOR_FIELDS = frozenset(key for locator in _MATERIAL_LOCATORS for key in locator)
+
+
 class MaterialReference(Fact):
+    model_config = {**Fact.model_config, 'json_schema_extra': {
+        'oneOf': [
+            {'required': list(locator), 'properties': {
+                key: {'type': locator.get(key, 'null')} for key in sorted(_MATERIAL_LOCATOR_FIELDS)
+            }}
+            for locator in _MATERIAL_LOCATORS
+        ],
+    }}
     resource_ref: str | None = Field(default=None,min_length=1)
     file_id: str | None = Field(default=None,min_length=1)
     asset_id: str | None = Field(default=None,min_length=1)
@@ -64,14 +79,27 @@ class MaterialReference(Fact):
 
     @model_validator(mode='after')
     def identity(self):
-        if sum(v is not None for v in (self.resource_ref,self.file_id,self.asset_id,self.message_id))!=1 or (self.message_id is not None)!=(self.content_index is not None):
+        supplied = {key for key in _MATERIAL_LOCATOR_FIELDS if getattr(self, key) is not None}
+        if not any(supplied == locator.keys() for locator in _MATERIAL_LOCATORS):
             raise ValueError('CONTENT_MATERIAL_IDENTITY_REQUIRED')
         return self
 
+MATERIAL_REFERENCE_GUIDANCE = (
+    '原样复制系统提供的实际引用。只选 resource_ref、file_id、asset_id 其中一个，'
+    '或成对填写 message_id 和 content_index。'
+)
+MATERIAL_ROLE_GUIDANCE = '用简短自然语言描述素材在任务中的角色，例如“原图配色与构图参考”。'
+MATERIAL_USAGE_GUIDANCE = '只填 input（实际传给执行工具）或 analysis（仅用于理解素材）。'
+MATERIAL_GUIDANCE = (
+    f'每项素材须填写 reference、role、usage。填写 reference 时，{MATERIAL_REFERENCE_GUIDANCE}'
+    f'填写 role 时，{MATERIAL_ROLE_GUIDANCE}usage {MATERIAL_USAGE_GUIDANCE}'
+)
+
+
 class Material(Fact):
-    reference: MaterialReference
-    role: str = Field(min_length=1, max_length=200)
-    usage: Literal['input', 'analysis'] = Field(description='执行时传给工具用input，仅用来理解素材用analysis。')
+    reference: MaterialReference = Field(description=MATERIAL_REFERENCE_GUIDANCE)
+    role: str = Field(min_length=1, max_length=200, description=MATERIAL_ROLE_GUIDANCE)
+    usage: Literal['input', 'analysis'] = Field(description=MATERIAL_USAGE_GUIDANCE)
 
 
 class Presentation(Fact):
@@ -91,7 +119,7 @@ class ContentItem(Presentation):
     title: str = Field(min_length=1, max_length=300, description='条目名称，由页面添加编号。')
     body: str = Field(min_length=1, max_length=20000,description='用户可见并交给目标工具的完整最终原文，包括全部执行要求、限制和禁止项；后台逐字传递，不再拼接其他文字。')
     materials: tuple[Material, ...] = Field(default=(), max_length=16,
-        description='本轮带上传图片且继续执行时，每条明确填写所用素材及用途。只交付文字时可省略，后台保留当前原图供后续选择。')
+        description='按用户意图填写实际使用的素材。只交付文字时可省略，后台保留当前原图供后续选择。' + MATERIAL_GUIDANCE)
     options: dict[str, Any] = Field(default_factory=dict,
         description='仅填写已确定的执行规格。缺省由执行工具决定。',
         json_schema_extra={'propertyNames':{'not':{'enum':['prompt','references','source_prompt','content_source','plan_source','chat_input','code']}}})
@@ -284,7 +312,7 @@ SCHEMA = {'type': 'function', 'function': {'name': SAVE,
         '用户明确修改一张成图时，可用document和new_content=true编写新的编辑指令，在materials绑定这张图。只修订历史文字用base和updates。'
         'body包含最终要求和限制；按用户或方法要求交付的可见结构放display_prefix，内部说明放notes。materials记录用于执行或分析的素材，options仅记已确定执行规格。'
         '修订既有条目时，base使用该条目的content_source，updates传修订正文。后台绑定版本并保留未改条目、素材和规格。'
-        '本轮还要求执行时设continue_execution=true，再调用目标工具。有当前上传图片时，每条在materials中使用实际引用并标记input或analysis。还要求看文字时设show_content=true。',
+        '本轮还要求执行时设continue_execution=true，再调用目标工具。有当前上传图片时，在每条的materials中绑定所用图片。还要求看文字时设show_content=true。',
     'parameters': save_parameters()}}
 
 
