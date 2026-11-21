@@ -2184,8 +2184,10 @@ async def _execute_tools_impl(
             except (ValueError, TypeError, PermissionError, KeyError) as error:
                 code = str(error)
                 code = code if code.startswith(('CHAT_INPUT_', 'CHAT_SOURCE_', 'CONTENT_', 'ECOM_PLAN_')) else 'CHAT_INPUT_MAPPING_INVALID'
-                guidance = ('未提交新的图片任务。请明确要重新生成哪个方案，或要查看哪张已有图片。'
-                            if code == 'CONTENT_IMAGE_REGENERATION_UNCONFIRMED' else '本次未派发，输入核验失败：' + code)
+                guidance = {
+                    'CONTENT_IMAGE_REGENERATION_UNCONFIRMED': '未提交新的图片任务。请明确要重新生成哪个方案，或要查看哪张已有图片。',
+                    'CONTENT_VIDEO_OPTIONS_UNSUPPORTED': '本次未提交视频。聊天视频工具固定输出横屏，请确认可以使用该规格后再执行。',
+                }.get(code, '本次未派发，输入核验失败：' + code)
                 direct_errors[call['id']] = (code, guidance)
                 projected_calls.append(call)
         calls = projected_calls

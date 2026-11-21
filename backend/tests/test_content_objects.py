@@ -375,6 +375,31 @@ async def test_generic_video_and_file_adapters_keep_all_execution_text_and_rejec
     with pytest.raises(TaskError,match='CONTENT_MATERIAL_NOT_SUPPORTED_BY_TOOL'):
         co.compile_input(r.task_execution_state,'generate_video',{},ref(row))
 
+@pytest.mark.parametrize(('aspect_ratio', 'supported'), [('16:9', True), ('landscape', True), ('9:16', False)])
+async def test_saved_video_format_is_checked_before_compiling_native_prompt(aspect_ratio, supported):
+    runtime, prepared, handler, request = case()
+    prepared.content_controls_available = True
+    script = '完整视频脚本，摄影比例为' + aspect_ratio
+    document = {'title': '视频计划', 'items': [
+        {'title': '视频脚本', 'body': script, 'options': {'aspect_ratio': aspect_ratio}},
+    ]}
+    await execute(runtime, prepared, handler, request, [call(co.SAVE, {'document': document}, 'video-plan')])
+    row, = co.catalog(runtime.task_execution_state)
+    selection = ref(row)
+    if supported:
+        native, _ = co.compile_input(runtime.task_execution_state, 'generate_video', {}, selection)
+        assert native == {'prompt': script}
+        from services.task_execution.video_operations import frozen_request
+        parent = {'id': runtime.task_id, 'turn_id': runtime.turn_id,
+                  'input_message_id': runtime.task_bootstrap.input_message_id, 'base_context_revision': 0}
+        frozen = frozen_request(SimpleNamespace(_task_execution_state=runtime.task_execution_state), native, parent)
+        assert frozen['prompt'] == script and frozen['aspect_ratio'] == 'landscape'
+    else:
+        with pytest.raises(TaskError, match='CONTENT_VIDEO_OPTIONS_UNSUPPORTED'):
+            co.compile_input(runtime.task_execution_state, 'generate_video', {}, selection)
+    handler._execute_tool_calls.assert_not_awaited()
+
+
 @pytest.mark.asyncio
 async def test_background_registration_has_no_streamed_tool_card():
     from services.handlers.chat.execution_engine import _read_turn

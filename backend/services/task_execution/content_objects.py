@@ -726,6 +726,14 @@ def compile_input(state, name, arguments, reference, *, allow_old=False):
             result.setdefault('variant_id', result['plan_item_id']+'/1')
     elif name == 'generate_video':
         if inputs: raise TaskError('CONTENT_MATERIAL_NOT_SUPPORTED_BY_TOOL')
+        from services.task_execution.video_operations import VIDEO_ASPECT_RATIO
+
+        # The registered draft may repeat the native output ratio as an option.
+        # Its selector is model-facing, while the native tool accepts only prompt.
+        if result.get('aspect_ratio') in ('16:9', VIDEO_ASPECT_RATIO):
+            result.pop('aspect_ratio')
+        if result:
+            raise TaskError('CONTENT_VIDEO_OPTIONS_UNSUPPORTED')
         result['prompt'] = text
     elif name == 'code_execute':
         if inputs: raise TaskError('CONTENT_MATERIAL_NOT_SUPPORTED_BY_TOOL')

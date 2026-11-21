@@ -7,6 +7,7 @@ from .contracts import TaskError,TaskState
 from .native_writes import NativeWriteLifecycle,binding,receipt_artifact as native_artifact
 from .operation_store import TaskOperationPersistenceError
 
+VIDEO_ASPECT_RATIO = 'landscape'
 REQUEST='_agent_video_request_v1'
 LIFECYCLE='_agent_video_lifecycle_v1'
 VALIDATOR='native.video.result'
@@ -39,7 +40,7 @@ def frozen_request(owner,args,parent):
     try:cost=calculate_video_cost(model_name=DEFAULT_VIDEO_MODEL_ID,duration_seconds=10)
     except ValueError as error:raise VideoNotAccepted('VIDEO_DEFAULT_MODEL_UNAVAILABLE') from error
     snapshot={'schema_version':1,'mode':'text_to_video','model':DEFAULT_VIDEO_MODEL_ID,'prompt':prompt,
-        'duration_seconds':10,'aspect_ratio':'landscape','remove_watermark':True,'references':[],
+        'duration_seconds':10,'aspect_ratio':VIDEO_ASPECT_RATIO,'remove_watermark':True,'references':[],
         'estimated_credits':cost['user_credits'],'estimated_provider_credits':cost['kie_cost'],
         'budget':{'max_requests':8,'max_credits':min(100000,8*cost['user_credits'])},
         'origin':{'parent_task_id':str(parent['id']),'logical_task_id':str(state.root_task_id),
