@@ -7,6 +7,7 @@ def _schema_generate_image_async():
     import json
     from core.config import get_settings
     from services.handlers.chat_image_request import image_capabilities
+    from services.handlers.image_size_requirements import SIZE_GUIDANCE
     limits=get_settings()
     return {
         "type": "function",
@@ -25,9 +26,7 @@ def _schema_generate_image_async():
                 "先看样张时只提交样张。variant_id 是稳定变体身份，不能扩大服务器预算。"
                 "遇到素材或提示词版本歧义先询问；失败不自动无限重试。"
                 f"每用户跨对话共享最多15个活跃任务（聊天本身也占槽位），满额时图片排队，完成或失败后释放；不是累计生成张数上限。本轮图片累计预算{limits.chat_image_max_credits}积分。"
-                "原图画布与产品形状不同，使用服务器canvas事实；参考图未指定尺寸时沿用画布比例。"
-                "用户指定尺寸优先；只改比例保留分辨率，只改分辨率保留比例。"
-                "计划、prompt和参数使用同一目标规格。不支持的精确像素、不明确尺寸或冲突先询问，不自动近似。"
+                + SIZE_GUIDANCE +
                 "服务器默认模型的实际能力与单张积分（model为服务器事实，不是可填写参数）：" + json.dumps(image_capabilities(),ensure_ascii=False,separators=(',',':'))
             ),
             "parameters": {

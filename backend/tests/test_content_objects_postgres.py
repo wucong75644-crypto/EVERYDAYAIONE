@@ -180,7 +180,7 @@ async def test_direct_content_selection_adopts_saved_task_before_business_dispat
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('scenario', [
-    'text-to-image', 'image-to-image', 'inline-text-to-image', 'inline-image-to-image', 'inline-first-turn-upload', 'inline-repair-then-image', 'inline-resume-before-reserve', 'inline-resume-after-acceptance', 'recorded-first', 'recorded-fifth', 'recorded-write-once', 'recorded-retired',
+    'text-to-image', 'image-to-image', 'inline-text-to-image', 'inline-image-to-image', 'inline-first-turn-upload', 'inline-edit-selected-output', 'inline-repair-then-image', 'inline-resume-before-reserve', 'inline-resume-after-acceptance', 'recorded-first', 'recorded-fifth', 'recorded-sixth-size', 'recorded-write-once', 'recorded-retired',
     'recorded-third-output', 'new-third-output', 'new-regeneration-output', 'recorded-quoted-output',
     'recorded-third-history', 'new-third-history',
 ])
@@ -249,17 +249,24 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
     quoted = scenario == 'recorded-quoted-output'
     automatic_output = recorded_output or new_output or quoted
     followup = recorded or automatic_output
+    sixth = scenario == 'recorded-sixth-size'
+    first_upload = scenario == 'inline-first-turn-upload'
+    edit_selected = scenario == 'inline-edit-selected-output'
     fifth = scenario == 'recorded-fifth'
     write_once = scenario == 'recorded-write-once'
     retired = scenario == 'recorded-retired'
-    item_index = 3 if recorded_output or new_output else 2 if write_once else 5 if fifth else 1
+    item_index = 3 if recorded_output or new_output else 2 if write_once else 6 if sixth else 5 if fifth else 1
     body = '  纸品封面，保留细纹理。\n避免改变装订孔及商标。  '
-    synthetic_original = scenario in {'image-to-image', 'inline-image-to-image', 'inline-first-turn-upload'} or image_repair
+    synthetic_original = scenario in {'image-to-image', 'inline-image-to-image', 'inline-first-turn-upload'} or image_repair or sixth or edit_selected
     ratio = '3:4' if synthetic_original or new_output else '1:1'
-    resolution = '2K' if new_output else '1K'
+    resolution = '2K' if new_output or edit_selected else '1K'
     question = '参考这张原图修改封面，只生成一张' if with_original else '帮我直接生成一张纸品封面图'
-    if scenario == 'inline-first-turn-upload':
+    if scenario == 'inline-image-to-image' or image_repair:
+        question += '，输出比例3:4。'
+    if first_upload:
         question = '这个是图片。你用你写的提示词帮我生成新的图片'
+    if edit_selected:
+        question = '把较早生成的那张图桌面颜色调浅一点，福字主体不动。'
     first_document = None
     first_arguments = None
     if quoted:
@@ -356,6 +363,15 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
             parts = json.loads(turn['question']) if isinstance(turn['question'],str) else turn['question']
             return next(part['text'] for part in parts if part['type'] == 'text')
         question, later_question = first_text(writing), first_text(execution)
+    elif sixth:
+        question = '参考这张商品图，写六套图片提示词。'
+        later_question = '第六个方案帮我做成图片'
+        body = '保留产品结构。画布尺寸保持1024×1024像素。输出比例1:1。'
+        first_document = {'title': '六套封面', 'items': [
+            {'title': f'第{i}个方案', 'body': body if i == 6 else f'方案{i}正文',
+             'options': {'width': 1024, 'height': 1024, 'aspect_ratio': '1:1'},
+             'materials': []}
+            for i in range(1, 7)]}
     elif recorded:
         path = os.getenv('CHAT_CONTENT_TWO_SKILL_FAILURES')
         if not path:
@@ -383,7 +399,7 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
         if synthetic_original:
             from io import BytesIO
             fixture = BytesIO()
-            Image.new('RGB', (1254, 1254), 'white').save(fixture, format='PNG')
+            Image.new('RGB', (739, 981) if first_upload or sixth or edit_selected else (1254, 1254), 'white').save(fixture, format='PNG')
             original = fixture.getvalue()
         elif not automatic_output:
             evidence = os.getenv('REAL_INPUT_RETEST_DIR') if fifth or write_once else os.getenv('CHAT_CONTENT_DUPLICATE_RECORD')
@@ -407,8 +423,26 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
         materials.append({'usage':'input', 'role':'原图', 'reference':{'message_id':f['message'], 'content_index':1}})
     original_message = f['message']
     with psycopg.connect(content_db) as connection:
+        initial_credits, = connection.execute('SELECT credits FROM users WHERE id=%s',
+                                             (f['user'],)).fetchone()
         connection.execute("UPDATE messages SET status='completed', context_revision=0, turn_id=%s, content=%s WHERE id=%s",
             (f['turn'], json.dumps([p.model_dump(mode='json', exclude_none=True) for p in parts]), f['message']))
+        if edit_selected:
+            selected_message = str(uuid4())
+            for message, revision, tier in ((selected_message, 0, '2K'), (str(uuid4()), 1, '4K')):
+                image_task = str(uuid4())
+                result_part = {'type': 'image', 'workspace_path': file_path,
+                               'url': 'https://local.invalid/' + file_path, 'task_id': image_task}
+                facts = {'task_id': image_task, 'size_requirement': {'resolution': tier, 'aspect_ratio': '3:4'}}
+                connection.execute(
+                    "INSERT INTO messages(id,conversation_id,role,content,status,context_revision,generation_params) "
+                    "VALUES (%s,%s,'assistant',%s,'completed',%s,%s)",
+                    (message, f['conv'], json.dumps([result_part]), revision, Jsonb(facts)))
+            connection.execute("UPDATE messages SET content=%s, context_revision=2 WHERE id=%s",
+                               (json.dumps([parts[0].model_dump()]), f['message']))
+            connection.execute("UPDATE tasks SET base_context_revision=1 WHERE id=%s", (f['task'],))
+            parts = [parts[0]]
+            materials[0]['reference'] = {'message_id': selected_message, 'content_index': 0}
 
     class RestartTest(Exception):
         pass
@@ -432,13 +466,14 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
         b = r.task_bootstrap
         r.task_bootstrap = replace(b, task_id=UUID(f['task']), conversation_id=UUID(f['conv']),
             actor_user_id=UUID(f['user']), input_message_id=UUID(f['message']),
+            original_goal=request_parts[0].text,
             execution_identity=b.execution_identity.model_copy(update={'workspace_owner_id': f['user']}))
         r.task_id, r.turn_id, r.conversation_id = f['task'], f['turn'], f['conv']
         p.execution_context = replace(p.execution_context, task_id=f['task'], conversation_id=f['conv'],
             actor_user_id=f['user'], workspace_owner_id=f['user'])
         q = replace(q, task_id=f['task'], conversation_id=f['conv'], user_id=f['user'], content=request_parts,
                     context_anchor=SimpleNamespace(input_message_id=f['message'],
-                        base_revision=0 if scenario == 'inline-first-turn-upload' else None))
+                        base_revision=1 if edit_selected else 0 if first_upload else None))
         p.messages = [{'role':'user','content':request_parts[0].text}]
         p.core_tools.append(build_tool_catalog().require('generate_image').to_schema())
         return r, p, h, q
@@ -460,7 +495,7 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
                 question, image_sources=[discovered], image_urls=[parts[1].url])).user_message]
         elif not automatic_output:
             for item in first_document['items']:
-                if fifth:
+                if fifth or sixth:
                     item['materials'] = materials
                 else:
                     for material in item['materials']:
@@ -672,6 +707,12 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
     h._execute_tool_calls.side_effect = dispatch
     doc = {'title':'本轮生成输入','items':[{'title':'第一个结果','body':body,'materials':materials,
            'options':{'aspect_ratio':ratio, 'resolution':'1K', 'output_format':'png'}}]}
+    if first_upload or edit_selected:
+        doc['items'][0]['options'] = {
+            'size_requirement': {'mode': 'inherit_reference'}, 'resolution': '4K',
+        }
+    execution_body = ('保留产品结构。画布尺寸按平台输出规格适配。输出比例以平台输出规格为准。'
+                      if sixth else body)
     seen = 0
     if not followup:
         row = selection = None
@@ -794,7 +835,7 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
         queued = await worker.refresh(child)
         snapshot = queued['request_params'][REQUEST_KEY]
         assert snapshot['mode'] == ('image_to_image' if with_original else 'text_to_image')
-        assert snapshot['prompt_sha256'] == hashlib.sha256(body.encode()).hexdigest()
+        assert snapshot['prompt_sha256'] == hashlib.sha256(execution_body.encode()).hexdigest()
         assert [(x['workspace_path'],x['content_sha256']) for x in snapshot['references']] == (
             [(file_path, input_sha)] if with_original else [])
         assert (snapshot['aspect_ratio'],snapshot['resolution'],snapshot['output_format']) == (ratio,resolution,'png')
@@ -802,7 +843,9 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
         if regeneration:
             assert snapshot['variant_id'] == f"regenerate:{f['message']}"
         if with_original:
-            assert snapshot['references'][0]['width'] == snapshot['references'][0]['height'] == (1024 if fifth or write_once or automatic_output else 1254)
+            reference = snapshot['references'][0]
+            edge = 1024 if fifth or write_once or automatic_output else 1254
+            assert (reference['width'], reference['height']) == ((739, 981) if first_upload or sixth or edit_selected else (edge, edge))
 
         requests = []
         external_id = 'local-' + str(uuid4())
@@ -810,10 +853,9 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
         def provider_http(request):
             assert request.url.path == '/api/v1/jobs/createTask'
             serialized = json.loads(request.content)['input']
-            assert serialized['prompt'] == body
+            assert serialized['prompt'] == execution_body
             assert serialized.get('aspect_ratio', serialized.get('image_size')) == ratio
-            if automatic_output:
-                assert serialized['resolution'] == resolution
+            assert serialized['resolution'] == resolution
             assert (['https://local.invalid/'+file_path] in serialized.values()) == with_original
             requests.append(serialized)
             return httpx.Response(200, json={'code':200, 'msg':'success', 'data':{'taskId':external_id}})
@@ -861,9 +903,12 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
                 (displayed['asset_id'],)).fetchone()[0] == 1
             prompt, metadata = connection.execute('SELECT prompt,metadata FROM user_asset_refs WHERE source_task_id=%s',
                 (receipt['task_id'],)).fetchone()
-            assert prompt == body and metadata['request_hash'] == snapshot['request_hash']
-            assert connection.execute('SELECT count(*) FROM credit_transactions WHERE task_id=%s',
-                (receipt['task_id'],)).fetchone()[0] == 1
+            assert prompt == execution_body and metadata['request_hash'] == snapshot['request_hash']
+            assert connection.execute('SELECT amount,status FROM credit_transactions WHERE task_id=%s',
+                (receipt['task_id'],)).fetchall() == [(snapshot['estimated_credits'], 'confirmed')]
+            remaining_credits, = connection.execute('SELECT credits FROM users WHERE id=%s',
+                                                   (f['user'],)).fetchone()
+            assert initial_credits - remaining_credits == snapshot['estimated_credits']
             if inline:
                 assert connection.execute(
                     "SELECT count(*) FROM tasks WHERE type='image' AND user_id=%s",

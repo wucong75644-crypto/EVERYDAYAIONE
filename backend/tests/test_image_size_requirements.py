@@ -214,3 +214,17 @@ def test_verified_source_size_uses_explicit_output_labels_and_preserves_pixels()
     assert selected_source_size('产品比例2:3，主体宽高比4:5。') == {}
     assert selected_source_size('产品比例2:3，输出比例1:1。') == {'aspect_ratio': '1:1'}
     assert selected_source_size('输出尺寸1254×1254像素。') == {'width': 1254, 'height': 1254}
+
+
+@pytest.mark.parametrize('width,height,ratio', [(739, 981, '3:4'), (1601, 902, '16:9'), (1024, 1001, '1:1')])
+def test_original_canvas_maps_to_closest_supported_ratio_with_default_tier(width, height, ratio):
+    args, target = resolve(refs=[reference(width, height)])
+    assert (args['aspect_ratio'], args['resolution']) == (ratio, '1K')
+    assert (target['original_width'], target['original_height']) == (width, height)
+
+
+def test_auto_is_opt_in_even_without_a_reference():
+    assert resolve(refs=[])[0]['aspect_ratio'] == '1:1'
+    with pytest.raises(ValueError, match='INTENT_REQUIRED'):
+        resolve('自动生成一张图片', refs=[], aspect_ratio='auto')
+    assert resolve('比例你定')[0]['aspect_ratio'] == 'auto'

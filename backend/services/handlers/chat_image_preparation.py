@@ -1,7 +1,23 @@
 """Shared native image input preparation. Scoped reads only; never acceptance or billing."""
 import hashlib
+import re
 import uuid
 from services.handlers.chat_image_request import ChatImageNotAcceptedError
+
+
+def _adapt_legacy_canvas(prompt, legacy, aspect_ratio):
+    # Replace only declarations matching the retired canvas metadata.
+    width, height = legacy['width'], legacy['height']
+    prompt = re.sub(
+        rf'((?:画布|输出)(?:尺寸|分辨率|大小)?)\s*(?:保持|为|是|[:：=])?\s*'
+        rf'{width}\s*[xX×＊*]\s*{height}(?:\s*(?:像素|px))?(?!\d)',
+        r'\1按平台输出规格适配', prompt)
+    old_ratio = legacy.get('aspect_ratio')
+    if isinstance(old_ratio, str) and old_ratio and old_ratio != aspect_ratio:
+        prompt = re.sub(
+            rf'((?:画布比例|输出比例|宽高比)\s*[:：为是约]?\s*){re.escape(old_ratio)}(?!\d)',
+            r'\1以平台输出规格为准', prompt)
+    return prompt
 
 
 def prepare_input(resolver,args,*,scoped,workflow,settings,composition=None,entry_checked=False,reference_cache=None):
@@ -93,13 +109,30 @@ def prepare_input(resolver,args,*,scoped,workflow,settings,composition=None,entr
     size_fields = {'aspect_ratio', 'mode', 'width', 'height', 'orientation'}
     source = normalized.get('source_prompt')
     bound_specs = {}
+    legacy_options = {}
+    fresh_draft = False
     if source and 'content_object' in source:
-        bound_specs = {key: normalized[key] for key in ('aspect_ratio', 'resolution', 'output_format')
-                       if key in normalized}
         intent, previous = resolver.size_context(use_previous=False, infer_attachment_canvas=False)
+        artifact, item = resolver.content_image_item(source['content_object'])
+        legacy_options = item.options if {'width', 'height'} <= item.options.keys() else {}
+        # A fresh inline draft has no prior user-approved output settings.
+        fresh_draft = (artifact.source_call_id.startswith('inline-save-')
+                       and str(artifact.source_task_id) == owner.task_id)
+        if fresh_draft:
+            normalized.pop('resolution', None)
+            if not intent.get('orientation') and normalized.get('aspect_ratio') != 'auto':
+                normalized.pop('aspect_ratio', None)
+        spec_fields = ('output_format',) if fresh_draft else ('aspect_ratio', 'resolution', 'output_format')
+        bound_specs = {key: normalized[key] for key in spec_fields if key in normalized}
     else:
         intent, previous = resolver.size_context()
-    if source and not size_fields.intersection(intent) and not size_fields.intersection(previous):
+    if not plan_proof and len(refs) == 1 and refs[0].get('source') == 'generated':
+        previous = resolver.selected_image_size(refs[0]) or previous
+    structured_size = normalized.get('size_requirement', {})
+    if legacy_options and structured_size and 'width' not in structured_size:
+        normalized['prompt'] = _adapt_legacy_canvas(normalized['prompt'], legacy_options, normalized.get('aspect_ratio'))
+    if (source and not fresh_draft and not structured_size and not size_fields.intersection(intent)
+            and not size_fields.intersection(previous)):
         selected_size = selected_source_size(normalized['prompt'])
         if selected_size:
             provenance = {f'source_{key}': source[key] for key in ('message_id', 'task_id') if key in source}

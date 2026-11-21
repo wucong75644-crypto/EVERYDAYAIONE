@@ -207,7 +207,7 @@ class ChatImageInputResolver:
 
     def _message(self, message_id):
         row = self.owner.db.table("messages").select(
-            "id,conversation_id,org_id,context_revision,content,status,role,message_kind"
+            "id,conversation_id,org_id,context_revision,content,status,role,message_kind,generation_params"
         ).eq("id", message_id).maybe_single().execute().data
         if (not isinstance(row, dict) or row.get("conversation_id") != self.owner.conversation_id
                 or row.get("org_id") != self.owner.org_id):
@@ -459,6 +459,23 @@ class ChatImageInputResolver:
                     intent[key] = previous[key]
         return intent, previous
 
+    def selected_image_size(self, reference):
+        """Read the verified, explicitly selected generated image's settings."""
+        task_id = reference.get("task_id")
+        message_id = reference.get("message_id") or reference.get("source_message_id")
+        if not task_id or not message_id:
+            return {}
+        row = self._message(str(message_id))
+        params = row.get("generation_params") or {}
+        if str(params.get("task_id")) != str(task_id):
+            return {}
+        target = params.get("size_requirement") or {}
+        resolution = target.get("resolution") or params.get("resolution")
+        previous = {"source_task_id": str(task_id), "source_message_id": str(message_id)}
+        if resolution:
+            previous["resolution"] = resolution
+        return previous
+
     def _target(self, locator: str, source: dict):
         from services.file_resources import FileTarget
         if "asset_id" in source or "message_id" in source or "source_message_id" in source:
@@ -561,13 +578,25 @@ class ChatImageInputResolver:
         """Read-only verification of the supplied text; never expand or rewrite it."""
         return prompt,self.source_prompt(source,prompt)
 
+    def content_image_item(self, proof):
+        from services.task_execution.content_objects import ContentReference, load
+
+        state = self._content_state()
+        artifact, _, item = load(state, ContentReference.model_validate({
+            key: proof['source'][key] for key in ('artifact_id', 'item_index', 'sha256')
+        }))
+        return artifact, item
+
+    def _content_state(self):
+        return (getattr(self.owner, '_task_execution_state', None)
+                or getattr(getattr(self.owner, '_actor_runtime', None), 'task_execution_state', None))
+
     def verify_content_object(self,proof):
         from services.task_execution.content_objects import compile_input, is_regeneration_variant
         from services.task_execution.reducer import digest
         if not isinstance(proof,dict) or set(proof)!={'version','source','tool','arguments','arguments_sha256'} or proof['version']!=1 or proof['tool']!='generate_image':
             raise ValueError('CONTENT_PROOF_INVALID')
-        state=getattr(self.owner,'_task_execution_state',None)
-        if state is None: state=getattr(getattr(self.owner,'_actor_runtime',None),'task_execution_state',None)
+        state = self._content_state()
         if (state is None or str(state.actor_user_id)!=str(self.owner.user_id)
                 or str(state.conversation_id)!=str(self.owner.conversation_id)
                 or (str(state.org_id) if state.org_id else None)!=self.owner.org_id

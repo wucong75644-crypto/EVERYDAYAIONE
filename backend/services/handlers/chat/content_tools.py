@@ -438,6 +438,7 @@ SCHEMAS = (
 def model_tools(tools, *, selectable_source_images=False, server_image_plan=False, reuse_source=False, first_delivery=False, current_images=(), inline_image=False):
     """Project the one entry contract selected by the current workflow."""
     from services.task_execution.content_objects import ContentReference, ImageContentReference, selection_parameters
+    from services.handlers.image_size_requirements import SIZE_GUIDANCE
     result=[]
     for original in tools:
         name=original.get('function',{}).get('name')
@@ -525,7 +526,7 @@ def model_tools(tools, *, selectable_source_images=False, server_image_plan=Fals
                 '后台逐字读取选中条目的原文及已确定的执行规格；受理后由页面展示进度和结果。'
                 + (' 已绑定的图自动复用。继续其余条目时跳过已有受理或结果的项；用户明确换图时只替换此次参考图。'
                    '用户明确要求按同一方案再生成时，使用同一 content_source，并填写 regenerate 为本轮完整原话。'
-                   '每次调用处理一张图。多张已选且相互独立的图片按条目顺序在同一轮提交各自的调用。'
+                   '每次调用处理一张图。多张已选且相互独立的图片按条目顺序在同一轮提交各自的调用。' + SIZE_GUIDANCE
                    if name == 'generate_image' else ' 仅接受文字脚本，不传图片素材；不支持视频剪辑。')
             )
             if name == 'generate_image' and reuse_source:

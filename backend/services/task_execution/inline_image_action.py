@@ -2,8 +2,9 @@
 from dataclasses import replace
 import json
 
-from services.tools.argument_validation import validate_model_image_arguments
+from services.tools.argument_validation import _issues, validate_model_image_arguments
 from services.tools.policy import ToolPolicy
+from services.handlers.image_size_requirements import image_draft_options_schema
 
 from . import content_objects as content
 from .contracts import Fact, TaskError
@@ -34,8 +35,7 @@ class InlineRequest(Fact):
         definitions = draft.pop('$defs', {})
         properties = draft['properties']
         properties.pop('display_prefix', None)
-        properties['options'] = {'type': 'object', 'additionalProperties': False,
-            'properties': {key: base[key] for key in ('aspect_ratio', 'resolution', 'output_format') if key in base}}
+        properties['options'] = image_draft_options_schema(base)
         return draft, definitions
 
 
@@ -106,7 +106,16 @@ async def prepare(runtime, handler, request, prepared, call, args, registry, *, 
     context = prepared.execution_context
     value = InlineRequest.model_validate(args)
     item = value.draft
-    if item.display_prefix is not None or set(item.options) - {'aspect_ratio', 'resolution', 'output_format'}:
+    from services.tools.argument_validation import ToolArgumentValidationError
+
+    native = registry.require(TOOL).to_schema()['function']['parameters']['properties']
+    options = image_draft_options_schema(native)
+    issues = _issues(item.options, options)
+    if issues:
+        raise ToolArgumentValidationError(
+            [{**issue, 'path': '$.draft.options' + issue['path'][1:]} for issue in issues],
+            {'type': 'object', 'properties': {'draft': {'type': 'object', 'properties': {'options': options}}}})
+    if item.display_prefix is not None:
         raise TaskError('CHAT_INLINE_IMAGE_OPTIONS_INVALID')
     selectors = [material.reference.model_dump(mode='json', exclude_none=True) for material in item.materials]
     if len({digest(selector) for selector in selectors}) != len(selectors):

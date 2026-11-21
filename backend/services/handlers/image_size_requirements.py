@@ -1,5 +1,6 @@
 """Resolve size intent separately from product analysis, before image acceptance."""
 from copy import deepcopy
+from math import log
 import re
 
 from services.handlers.image_dimensions import ratio_for
@@ -7,14 +8,57 @@ from services.handlers.image_dimensions import ratio_for
 RATIO = re.compile(r"(?<![\d:：])([+-]?\d{1,3})\s*[:：]\s*([+-]?\d{1,3})(?![\d:：])")
 PIXELS = re.compile(r"(?<!\d)([+-]?\d+)\s*[xX×＊*]\s*([+-]?\d+)(?!\d)")
 RESOLUTION = re.compile(r"(?<![\d])(\d+)\s*[kK](?![A-Za-z0-9_])")
-SIZE_GUIDANCE = ("图片尺寸是独立生成要求：服务器 canvas 中的宽高是整张原图画布，不是产品形状。"
-    "禁止根据笔记本、包装盒等主体的形状推导画布比例。提示词中的产品比例只描述主体造型，"
-    "不能作为输出尺寸要求或填入aspect_ratio；输出画布规格单独使用服务器目标尺寸。"
-    "当前用户明确规格优先，其次沿用已确定规格；"
-    "只改比例保留分辨率，只改分辨率保留比例。参考图任务要求保持比例时，按服务器 canvas 事实生成方案和提示词；"
-    "未能读取尺寸时不能目测冒充原图比例。多参考图需要明确画布来源。"
-    "尺寸含义不明、像素与比例冲突、接口不支持精确像素时，先解释并等待用户选择，不能偷偷近似或扣图片积分。"
-    "自动模式仅在用户允许且没有固定要求时使用。方案、最终提示词与工具参数必须使用同一目标规格。")
+AUTO_RATIO = re.compile(
+    r"比例\s*(?:由你(?:来)?(?:决定|定)|你(?:来)?(?:决定|定)|随你|自动(?:选择|决定)|用auto)"
+    r"|(?:你(?:来)?(?:决定|定)|自动(?:选择|决定))\s*(?:输出|画布)?比例",
+    re.I,
+)
+IMAGE_SIZE_OPTIONS = ('aspect_ratio', 'resolution', 'size_requirement')
+IMAGE_DRAFT_OPTIONS = (*IMAGE_SIZE_OPTIONS, 'output_format')
+
+SIZE_GUIDANCE = (
+    "图片输出尺寸以平台图片工具规格为准。未指定时默认1K，无参考图默认1:1；"
+    "有选定参考图时后台把真实整图画布匹配到最接近的支持比例，省略aspect_ratio或使用inherit_reference。"
+    "多张参考图画布不同时，按用户意图选择画布来源；reference_index是执行参考图中的零基索引。"
+    "只有用户明确把比例交给系统选择时才用auto。只改比例保留已选图的分辨率档，只改分辨率保留比例。"
+    "用户给出的比例填aspect_ratio（如1:1），分辨率档填resolution（如1K）。产品比例只描述主体造型。"
+    "原图宽高仅是素材事实，不能写成输出像素。仅用户确实要求精确像素时用size_requirement.width/height，"
+    "发现不支持或冲突时在提交前说明。用画面正文描述构图，尺寸规格仅在已确定后使用单独参数。"
+)
+
+
+def image_draft_options_schema(native_properties=None):
+    """Image-specific authoring schema, separate from historical ContentItem storage."""
+    if native_properties is None:
+        from services.tools.catalog import build_tool_catalog
+        native_properties = build_tool_catalog().require('generate_image').to_schema()['function']['parameters']['properties']
+    from services.adapters.kie.configs import IMAGE_MODEL_CONFIGS
+    from services.handlers.chat_image_request import default_chat_image_model
+    ratios = dict.fromkeys(ratio for mode in ('text_to_image', 'image_to_image')
+                          for ratio in IMAGE_MODEL_CONFIGS[default_chat_image_model(mode)]['supported_sizes'])
+    fields = {key: deepcopy(native_properties[key]) for key in IMAGE_DRAFT_OPTIONS}
+    fields['aspect_ratio'].update(enum=list(ratios), description='输出画布比例；参考图默认省略，由后台匹配。auto仅用于本轮用户明确授权。')
+    fields['resolution']['description'] = '输出清晰度档位，默认1K。使用已选成图修改时可沿用其已确认档位。'
+    fields['size_requirement']['dependentRequired'] = {'width': ['height'], 'height': ['width']}
+    return {'type': 'object', 'additionalProperties': False, 'properties': fields, 'description': SIZE_GUIDANCE}
+
+
+def nearest_reference_ratio(reference, supported):
+    width, height = reference.get('width'), reference.get('height')
+    if not (type(width) is int and type(height) is int and width > 0 and height > 0):
+        try:
+            width, height = map(int, (reference.get('aspect_ratio') or '').split(':'))
+        except (TypeError, ValueError):
+            width = height = 0
+    if width <= 0 or height <= 0:
+        raise ImageSizeError("IMAGE_DIMENSIONS_UNAVAILABLE", "原图尺寸未读取成功；请指定比例或重新选择图片。")
+    ratio = ratio_for(width, height)
+    if ratio in supported:
+        return ratio
+    candidates = [(value, *map(int, value.split(':'))) for value in supported if value != 'auto']
+    same_direction = [(value, w, h) for value, w, h in candidates if (width - height) * (w - h) >= 0]
+    return min(same_direction or candidates, key=lambda item: abs(log(width / height) - log(item[1] / item[2])))[0]
+
 
 
 class ImageSizeError(ValueError):
@@ -71,7 +115,7 @@ def user_size_intent(text: str) -> dict:
         intent["resolution"] = resolutions.pop()
     if re.search(r"(?:正方形|方图|方形画布)", text) and "aspect_ratio" not in intent:
         intent["aspect_ratio"] = "1:1"
-    if re.search(r"(?:比例|尺寸).{0,5}(?:你决定|你来决定|自动|自行|自由)|(?:自动|自行|自由|你决定|你来决定).{0,5}(?:比例|尺寸)", text):
+    if AUTO_RATIO.search(text):
         if ratios or "aspect_ratio" in intent or pixels or "width" in intent:
             raise ImageSizeError("IMAGE_SIZE_CONFLICT", "自动比例与固定尺寸同时出现，请明确本次使用哪一种。")
         intent["mode"] = "auto"
@@ -158,20 +202,14 @@ def resolve_size_requirement(args: dict, references: list[dict], *, intent=None,
             raise ImageSizeError("IMAGE_SIZE_INVALID", "画布比例格式无效。")
         if (intent["orientation"] == "portrait" and w >= h) or (intent["orientation"] == "landscape" and w <= h):
             raise ImageSizeError("IMAGE_SIZE_CONFLICT", "工具比例与用户指定的横竖方向冲突，请纠正参数。")
-    elif previous.get("aspect_ratio"):
+    elif mode == "auto" or args.get("aspect_ratio") == "auto":
+        raise ImageSizeError("IMAGE_SIZE_INTENT_REQUIRED", "只有用户明确把比例交给系统选择时才用auto；否则按参考图或默认比例执行。")
+    elif previous.get("aspect_ratio") and previous["aspect_ratio"] != "auto" and mode != "inherit_reference":
         mode, ratio, source = previous.get("mode", "explicit"), previous["aspect_ratio"], "task"
-    elif mode == "auto":
-        if references:
-            raise ImageSizeError("IMAGE_SIZE_INTENT_REQUIRED", "参考图默认保留画布比例；仅在用户允许自动选择时使用auto，不要用auto绕过原图事实。")
-        ratio, source = "auto", "model"
-    elif references and mode != "explicit":
+    elif references:
         mode, ratio, source = "inherit_reference", None, "reference"
     else:
         mode, ratio, source = "explicit", args.get("aspect_ratio", "1:1"), "model"
-        # The model may interpret '竖版海报' as an explicit target; it cannot
-        # override a selected canvas merely by adding explicit to the tool call.
-        if references and not intent.get("orientation"):
-            mode, ratio, source = "inherit_reference", None, "reference"
     reference_index = None
     if mode == "inherit_reference" and ratio is None:
         if not references:
@@ -186,12 +224,12 @@ def resolve_size_requirement(args: dict, references: list[dict], *, intent=None,
             reference_index = 0
         if type(reference_index) is not int or not 0 <= reference_index < len(references):
             raise ImageSizeError("IMAGE_CANVAS_REFERENCE_REQUIRED", "画布来源索引无效，请从选定参考图中明确选择。")
-        ratio = references[reference_index].get("aspect_ratio")
-        if not ratio:
-            raise ImageSizeError("IMAGE_DIMENSIONS_UNAVAILABLE", "原图尺寸读取失败，请指定比例或重新选择图片。")
+        ratio = nearest_reference_ratio(references[reference_index], config["supported_sizes"])
     if ratio not in config["supported_sizes"]:
         raise ImageSizeError("IMAGE_ASPECT_RATIO_UNSUPPORTED", f"当前模型不支持{ratio}；可选比例：{', '.join(config['supported_sizes'])}。等待用户选择，不近似转换。")
     resolution = intent.get("resolution") or previous.get("resolution") or args.get("resolution")
+    if resolution is None and config.get("supports_resolution"):
+        resolution = "1K"
     if resolution is not None and resolution not in config.get("supported_resolutions", ()):
         raise ImageSizeError("IMAGE_RESOLUTION_UNSUPPORTED", f"当前模型支持分辨率：{', '.join(config.get('supported_resolutions', ()))}。请等待用户选择，不自动降级。")
     args.update(aspect_ratio=ratio)

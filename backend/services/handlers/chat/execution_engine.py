@@ -2071,6 +2071,9 @@ async def _execute_tools_impl(
                                 result['material_example'] = {
                                     'reference': result['references'][0], 'role': '编辑底图', 'usage': 'input',
                                 }
+                        if result['code'] == 'CONTENT_IMAGE_OPTIONS_INVALID':
+                            from services.handlers.image_size_requirements import SIZE_GUIDANCE
+                            result.update(stage='validate', recovery={'action': 'repair_arguments'}, message=SIZE_GUIDANCE)
                         if result['code'] == content_objects.PRESENTATION_INCOMPLETE:
                             from services.task_execution.methods import REFERENCE_PROMPTS_PRESENTATION
                             result['message'] = REFERENCE_PROMPTS_PRESENTATION
@@ -2202,6 +2205,8 @@ async def _execute_tools_impl(
                     guidance = ('已记录本轮的图片动作。请查看原任务状态。多张图请使用分条方案。'
                                 if code == 'CHAT_INLINE_IMAGE_ALREADY_PREPARED' else
                                 '本次没有派发。请按 draft 合同核对完整要求、明确素材和输出规格。')
+                    if getattr(error, 'issues', None):
+                        guidance += ' ' + '；'.join(f"{issue['path']} {issue['reason']}" for issue in error.issues[:4])
                     direct_errors[call['id']] = (code, code + '：' + guidance)
                     projected_calls.append(call)
                     continue

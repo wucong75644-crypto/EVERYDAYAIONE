@@ -189,3 +189,23 @@ def test_registry_and_dynamic_tool_definitions_are_closed_over_local_schema_refe
         parameters = function['parameters']
         Draft202012Validator.check_schema(parameters)
         check_refs(parameters, parameters)
+
+
+@pytest.mark.parametrize('options,valid', [
+    ({}, True),
+    ({'size_requirement': {'mode': 'inherit_reference'}}, True),
+    ({'aspect_ratio': '3:4', 'resolution': '1K'}, True),
+    ({'aspect_ratio': '1024'}, False),
+    ({'width': 1024, 'height': 1024}, False),
+    ({'size_requirement': {'mode': 'explicit', 'width': 1024}}, False),
+])
+async def test_image_draft_and_reference_skill_publish_same_size_fields(wire_contracts, options, valid):
+    item = {'title': '新图', 'body': '生成商品图', 'display_prefix': '展示', 'options': options}
+    save = content_objects.save_parameters(require_presentation=True)
+    inline = wire_contracts['generate_image']
+    assert Draft202012Validator(save).is_valid({
+        'document': {'title': '方案', 'display_prefix': '展示', 'items': [item]},
+    }) is valid
+    args = {'draft': {key: value for key, value in item.items() if key != 'display_prefix'}}
+    assert Draft202012Validator(inline).is_valid(args) is valid
+    assert (offered_argument_error('generate_image', args, inline) is None) is valid
