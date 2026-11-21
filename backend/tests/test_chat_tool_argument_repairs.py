@@ -216,3 +216,27 @@ async def test_server_continuation_keeps_the_original_user_input_budget():
     assert error_code(prepared.messages, 'after-event') == repairs.INVALID
     assert list(repairs.read(continued).counts.values()) == [2]
     assert repairs.read(continued).input_id == 'source-input-1'
+
+
+def test_saved_source_and_schema_errors_share_one_persisted_correction_budget():
+    import json
+
+    runtime, prepared, _, request = setup()
+    offer = {'generate_video': {'name': 'generate_video', 'parameters': {
+        'type': 'object', 'required': ['content_source'],
+        'properties': {'content_source': {'type': 'object'}},
+    }}}
+    schema_error = call('generate_video', {'unexpected': True}, 'invalid-schema')
+    stale = call('generate_video', {'content_source': {'item_index': 2}}, 'invalid-source')
+    errors = {'invalid-source': ('CONTENT_BASE_VERSION_CHANGED', '来源版本已经变化')}
+    first = repairs.Batch.prepare(runtime, request, [schema_error, stale], offer)
+    combined = repairs.Batch.with_sources(runtime, request, [schema_error, stale], errors, first)
+    assert list(combined.state.counts.values()) == [1]
+    assert json.loads(combined.rejections['invalid-source'])['submission_state'] == 'not_dispatched'
+    combined.record(runtime, prepared.messages, [])
+
+    second = repairs.Batch.with_sources(runtime, request, [stale], errors)
+    second.record(runtime, prepared.messages, [])
+    third = repairs.Batch.prepare(runtime, request, [schema_error], offer)
+    assert list(third.state.counts.values()) == [3]
+    assert third.state.stopped

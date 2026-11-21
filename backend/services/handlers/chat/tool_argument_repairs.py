@@ -63,10 +63,29 @@ def _operation(args, parameters):
     return action if isinstance(action, str) and action in actions else None
 
 
+# These errors come from the host's pre-dispatch source projection.
+_SOURCE_RECOVERY = {
+    'CONTENT_SOURCE_REQUIRED': ('reload_source', '从当前成果目录选取来源。需要时先用会话读取工具读取原稿。'),
+    'CONTENT_OBJECT_UNAVAILABLE_OR_CHANGED': ('reload_source', '重新读取当前目录，使用选定条目的当前版本。'),
+    'CONTENT_BASE_VERSION_CHANGED': ('reload_source', '重新读取当前目录中的最新版，核对同一条目。'),
+    'CONTENT_ITEM_UNAVAILABLE': ('reload_source', '核对当前目录的条目编号。多个候选无法区分时请用户选择。'),
+    'CONTENT_SOURCE_IMAGE_SELECTION_REQUIRED': ('reload_source', '核对该条目的可选原图。用户意图明确时选择对应原图，否则请用户选择。'),
+    'CONTENT_IMAGE_SELECTION_CONFLICT': ('repair_arguments', '按本轮意图只填写一种原图选择。'),
+    'CHAT_TOOL_DISCOVERY_REQUIRED': ('discover_tool', '先查找本轮可用工具，下一轮按实际提供的定义调用。'),
+}
+
+
+def source_rejections(calls, errors):
+    return {call['id']: _SOURCE_RECOVERY[errors[call['id']][0]] for call in calls
+            if call['id'] in errors and errors[call['id']][0] in _SOURCE_RECOVERY
+            and call['name'] in {'generate_image', 'generate_video', 'code_execute'}}
+
+
 @dataclass
 class Batch:
     state: Checkpoint
     rejections: dict[str, str]
+    targets: dict[str, str]
 
     @classmethod
     def prepare(cls, runtime, request, calls, offers, *, repair_chat_images=False):
@@ -117,22 +136,52 @@ class Batch:
         if not rejections:
             return None
 
-        # A single model round can emit multiple copies of the same rejection.
-        # Charge one correction attempt per failed target in that round.
-        for target in set(targets.values()):
+        batch = cls(Checkpoint(input_id=input_id, input_version=version, counts=counts,
+                               stopped=False), rejections, targets)
+        batch.finish(calls)
+        return batch
+
+    @classmethod
+    def with_sources(cls, runtime, request, calls, errors, existing=None):
+        recoverable = source_rejections(calls, errors)
+        if not recoverable:
+            return existing
+        previous = read(runtime)
+        input_id = _input_id(runtime, request, previous)
+        version = _input_version(runtime, input_id)
+        counts = dict(previous.counts) if previous and previous.input_version == version else {}
+        batch = cls(Checkpoint(input_id=input_id, input_version=version, counts=counts,
+                               stopped=False), dict(existing.rejections) if existing else {},
+                    dict(existing.targets) if existing else {})
+        for call in calls:
+            call_id = call['id']
+            if call_id not in recoverable or call_id in batch.rejections:
+                continue
+            code, _ = errors[call_id]
+            action, guidance = recoverable[call_id]
+            batch.targets[call_id] = digest([call['name'], None, INVALID])
+            batch.rejections[call_id] = json.dumps({
+                'code': code, 'stage': 'validate', 'submission_state': 'not_dispatched',
+                'recovery': {'action': action}, 'message': guidance,
+            }, ensure_ascii=False)
+        batch.finish(calls)
+        return batch
+
+    def finish(self, calls):
+        # Charge once per target per sampling round, regardless of call IDs.
+        counts = self.state.counts
+        for target in set(self.targets.values()):
             counts[target] = min(counts.get(target, 0) + 1, LIMIT)
-        exhausted = {call_id for call_id, target in targets.items() if counts[target] >= LIMIT}
+        exhausted = {call_id for call_id, target in self.targets.items() if counts[target] >= LIMIT}
         for call_id in exhausted:
-            detail = json.loads(rejections[call_id])
+            detail = json.loads(self.rejections[call_id])
             detail.update(
                 code=EXHAUSTED,
                 recovery={'action': 'request_user_input'},
                 message='此操作的参数纠错次数已用完。本次没有发出调用。请等待用户补充要求。',
             )
-            rejections[call_id] = json.dumps(detail, ensure_ascii=False)
-
-        return cls(Checkpoint(input_id=input_id, input_version=version, counts=counts,
-                              stopped=len(exhausted) == len(calls)), rejections)
+            self.rejections[call_id] = json.dumps(detail, ensure_ascii=False)
+        self.state.stopped = len(exhausted) == len(calls)
 
     def record(self, runtime, messages, blocks):
         # Preserve tool-call/result pairing in the old transcript format. A

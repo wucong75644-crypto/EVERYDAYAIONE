@@ -58,7 +58,7 @@ def continuation_db(children_db):
         c.execute((ROOT/'migrations/rollback/343_agent_task_continuations_rollback.sql').read_text())
 
 
-async def finished(dsn,monkeypatch,*,remaining=False,failed=False,image_count=1,repeated_history=False,downstream=False,existing_source=False,binding_version=1):
+async def finished(dsn,monkeypatch,*,remaining=False,failed=False,image_count=1,repeated_history=False,downstream=False,existing_source=False,binding_version=1,recovery_code=None):
     f,first,snapshot=await child_case(dsn,monkeypatch,image_count=image_count,downstream=downstream,existing_source=existing_source,binding_version=binding_version)
     from services.task_execution.methods import ImageMethodDocument
     from services.task_execution.image_binding import image_prompt
@@ -102,6 +102,8 @@ async def finished(dsn,monkeypatch,*,remaining=False,failed=False,image_count=1,
                 token=c.execute("SELECT request_params#>>'{_media_lifecycle_v1,claim_token}' FROM tasks WHERE id=%s",(child['task_id'],)).fetchone()[0]
             assert worker_rpc(f,'mark_chat_image_dispatch',child['task_id'],token)['outcome']=='dispatch'
             assert worker_rpc(f,'record_chat_image_provider_result',child['task_id'],Jsonb({'status':'failed' if failed else 'success','image_urls':[part['url']]}))['outcome']=='settling'
+            if failed and recovery_code:
+                part['media_recovery_code'] = recovery_code
             assert worker_rpc(f,'publish_chat_image_result',child['task_id'],Jsonb([part]),'failed' if failed else 'completed','',False)['outcome']=='published'
     with connect(f) as c:
         event=c.execute('SELECT id FROM agent_task_events WHERE child_task_id=%s',(child['task_id'],)).fetchone()[0]
@@ -220,8 +222,27 @@ async def test_sql_independently_rejects_forged_continuation_facts(continuation_
 
 @pytest.mark.asyncio
 async def test_failed_native_image_is_not_a_delivered_image_or_an_automatic_paid_retry(continuation_db,monkeypatch):
-    f,state,child,event=await finished(continuation_db,monkeypatch,failed=True)
+    from services.task_execution.image_continuation import RECOVERY_KEY, model_recovery_facts
+
+    f,state,child,event=await finished(continuation_db,monkeypatch,failed=True,
+                                      recovery_code='PROVIDER_ACCEPTANCE_UNKNOWN')
     task,claim,payload,candidate=bundle_for(f,enqueue(f,state,event)['task_id'])
+    facts = model_recovery_facts(SimpleNamespace(checkpoint_base=payload,
+        task_image_completion=SimpleNamespace(event_id=payload['_continuation_input']['event_id'])))
+    assert facts == [{'task_id':child['task_id'], 'code':'PROVIDER_ACCEPTANCE_UNKNOWN',
+                      'submission_state':'unknown', 'recovery':{'action':'check_original_task'}}]
+    assert payload[RECOVERY_KEY]['failures'] == facts
+    from services.handlers.chat import content_tools
+
+    runtime = SimpleNamespace(checkpoint_base=payload, task_execution_state=candidate,
+                              task_image_completion=SimpleNamespace(event_id=payload['_continuation_input']['event_id']))
+    context = SimpleNamespace(conversation_id=f['conv'], org_id=None, actor_user_id=f['user'],
+                              workspace_owner_id=f['user'], context_scope='user', personal_context_allowed=True)
+    monkeypatch.setattr(content_tools, '_check_identity', lambda *_: None)
+    status = content_tools.read_image_task_status(runtime, object(), context, child['task_id'])
+    assert status['status'] == 'failed_after_dispatch' and status['failure'] == facts[0]
+    with pytest.raises(ValueError, match='CHAT_IMAGE_STATUS_UNAVAILABLE'):
+        content_tools.read_image_task_status(runtime, object(), context, str(uuid4()))
     assert candidate.status=='active'
     assert not [a for a in candidate.artifacts if a.kind=='image']
     assert candidate.operations[0].status=='failed_after_dispatch'

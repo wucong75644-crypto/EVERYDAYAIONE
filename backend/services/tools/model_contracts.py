@@ -91,6 +91,7 @@ def _rejection(name, issues, parameters):
     return json.dumps({
         'code': 'MODEL_TOOL_ARGUMENTS_INVALID',
         'stage': 'validate',
+        'submission_state': 'not_dispatched',
         'recovery': {'action': 'repair_arguments'},
         'issues': issues,
         'allowed_fields': list((parameters or {}).get('properties', ())),

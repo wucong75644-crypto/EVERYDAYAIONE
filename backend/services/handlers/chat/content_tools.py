@@ -31,12 +31,126 @@ _PROMPT_ONLY_ACTION = re.compile(
 )
 
 
+_IMAGE_REGENERATION = re.compile(
+    r'(?:再|重新)\s*(?:帮我|给我|为我)?\s*(?:(?:把|将|用|按|照).{1,24}?)?'
+    r'(?:生图|出图|(?:生成|做|画)(?:出|成)?(?:一[次张版下]|(?:这|那)张图|图片|\s*$)'
+    r'|来一张)|重(?:(?:做|画)一次|来一张)',
+)
+_REGENERATION_NEGATED = re.compile(r'不要|别|不用|不必|不需要|无需|禁止|取消|只看|只给我看|不想|不打算|不准备|已经|如果|假如|不\s*$')
+_IMAGE_EXPLANATION = re.compile(r'怎么|如何|为什么|是什么意思|是否支持|怎样')
+_QUOTED_REQUEST = re.compile(r'[「」『』“”`"]|(?:这句话|这句提示|刚才说|之前说|上次说).{0,12}(?:什么|原文)')
+_IMAGE_PROMPT_ONLY = re.compile(r'(?:写|修改|改写|整理).{0,24}提示词[？?。！!\s]*$')
+
+
+def _regenerates_image(text):
+    if _QUOTED_REQUEST.search(text) or _IMAGE_EXPLANATION.search(text) or _IMAGE_PROMPT_ONLY.search(text):
+        return False
+    for clause in re.split(r'[。！？!?；;，,\n]', text):
+        action = _IMAGE_REGENERATION.search(clause)
+        if action and not _REGENERATION_NEGATED.search(clause[:action.start()]):
+            before = clause[:action.start()].rstrip()
+            if before.endswith('不能') and not (
+                    before.endswith('能不能') or before.endswith('你不能') and text.rstrip().endswith(('？', '?'))):
+                continue
+            return True
+    return False
+
+
+def _repeat_wording(text):
+    return (not _QUOTED_REQUEST.search(text) and not _IMAGE_EXPLANATION.search(text)
+            and not re.search(
+                r'不要|别|不用|不必|不需要|无需|禁止|取消|只看|只给我看|已经|过吗|过没有|(?:do not|don.t|cannot|can.t|should not|if you)',
+                text, re.I)
+            and bool(re.search(
+                r'(?:再出一版|另外(?:生成|做|画)|换一张新的|重来一张|'
+                r'(?:generate|make|create|draw) .{0,20}(?:another|again)|(?:redo|regenerate) (?:it|the image))',
+                text, re.I)))
+
+
+def _changes_image(text):
+    return bool(re.search(r'(?:改成|改为|改一下|编辑|调整|换成|替换|去掉|移除|擦掉|加上|调亮|调暗|调浅|调深)', text))
+
+
+def repeats_saved_image(request):
+    text = ' '.join(part.text for part in request.content if part.type == 'text')
+    return not _changes_image(text) and (_regenerates_image(text) or _repeat_wording(text))
+
+
+def image_regeneration_variant(request, evidence=None):
+    """Bind a paid repeat to the current authenticated message, excluding historical quotes."""
+    text = ' '.join(part.text for part in request.content if part.type == 'text').strip()
+    if evidence is not None:
+        if not isinstance(evidence, str) or evidence.strip() != text:
+            raise ValueError('CONTENT_IMAGE_REGENERATION_UNCONFIRMED')
+        # Reject a model-supplied action accompanying an explanation, quoted
+        # request, or instruction that explicitly withdraws generation.
+        if not repeats_saved_image(request):
+            raise ValueError('CONTENT_IMAGE_REGENERATION_UNCONFIRMED')
+    elif _changes_image(text) or not _regenerates_image(text):
+        return None
+    try:
+        message_id = UUID(str(image_input_id(request)))
+    except ValueError:
+        if evidence is not None:
+            raise ValueError('CONTENT_IMAGE_REGENERATION_UNCONFIRMED') from None
+        return None
+    return f'regenerate:{message_id}'
+
+
+IMAGE_NOT_SUBMITTED = '本轮没有提交图片任务。你可以重新发送生成要求。'
+
+
+IMAGE_CALL_REPAIR = (
+    '[Current image action correction] 用户本轮要求执行已存在的图片方案。'
+    '检查当前目录和原文，目标明确时调用本轮提供的图片工具。'
+    '用户明确要求再生成时填写 regenerate 和原条目引用；如果确有多个候选，询问用户选择。'
+    '仅在实际受理后说明任务已提交。'
+)
+
+
+def image_input_id(request):
+    return str(getattr(getattr(request, 'context_anchor', None), 'input_message_id', None) or '')
+
+
+def has_newer_image_input(runtime):
+    changes = getattr(runtime.task_user_changes, 'items', ())
+    followup = runtime.checkpoint_base.get('_task_followup') or {}
+    current = [item for item in changes if str(item.owner_task_id) == str(runtime.task_id)]
+    # Adopting a saved plan delivers the initiating message as a steer. Any
+    # additional input requires a new authorization rather than using that text.
+    return bool(current and (len(current) != 1 or not current[0].delivered
+                             or current[0].message_sha256 != followup.get('input_sha256')))
+
+
+def bind_image_selection(runtime, request, state, reference):
+    from services.task_execution import content_objects
+
+    selection = content_objects.ImageContentReference.model_validate(reference)
+    evidence = selection.regenerate
+    if getattr(runtime, 'task_image_completion', None) is not None or has_newer_image_input(runtime):
+        if evidence is not None:
+            raise ValueError('CONTENT_IMAGE_REGENERATION_UNCONFIRMED')
+        return reference, {}
+    variant = image_regeneration_variant(request, evidence)
+    if variant is None:
+        return reference, {}
+    selected = selection.model_dump(mode='json', exclude={'regenerate'}, exclude_none=True)
+    return content_objects.repeat_image_reference(state, selected), {'variant_id': variant}
+
+
+def requests_existing_image(request):
+    text = ' '.join(part.text for part in request.content if part.type == 'text')
+    return bool(re.search(r'(?:看|发|展示|找|打开).{0,18}(?:旧图|历史图|(?:之前|上次|原来|刚才)生(?:成|好)的图|已有图片)'
+                          r'|(?:旧图|历史图|已有图片).{0,8}(?:发我|给我看)', text)
+                and not image_execution_request(request) and not repeats_saved_image(request) and not _changes_image(text))
+
+
 def image_execution_request(request, runtime=None):
     """Hold execution narration until there is a receipt. This never starts a task."""
     text = ' '.join(getattr(part, 'text', '') for part in (getattr(request, 'content', None) or ()))
-    if re.search(r'怎么|如何|为什么|是什么意思|是否支持|怎样', text):
+    if _IMAGE_EXPLANATION.search(text):
         return False
-    if re.search(r'(?:写|修改|改写|整理).{0,24}提示词[？?。！!\s]*$', text):
+    if _IMAGE_PROMPT_ONLY.search(text):
         return False
     # Remove only the explicitly non-executing phrases. A positive request
     # elsewhere in the same message can still request a different image.
@@ -47,7 +161,53 @@ def image_execution_request(request, runtime=None):
         if (state and any(op.capability == 'platform.generate_image' for op in state.operations)
                 or any(op.get('capability') == 'platform.generate_image' for op in prior.get('state', {}).get('operations', ()))):
             return True
-    return bool(re.search(_IMAGE_ACTION, actions, re.I))
+    return bool(re.search(_IMAGE_ACTION, actions, re.I)) or (
+        _previous_item_pointer(text) and repeats_saved_image(request)
+    )
+
+
+def requested_delivery_tools(request):
+    text = ' '.join(part.text for part in request.content if part.type == 'text')
+    if _IMAGE_EXPLANATION.search(text):
+        return {}
+    actions = re.sub(r'(?:不要|不用|别|无需|不必|暂不)(?:实际|立即|直接)?(?:生成|制作|做成|转成|导出)[^，。！？；,!?;\n]*',
+                     '', text)
+    requested = {}
+    if re.search(r'(?:生成|制作|做成?|转成?|产出)[^，。！？；,!?;\n]{0,12}(?:视频|短片)(?!脚本|文案|提示词)', actions):
+        requested['generate_video'] = '视频'
+    if re.search(r'(?:导出|做成|保存为|转成|生成)[^，。！？；,!?;\n]{0,14}(?:文件|文档|Word|PDF|Excel|CSV|PPT|docx|xlsx)(?!内容|示例)', actions, re.I):
+        requested['code_execute'] = '文件'
+    return requested
+
+
+def delivery_status(runtime, prepared, blocks, tool):
+    artifact_type = {'code_execute': 'file', 'generate_video': 'video'}.get(tool)
+    if artifact_type and any(block.get('type') == artifact_type and block.get('url') and not block.get('failed')
+                             for block in blocks):
+        return 'published'
+    if tool == 'code_execute':
+        return None
+    state = getattr(runtime, 'task_execution_state', None)
+    statuses = {op.status for op in state.operations
+                if op.tool_name == tool and str(op.owner_task_id) == str(runtime.task_id) and op.receipt_ref} if state else set()
+    if 'completed' in statuses:
+        return 'published'
+    if 'accepted' in statuses or tool in getattr(prepared, 'delivery_receipts', ()):
+        return 'accepted'
+    return None
+
+
+def verified_video_status_text(text):
+    return re.sub(r'(?:视频|短片)(?:任务)?(?:已经|已)(?:成功)?(?:生成(?:完成)?|制作完成|完成|发布)',
+                  '视频任务已受理', text)
+
+
+def delivery_notice(deliveries, attempted):
+    return ''.join(
+        f'本轮尚未核实{label}的交付状态。' if tool in attempted
+        else '本轮未提交视频任务。' if tool == 'generate_video' else '本轮未交付文件。'
+        for tool, label in deliveries.items()
+    )
 
 
 def visual_author_request(request, indexed):
@@ -58,9 +218,7 @@ def visual_author_request(request, indexed):
     return None
 
 
-def selects_previous_item(request):
-    """An explicit pointer in an execution request cannot authorize a fresh draft."""
-    text = ' '.join(part.text for part in request.content if part.type == 'text')
+def _previous_item_pointer(text):
     number = r'[零〇一二两三四五六七八九十百0-9]+'
     item = r'(?:方案|稿件|提示词|脚本|文案|条目)'
     # A bare ordinal is a pointer only when the following words concern execution.
@@ -82,8 +240,14 @@ def selects_previous_item(request):
     # Revising/authoring and then executing is a compound task. Keep both actions available.
     if re.search(rf'(?:写|设计|拟|整理|列出).{{0,24}}{item}', text[:pointer.start()]):
         return False
-    return image_execution_request(request) or bool(re.search(
-        r'(?:导出|做成|制成|生成|转成)(?:一份|一个|一段)?(?:视频|文件|文档|Word|PDF)', text, re.I))
+    return True
+
+
+def selects_previous_item(request):
+    """An explicit pointer in an execution request cannot authorize a fresh draft."""
+    text = ' '.join(part.text for part in request.content if part.type == 'text')
+    return _previous_item_pointer(text) and (image_execution_request(request) or bool(re.search(
+        r'(?:导出|做成|制成|生成|转成)(?:一份|一个|一段)?(?:视频|文件|文档|Word|PDF)', text, re.I)))
 
 
 def is_single_image_source_request(request):
@@ -95,15 +259,15 @@ def is_single_image_source_request(request):
             and image_execution_request(request))
 
 
-def unconfirmed_image_reply(text, has_calls, *, awaiting_prompt=False):
+def unconfirmed_image_reply(text, has_calls):
     if has_calls:
         return ''
     # A genuine clarification or failure can accompany a status. A free-form
     # promise is never a substitute for the worker's acceptance event.
-    notice = '本轮尚未收到图片任务的受理回执。'
+    notice = IMAGE_NOT_SUBMITTED
     if text.strip() and (text.rstrip().endswith(('？', '?')) or re.search(r'无法|缺少|失败|请(?:选择|指定|上传|确认)', text)):
         if not re.search(r'已(?:经)?(?:成功)?(?:提交|受理|派发|生成)|提交成功|正在(?:生成|排队)', text):
-            if awaiting_prompt and text.rstrip().endswith(('？', '?')):
+            if text.rstrip().endswith(('？', '?')):
                 return text
             return text + '\n\n' + notice
     return notice
@@ -158,9 +322,9 @@ SCHEMAS = (
     schema(DISCOVER, '查找当前可用工具。用精确工具名或简短目标查找，只返回当前权限范围内的匹配项。后续按实际提供的定义调用；没有匹配时不要猜工具名。',
            {'query': {'type': 'string', 'minLength': 1, 'maxLength': 160}}, ('query',)),
     schema(READ, '在当前会话固定历史中读取资料。修订已保存提示词时用content_source读取指定版本的完整条目。'
-                 '按原图重做用image_task_id读取所选成图的原始输入、实际提示词和规格。'
+                 '按原图重做用image_task_id读取所选成图的原始输入、实际提示词和规格。查询当前任务内已登记的图片受理或结果用image_task_status。'
                  '用message_id查看指定消息。定位历史图时设list_images=true，仅返回图片分组和定位。图片序号只在所属消息或成果组内有效，仍有多个候选时请用户选择。'
-                 '需要实际查看某张图时，用view_image复制它的reference。只读动作不会提交生成。'
+                 '模型需要看图分析时用view_image。用户要看旧图时用show_image交付，两个参数都复制所选图片的reference。只读动作不会提交生成。'
                  'text_exact/text_exacts读取逐字片段。'
                  '执行已登记稿件时把其content_source交给目标工具。各读取方式分别调用。',
            {'content_source': {'type': 'object', 'additionalProperties': False,
@@ -170,7 +334,10 @@ SCHEMAS = (
             'view_image': {'type': 'object', 'additionalProperties': False,
                            'required': ['message_id', 'content_index'],
                            'properties': {'message_id': {'type': 'string'}, 'content_index': {'type': 'integer'}}},
-            'image_task_id': {'type': 'string'}, 'list_images': {'type': 'boolean'}, 'message_id': {'type': 'string'}, 'text_exact': {'type': 'string', 'maxLength': 20000},
+            'show_image': {'type': 'object', 'additionalProperties': False,
+                           'required': ['message_id', 'content_index'],
+                           'properties': {'message_id': {'type': 'string'}, 'content_index': {'type': 'integer'}}},
+            'image_task_id': {'type': 'string'}, 'image_task_status': {'type': 'string'}, 'list_images': {'type': 'boolean'}, 'message_id': {'type': 'string'}, 'text_exact': {'type': 'string', 'maxLength': 20000},
             'text_exacts': {'type': 'array', 'minItems': 1, 'maxItems': 100,
                             'items': {'type': 'string', 'minLength': 1, 'maxLength': 20000}},
 }),
@@ -266,6 +433,7 @@ def model_tools(tools, *, selectable_source_images=False, server_image_plan=Fals
                 '直接把该条的content_source作为同名参数提交，无需重新保存。'
                 '后台逐字读取选中条目的原文及已确定的执行规格；受理后由页面展示进度和结果。'
                 + (' 已绑定的图自动复用。继续其余条目时跳过已有受理或结果的项；用户明确换图时只替换此次参考图。'
+                   '用户明确要求按同一方案再生成时，使用同一 content_source，并填写 regenerate 为本轮完整原话。'
                    '每次调用处理一张图。多张已选且相互独立的图片按条目顺序在同一轮提交各自的调用。'
                    if name == 'generate_image' else ' 仅接受文字脚本，不传图片素材；不支持视频剪辑。')
             )
@@ -430,7 +598,7 @@ async def read_saved_item(runtime, db, context, reference):
 
 
 
-def read_image_view(handler, request, context, reference):
+def _resolve_image_view(handler, request, context, reference):
     from services.task_execution.content_objects import ImageMessageReference
     from services.task_execution.image_resources import native_resolver
 
@@ -441,7 +609,19 @@ def read_image_view(handler, request, context, reference):
     url = native.preview(image)
     if not url:
         raise ValueError('CHAT_IMAGE_VIEW_UNAVAILABLE')
+    return locator, image, url
+
+
+def read_image_view(handler, request, context, reference):
+    locator, _, url = _resolve_image_view(handler, request, context, reference)
     return {'reference': locator, 'visually_present': True}, url
+
+
+def show_image(handler, request, context, reference):
+    locator, image, url = _resolve_image_view(handler, request, context, reference)
+    return {'type': 'image', 'url': url, 'alt': '会话中的已有图片',
+            'width': image.get('width'), 'height': image.get('height'),
+            'source_message_id': locator['message_id'], 'source_content_index': locator['content_index']}
 
 
 def visual_budget_remaining(messages):
@@ -453,6 +633,24 @@ def visual_budget_remaining(messages):
         for part in (message['content'] if isinstance(message.get('content'), list) else ())
     )
     return max(0, get_settings().chat_context_max_images - count)
+
+
+def read_image_task_status(runtime, db, context, value):
+    from services.task_execution.image_continuation import model_recovery_facts
+
+    check_source_scope(db, context)
+    task_id = str(UUID(value))
+    state = runtime.task_execution_state
+    if state is None or (str(state.conversation_id), str(state.org_id), str(state.actor_user_id)) != (
+            str(context.conversation_id), str(context.org_id), str(context.actor_user_id)):
+        raise PermissionError('CHAT_SOURCE_DENIED')
+    operation = next((op for op in state.operations if op.tool_name == 'generate_image'
+                      and op.receipt_ref == f'task:{task_id}'), None)
+    if operation is None:
+        raise ValueError('CHAT_IMAGE_STATUS_UNAVAILABLE')
+    failure = next((fact for fact in model_recovery_facts(runtime) if fact['task_id'] == task_id), None)
+    return {'task_id': task_id, 'status': operation.status, 'scope': 'original_operation',
+            **({'failure': failure} if failure else {})}
 
 
 def read_image_recipe(handler, request, context, image_task_id):

@@ -768,7 +768,86 @@ async def test_image_submission_narration_requires_receipt():
 
     sink, blocks, totals = await run_content_loop(r, p, h, q, promise)
     shown, = [block['text'] for block in blocks if block['type'] == 'text']
-    assert shown == totals.text == sink.text == '本轮尚未收到图片任务的受理回执。'
+    assert shown == totals.text == sink.text == '本轮没有提交图片任务。你可以重新发送生成要求。'
+    h._execute_tool_calls.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_saved_image_repeat_only_repairs_missing_call_once():
+    from dataclasses import replace
+    from schemas.message import TextPart
+    from services.adapters.types import StreamChunk
+    from services.handlers.chat import content_tools
+    from services.tools import build_legacy_catalog
+
+    r, p, h, q, _ = await registered()
+    message = uuid4()
+    q = replace(q, content=[TextPart(text='这个再做一张')],
+                context_anchor=SimpleNamespace(input_message_id=message))
+    p.core_tools = [build_legacy_catalog().require('generate_image').to_schema()]
+    rounds = 0
+
+    async def promise(**kwargs):
+        nonlocal rounds
+        rounds += 1
+        offered = next(tool['function']['parameters'] for tool in kwargs['tools']
+                       if tool['function']['name'] == 'generate_image')
+        assert set(offered['properties']) == {'content_source'}
+        assert any(m['content'] == content_tools.IMAGE_CALL_REPAIR for m in kwargs['messages']
+                   if m['role'] == 'system') == (rounds == 2)
+        yield StreamChunk(content='图片任务已提交。', finish_reason='stop')
+
+    sink, blocks, _ = await run_content_loop(r, p, h, q, promise)
+    assert rounds == 2 and sink.text == content_tools.IMAGE_NOT_SUBMITTED
+    assert content_tools.checkpoint_state(r)['image_call_repair_input'] == str(message)
+    assert [b['text'] for b in blocks if b['type'] == 'text'] == [content_tools.IMAGE_NOT_SUBMITTED]
+    h._execute_tool_calls.assert_not_awaited()
+
+
+@pytest.mark.parametrize(('request_text', 'tool_name', 'label'), [
+    ('用第二个方案生成一段视频', 'generate_video', '视频'),
+    ('把第二个方案导出成 PDF 文件', 'code_execute', '文件'),
+])
+async def test_unconfirmed_delivery_uses_one_repair_and_never_claims_submission(request_text, tool_name, label):
+    from dataclasses import replace
+    from schemas.message import TextPart
+    from services.adapters.types import StreamChunk
+
+    r, p, h, q, _ = await registered()
+    message = uuid4()
+    q = replace(q, content=[TextPart(text=request_text)],
+                context_anchor=SimpleNamespace(input_message_id=message))
+    p.tool_context.discovered_tools.add(tool_name)
+    rounds = []
+
+    async def promise(**kwargs):
+        assert tool_name in {tool['function']['name'] for tool in kwargs['tools']}
+        rounds.append(kwargs)
+        yield StreamChunk(content=f'{label}已提交，正在排队。', finish_reason='stop')
+
+    sink, blocks, _ = await run_content_loop(r, p, h, q, promise)
+    assert len(rounds) == 2
+    expected = '本轮未提交视频任务。' if tool_name == 'generate_video' else '本轮未交付文件。'
+    assert [b['text'] for b in blocks if b['type'] == 'text'] == [expected]
+    assert '已提交' not in sink.text
+    h._execute_tool_calls.assert_not_awaited()
+
+
+async def test_video_acceptance_does_not_confirm_publication():
+    from dataclasses import replace
+    from schemas.message import TextPart
+    from services.adapters.types import StreamChunk
+
+    r, p, h, q, _ = await registered()
+    q = replace(q, content=[TextPart(text='用第二个方案生成一段视频')])
+    p.delivery_receipts = {'generate_video'}
+
+    async def promise(**kwargs):
+        yield StreamChunk(content='视频已生成完成。', finish_reason='stop')
+
+    sink, blocks, _ = await run_content_loop(r, p, h, q, promise)
+    assert sink.text == '视频任务已受理。'
+    assert [b['text'] for b in blocks if b['type'] == 'text'] == ['视频任务已受理。']
     h._execute_tool_calls.assert_not_awaited()
 
 
@@ -853,6 +932,148 @@ async def test_image_completion_event_continues_original_goal_without_asking_for
         assert parts == [] and blocks == []
     assert runtime.task_execution_state.status == ('partial' if operation_status != 'completed' else 'completed')
     handler._execute_tool_calls.assert_not_awaited()
+
+
+@pytest.mark.parametrize(('text', 'regenerates'), [
+    ('第二个方案 你不能再帮我生成一次？', True),
+    ('按刚才的方案再来一张', True),
+    ('再帮我把第二个方案做一次', True),
+    ('第二个方案不需要重新生成图片', False),
+    ('第二个方案重新生成', True),
+    ('第二个方案做成图给我看看', False),
+    ('第二个方案给我看之前生成的图', False),
+    ('第二个方案先别再生成一次，给我看旧图', False),
+    ('第二个方案不能再生成一次', False),
+    ('第二个方案不再生成一次', False),
+    ('已经再生成一次了', False),
+    ('如果再生成一次，会扣积分吗？', False),
+    ('再生成一次，把背景改成蓝色', False),
+    ('第二个方案怎么重新生成？', False),
+    ('第二个方案只重新写提示词', False),
+])
+def test_explicit_saved_plan_regeneration_uses_only_current_user_input(text, regenerates):
+    from dataclasses import replace
+    from schemas.message import TextPart
+    from services.handlers.chat import content_tools
+
+    _, _, _, request = case()
+    message = uuid4()
+    request = replace(request, content=[TextPart(text=text)],
+                      context_anchor=SimpleNamespace(input_message_id=message))
+    assert content_tools.image_regeneration_variant(request) == (f'regenerate:{message}' if regenerates else None)
+    if regenerates:
+        assert content_tools.selects_previous_item(request)
+        assert content_tools.image_execution_request(request)
+        assert content_tools.image_regeneration_variant(replace(request, context_anchor=None)) is None
+
+
+def test_regeneration_without_repeating_the_plan_number_uses_the_new_user_message():
+    from dataclasses import replace
+    from schemas.message import TextPart
+    from services.handlers.chat import content_tools
+
+    _, _, _, request = case()
+    request = replace(request, content=[TextPart(text='再帮我生成一次')])
+    for message in (uuid4(), uuid4()):
+        turn = replace(request, context_anchor=SimpleNamespace(input_message_id=message))
+        assert content_tools.image_regeneration_variant(turn) == f'regenerate:{message}'
+
+
+@pytest.mark.parametrize(('message', 'evidence', 'valid'), [
+    ('第二个方案，换一张新的。', '第二个方案，换一张新的。', True),
+    ('不要再生成一次。', '再生成一次。', False),
+    ('不要再生成一次。', '不要再生成一次。', False),
+    ('「再生成一次」为什么会扣积分？', '「再生成一次」为什么会扣积分？', False),
+    ('第二个方案之前生成过吗？', '第二个方案之前生成过吗？', False),
+])
+def test_model_regeneration_action_requires_current_literal_user_evidence(message, evidence, valid):
+    from dataclasses import replace
+    from schemas.message import TextPart
+    from services.handlers.chat import content_tools
+
+    _, _, _, request = case()
+    message_id = uuid4()
+    request = replace(request, content=[TextPart(text=message)],
+                      context_anchor=SimpleNamespace(input_message_id=message_id))
+    if valid:
+        assert content_tools.image_regeneration_variant(request, evidence) == f'regenerate:{message_id}'
+    else:
+        with pytest.raises(ValueError, match='CONTENT_IMAGE_REGENERATION_UNCONFIRMED'):
+            content_tools.image_regeneration_variant(request, evidence)
+
+
+async def test_explicit_regeneration_bypasses_old_image_reuse_but_deduplicates_same_user_input():
+    from unittest.mock import AsyncMock
+    from services.task_execution.direct_loop import bind_image_recipes, duplicate_image_plan_items, reuse_images, stage_native_calls
+    from services.task_execution.reducer import record_operation, reserve_operation
+    from services.task_execution.image_binding import bind_image_call
+    from services.tools import ToolCall
+
+    runtime, prepared, _, _, row = await registered()
+    reference = ref(row, 2)
+    registry = build_capability_catalog()
+    baseline, _ = co.compile_input(runtime.task_execution_state, 'generate_image', {}, reference)
+    generated, proof = co.compile_input(runtime.task_execution_state, 'generate_image',
+        {'variant_id': f'regenerate:{uuid4()}'}, reference)
+    assert generated['prompt'] == baseline['prompt'] and generated['references'] == baseline['references']
+    assert generated['plan_item_id'] == baseline['plan_item_id'] and generated['variant_id'] != baseline['variant_id']
+    assert co.compile_input(runtime.task_execution_state, 'generate_image',
+        proof['input_arguments'], proof['reference'], allow_old=True)[0] == generated
+
+    resolved = [{'content_sha256': '8' * 64, 'file_version': '1', 'workspace_path': 'original.png', 'role': '原产品'}]
+    original_image = str(uuid4())
+    part = {'type': 'image', 'url': 'https://local.invalid/original-image.png'}
+    previous = {'task_id': original_image, 'message_id': str(uuid4()), 'content_index': 0, 'part': part,
+        'part_sha256': digest(part), 'request': {**baseline, 'references': resolved,
+            'request_hash': '1' * 64, 'origin': {'tool_call_id': 'previous'}}}
+
+    alternative_reference = str(uuid4())
+
+    async def prepare(args, _state, _call, **_kwargs):
+        if args['references'][0]['message_id'] == alternative_reference:
+            return args, [{**resolved[0], 'content_sha256': '9' * 64}], None
+        return args, resolved, None
+
+    resolver = AsyncMock(return_value=resolved)
+    resolver.prepare_request = prepare
+    runtime.task_image_resource_resolver = resolver
+    runtime.task_artifact_reader = SimpleNamespace(reusable_images=AsyncMock(return_value=[previous]))
+
+    async def bind(calls):
+        runtime.task_execution_state, failures = stage_native_calls(runtime, prepared, calls, registry)
+        assert not failures
+        runtime.task_execution_state, failures = await bind_image_recipes(runtime, calls, registry)
+        assert not failures
+
+    original_calls = [call('generate_image', baseline, 'baseline')]
+    await bind(original_calls)
+    state, reused, parts, errors = await reuse_images(runtime, original_calls)
+    assert not errors and len(reused) == 1 and parts == [part]
+    runtime.task_execution_state = state
+
+    fresh = call('generate_image', generated, 'fresh')
+    duplicate = call('generate_image', generated, 'same-turn-second-call')
+    alternative_args, _ = co.compile_input(runtime.task_execution_state, 'generate_image',
+        proof['input_arguments'], {**reference, 'image_override': [{'message_id': alternative_reference, 'content_index': 1}]})
+    changed = call('generate_image', alternative_args, 'same-turn-changed-reference')
+    await bind([fresh, duplicate, changed])
+    _, reused, parts, errors = await reuse_images(runtime, [fresh])
+    assert not reused and not parts and not errors
+    assert set(duplicate_image_plan_items(runtime.task_execution_state, [fresh, duplicate, changed])) == {
+        duplicate['id'], changed['id'],
+    }
+
+    state = runtime.task_execution_state
+    binding = bind_image_call(state, ToolCall(fresh['id'], fresh['name'], generated), registry)
+    owner = state.root_task_id
+    state, op, action = reserve_operation(state, expected_revision=state.revision, step_id=binding.step_id,
+        capability='platform.generate_image', effect_key=binding.effect_key, effect_version=binding.effect_version,
+        arguments=generated, owner_task_id=owner, invocation_id=fresh['id'])
+    assert action == 'reserve'
+    runtime.task_execution_state = record_operation(state, op.id, owner_task_id=owner,
+        status='accepted', receipt_ref=f'task:{uuid4()}')
+    assert fresh['id'] not in duplicate_image_plan_items(runtime.task_execution_state, [fresh])
+    assert set(duplicate_image_plan_items(runtime.task_execution_state, [duplicate])) == {duplicate['id']}
 
 
 @pytest.mark.asyncio
@@ -1119,6 +1340,37 @@ async def test_read_visual_delivers_one_image_with_original_tool_result_pair(mon
     assert p.messages[-1]['content'][-1] == {'type': 'image_url', 'image_url': {'url': preview}}
     assert not pending_calls(p.messages)[0]
     assert view.call_count == 1
+    h._execute_tool_calls.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_viewing_old_image_routes_to_read_and_displays_once(monkeypatch):
+    from dataclasses import replace
+    from schemas.message import TextPart
+    from services.handlers.chat import content_tools
+    from services.handlers.chat.outcome_builder import build_content_parts
+
+    r, p, h, q, row = await registered()
+    q = replace(q, content=[TextPart(text='给我看第二个方案之前生成的图')])
+    await execute(r, p, h, q, [call('generate_image', {'content_source': ref(row, 2)}, 'mistaken-generate')])
+    reply = next(m['content'] for m in reversed(p.messages)
+                 if m['role'] == 'tool' and m['tool_call_id'] == 'mistaken-generate')
+    if isinstance(reply, list):
+        reply = reply[0]['text']
+    assert 'show_image' in reply
+    assert not getattr(h, '_tool_result_stop_reason', None)
+
+    reference = {'message_id': str(uuid4()), 'content_index': 0}
+    monkeypatch.setattr(content_tools, '_resolve_image_view', lambda *_: (
+        reference, {'width': 1024, 'height': 1024}, 'https://images.invalid/old.png'))
+    blocks = await execute(r, p, h, q, [
+        call(content_tools.READ, {'show_image': reference}, 'view'),
+        call(content_tools.READ, {'show_image': reference}, 'network-duplicate'),
+    ])
+    image, = [part for part in build_content_parts(blocks, fallback_text='') if part.type == 'image']
+    assert image.url == 'https://images.invalid/old.png'
+    assert (image.source_message_id, image.source_content_index) == (reference['message_id'], 0)
+    assert json.loads(p.messages[-1]['content'])['status'] == 'delivered_existing'
     h._execute_tool_calls.assert_not_awaited()
 
 

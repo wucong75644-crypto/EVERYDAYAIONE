@@ -36,6 +36,9 @@ class ImageMessageReference(Fact):
 
 
 class ImageContentReference(ContentReference):
+    regenerate: str | None = Field(
+        default=None, min_length=1, max_length=1000,
+        description='用户本轮明确要求再生成一张新图时，逐字填写包含该要求的完整本轮文字。查看或继续已有图片时省略。')
     source_image_indices: tuple[Annotated[int, Field(strict=True, ge=1)], ...] | None = Field(
         default=None, min_length=1, max_length=16,
         description='使用所选成果里尚未绑定的原图时，填写 source_images 序号。')
@@ -336,7 +339,7 @@ def content_image_receipts(state):
             continue
         source = proof['source']
         key = (source['artifact_id'], source['item_index'])
-        receipt = {'status': status, 'specs': {name: recipe[name] for name in (
+        receipt = {'status': status, 'selection': source, 'specs': {name: recipe[name] for name in (
             'aspect_ratio', 'resolution', 'output_format') if name in recipe}}
         if operation and operation.receipt_ref and operation.receipt_ref.startswith('task:'):
             receipt['image_task_id'] = operation.receipt_ref.removeprefix('task:')
@@ -353,6 +356,18 @@ def content_image_receipts(state):
                     receipts.setdefault((artifact.id, index), previous)
         documents[artifact.id] = record.document
     return receipts
+
+
+def repeat_image_reference(state, reference):
+    """Reuse the verified original choice when a repeat omits the reference options."""
+    material_fields = ('source_image_indices', 'without_reference', 'image_override')
+    if any(reference.get(field) is not None for field in material_fields):
+        return reference
+    receipt = content_image_receipts(state).get((reference['artifact_id'], reference['item_index']))
+    if receipt is None:
+        return reference
+    return {**reference, **{field: receipt['selection'][field] for field in material_fields
+                            if field in receipt['selection']}}
 
 
 def with_item_sources(row):
@@ -657,12 +672,21 @@ def _selected_image_inputs(record, indices, inputs):
     return [{**reference, 'role': '原图参考'} for reference in selected]
 
 
+def is_regeneration_variant(value):
+    return isinstance(value, str) and re.fullmatch(
+        r'regenerate:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}', value
+    ) is not None
+
+
 def compile_input(state, name, arguments, reference, *, allow_old=False):
     """Copy the one saved execution text; adapters only translate parameter names."""
     from services.tools.catalog import build_tool_catalog
     from services.tools.argument_validation import _issues
     selection_type = ImageContentReference if name == 'generate_image' else ContentReference
     selection = selection_type.model_validate(reference)
+    if isinstance(selection, ImageContentReference) and selection.regenerate is not None:
+        # User evidence is used at the chat boundary and never becomes part of a native proof.
+        selection = selection.model_copy(update={'regenerate': None})
     artifact, record, item = _load_record(state, selection)
     if not allow_old and not is_current(state, artifact.id):
         raise TaskError('CONTENT_BASE_VERSION_CHANGED')
@@ -695,7 +719,11 @@ def compile_input(state, name, arguments, reference, *, allow_old=False):
         if result.get('mode',mode)!=mode: raise TaskError('CONTENT_ARGUMENT_CONFLICT')
         result.update(prompt=text,references=inputs,mode=mode)
         result.setdefault('plan_item_id',reference['artifact_id']+':'+str(reference['item_index']))
-        result.setdefault('variant_id',result['plan_item_id']+'/1')
+        variant = arguments.get('variant_id')
+        if is_regeneration_variant(variant):
+            result['variant_id'] = variant
+        else:
+            result.setdefault('variant_id', result['plan_item_id']+'/1')
     elif name == 'generate_video':
         if inputs: raise TaskError('CONTENT_MATERIAL_NOT_SUPPORTED_BY_TOOL')
         result['prompt'] = text

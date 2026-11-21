@@ -181,7 +181,7 @@ async def test_direct_content_selection_adopts_saved_task_before_business_dispat
 @pytest.mark.asyncio
 @pytest.mark.parametrize('scenario', [
     'text-to-image', 'image-to-image', 'inline-text-to-image', 'inline-image-to-image', 'inline-repair-then-image', 'inline-resume-before-reserve', 'inline-resume-after-acceptance', 'recorded-first', 'recorded-fifth', 'recorded-write-once', 'recorded-retired',
-    'recorded-third-output', 'new-third-output', 'recorded-quoted-output',
+    'recorded-third-output', 'new-third-output', 'new-regeneration-output', 'recorded-quoted-output',
     'recorded-third-history', 'new-third-history',
 ])
 async def test_chat_executes_from_registration_to_page_receipt(content_db, monkeypatch, tmp_path, scenario):
@@ -243,7 +243,9 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
     recorded = scenario.startswith('recorded-')
     history_import = scenario.endswith('-history')
     recorded_output = scenario in {'recorded-third-output', 'recorded-third-history'}
-    new_output = scenario in {'new-third-output', 'new-third-history'}
+    regeneration = scenario == 'new-regeneration-output'
+    tool_omission = regeneration or scenario == 'new-third-output'
+    new_output = scenario in {'new-third-output', 'new-third-history'} or regeneration
     quoted = scenario == 'recorded-quoted-output'
     automatic_output = recorded_output or new_output or quoted
     followup = recorded or automatic_output
@@ -302,7 +304,7 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
             body += '\n'
     elif new_output:
         question = '参考上传图写五套产品封面提示词。每条输出比例为3:4，输出分辨率为2K。'
-        later_question = '用第三条和原图生成一张图片。'
+        later_question = ('第三个方案 你不能再帮我生成一次？' if regeneration else '用第三条和原图生成一张图片。')
         body = '  保留纸品的标识和边缘。\n输出比例：3:4\n输出分辨率：2K\n不要添加水印。  '
         output_items = [{'title': f'封面方向{i}', 'body': body if i == 3 else f'第{i}套独立正文。'} for i in range(1, 6)]
         first_output = model_content_output('五套封面', output_items)
@@ -542,23 +544,48 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
             r.task_followup_candidate = previous
             r.task_followup_adopt = transfer
 
+            selection_rounds = 0
+
             async def select(**kwargs):
+                from services.handlers.chat.content_tools import IMAGE_CALL_REPAIR
+
+                nonlocal selection_rounds
+                selection_rounds += 1
+                if tool_omission and selection_rounds == 1:
+                    yield StreamChunk(content='图片已提交。', finish_reason='stop')
+                    return
+                if tool_omission:
+                    assert any(m.get('content') == IMAGE_CALL_REPAIR for m in kwargs['messages'])
                 tool = next(tool['function'] for tool in kwargs['tools'] if tool['function']['name'] == 'generate_image')
                 selector = tool['parameters']['properties']['content_source']
                 assert selector['required'] == ['artifact_id','item_index'] and 'sha256' not in selector['properties']
                 assert 'activate_skill' not in {tool['function']['name'] for tool in kwargs['tools']}
                 if write_once or automatic_output:
-                    facts = json.loads(kwargs['messages'][-1]['content'].split('\n')[-1])
+                    context = next(m for m in kwargs['messages'] if m['role'] == 'system' and
+                                   str(m.get('content', '')).startswith('[Model-directed execution]'))
+                    facts = json.loads(context['content'].split('\n')[-1])
                     offered, = facts['previous_content_objects']
                     if saved_item.materials:
                         assert offered['items'][item_index-1]['has_bound_inputs']
                     else:
                         assert offered['source_images'] == [{'index': 1, 'name': source.name}]
                         assert 'source_image_indices' in selector['properties']
-                yield tool_chunk('generate_image', arguments=json.dumps({'content_source':selection}))
+                selected = {**selection, 'regenerate': later_question} if regeneration else selection
+                if regeneration and selection_rounds == 2:
+                    selected = {**selected, 'sha256': '0' * 64}
+                if regeneration and selection_rounds == 3:
+                    error = next(m['content'] for m in reversed(kwargs['messages']) if m['role'] == 'tool')
+                    result = json.loads(error.splitlines()[0])
+                    assert result['recovery'] == {'action': 'reload_source'}
+                    assert result['submission_state'] == 'not_dispatched'
+                yield tool_chunk('generate_image', arguments=json.dumps({'content_source': selected}))
 
             with pytest.raises(FollowupRestart):
                 await run_content_loop(r, p, h, q, select)
+            assert selection_rounds == (3 if regeneration else 2 if tool_omission else 1)
+            if tool_omission:
+                from services.handlers.chat import content_tools
+                assert content_tools.checkpoint_state(r)['image_call_repair_input'] == f['message']
             h._execute_tool_calls.assert_not_awaited()
             with connect(f) as connection:
                 checkpoint_state = connection.execute('SELECT state FROM conversation_turn_checkpoints WHERE task_id=%s',
@@ -769,6 +796,8 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
             [(file_path, input_sha)] if with_original else [])
         assert (snapshot['aspect_ratio'],snapshot['resolution'],snapshot['output_format']) == (ratio,resolution,'png')
         assert snapshot['origin']['input_message_id'] == f['message']
+        if regeneration:
+            assert snapshot['variant_id'] == f"regenerate:{f['message']}"
         if with_original:
             assert snapshot['references'][0]['width'] == snapshot['references'][0]['height'] == (1024 if fifth or write_once or automatic_output else 1254)
 

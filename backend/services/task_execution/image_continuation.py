@@ -9,6 +9,45 @@ from .database_scope import task_database
 from .reducer import complete_step, digest, finish, ready_steps, record_operation, register_artifacts
 
 
+RECOVERY_KEY = '_image_continuation_recovery'
+_FAILURE_RECOVERY = {
+    'FAILED_BEFORE_SEND': ('not_dispatched', 'describe_failure'),
+    'PROVIDER_NOT_SENT': ('not_dispatched', 'describe_failure'),
+    'PROVIDER_REJECTED': ('rejected', 'describe_failure'),
+    'PROVIDER_JOB_FAILED': ('failed_after_dispatch', 'describe_failure'),
+    'PROVIDER_ACCEPTANCE_UNKNOWN': ('unknown', 'check_original_task'),
+    'IMAGE_CANCELLED': ('cancelled', 'describe_failure'),
+    'IMAGE_FAILURE_UNCLASSIFIED': ('unknown', 'check_original_task'),
+}
+
+
+def failure_recovery(children, failures, event_id):
+    failed = {item['task_id']: item['status'] for item in failures}
+    facts = []
+    for child in children:
+        task_id = child['child_task_id']
+        if task_id not in failed:
+            continue
+        part = child.get('part')
+        code = part.get('media_recovery_code') if isinstance(part, dict) else None
+        if failed[task_id] == 'cancelled':
+            code = 'IMAGE_CANCELLED'
+        if code not in _FAILURE_RECOVERY:
+            code = 'IMAGE_FAILURE_UNCLASSIFIED'
+        status, action = _FAILURE_RECOVERY[code]
+        facts.append({'task_id': task_id, 'code': code, 'submission_state': status,
+                      'recovery': {'action': action}})
+    return {'event_id': str(event_id), 'failures': facts}
+
+
+def model_recovery_facts(runtime):
+    fact = runtime.checkpoint_base.get(RECOVERY_KEY) or {}
+    event = getattr(runtime, 'task_image_completion', None)
+    if event is not None and fact.get('event_id') == str(event.event_id):
+        return fact.get('failures', [])
+    return []
+
+
 def advance_images(state, children, *, owner_task_id, base_revision):
     candidate = TaskState.model_validate({**state.model_dump(), 'revision': state.revision + 1, 'status': 'active'})
     artifacts, sources, failures = [], [], []
@@ -81,7 +120,11 @@ def continuation_payload(bundle, *, task, claim, execution_scope):
         '保留原要求、摘要、记忆和权限；不要重新生成已完成图片，不得把失败回执当作图片。\n'
         +json.dumps({'original_goal':source.original_goal,'published_images':images,'failed_children':failures},ensure_ascii=False)}
     from .continuation_checkpoint import build_context
-    return build_context(bundle['checkpoint'],source,candidate,task=task,claim=claim,message=message,
+    checkpoint = dict(bundle['checkpoint'])
+    checkpoint.pop(RECOVERY_KEY, None)
+    if failures:
+        checkpoint[RECOVERY_KEY] = failure_recovery(bundle['children'], failures, task['delivery_context']['event_id'])
+    return build_context(checkpoint,source,candidate,task=task,claim=claim,message=message,
         content_blocks=[],  # The worker has already published the actual result messages.
         event_artifact_ids=tuple(item['artifact_id'] for item in images))
 

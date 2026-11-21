@@ -189,7 +189,8 @@ class ChatImageLifecycle:
         elif phase == "uncertain" and due(state.get("uncertain_deadline")):
             await self.publish(task,[{"type":"image","url":None,"failed":True,
                 "error":"无法确认供应商受理，积分已退还；可能发生的生成费用由平台承担"}],
-                "failed","供应商受理未确认，平台承担",platform_pays=True)
+                "failed","供应商受理未确认，平台承担",platform_pays=True,
+                recovery_code="PROVIDER_ACCEPTANCE_UNKNOWN")
         elif phase == "accepted":
             from core.task_config import IMAGE_TASK_TIMEOUT_MINUTES
             accepted=datetime.fromisoformat(state["accepted_at"].replace("Z","+00:00"))
@@ -295,10 +296,11 @@ class ChatImageLifecycle:
             if not_sent and state['phase'] == 'submitting':
                 await self.rpc(current_task, 'record_chat_image_provider_result', p_result={
                     'status': 'failed', 'error': '未能连接图片服务，尚未提交，积分已退还',
-                    'fail_code': 'SUBMISSION_CONNECTION_FAILED'})
+                    'fail_code': 'SUBMISSION_CONNECTION_FAILED', 'host_recovery_code': 'PROVIDER_NOT_SENT'})
                 await self.finish_with_lock(await self.refresh(current_task))
             elif definitely_rejected:
-                await self.rpc(current_task,"record_chat_image_provider_result",p_result={"status":"failed","error":"供应商明确拒绝生成请求"})
+                await self.rpc(current_task,"record_chat_image_provider_result",p_result={"status":"failed","error":"供应商明确拒绝生成请求",
+                    "host_recovery_code":"PROVIDER_REJECTED"})
                 await self.finish_with_lock(await self.refresh(current_task))
             elif not state.get("dispatch_started_at"):
                 await self.definite_failure(current_task,"生成请求校验或供应商明确拒绝")
@@ -349,8 +351,12 @@ class ChatImageLifecycle:
             return
         if result.get("status") != "success":
             error=result.get("error") or "生成失败"
+            lifecycle = task["request_params"][LIFECYCLE_KEY]
+            code = result.get("host_recovery_code")
+            if code not in {"PROVIDER_NOT_SENT", "PROVIDER_REJECTED"}:
+                code = "PROVIDER_JOB_FAILED" if lifecycle.get("dispatch_started_at") else "FAILED_BEFORE_SEND"
             await self.publish(task,[{"type":"image","url":None,"failed":True,"error":error}],
-                "cancelled" if result.get("cancelled") else "failed",error)
+                "cancelled" if result.get("cancelled") else "failed",error,recovery_code=code)
             return
         from services.file_upload import persist_media_urls_to_workspace
         from services.assets.asset_registry import register_task_media_best_effort
@@ -420,10 +426,11 @@ class ChatImageLifecycle:
         content["asset_id"]=str(registered[0]["asset"]["id"])
         await self.publish(task,[content],"completed")
 
-    async def publish(self, task, content, status, error="",*,platform_pays=False):
+    async def publish(self, task, content, status, error="",*,platform_pays=False,recovery_code=None):
         snapshot = task["request_params"][REQUEST_KEY]
         content = [{**part, "task_id":task["id"], "source_task_id": snapshot.get("source_task_id")
-            or snapshot["origin"].get("retry_of_task_id")} for part in content]
+            or snapshot["origin"].get("retry_of_task_id"),
+            **({"media_recovery_code": recovery_code} if recovery_code else {})} for part in content]
         await self.rpc(task,"publish_chat_image_result",p_content=content,p_status=status,p_error=error,p_platform_pays=platform_pays)
         await self.deliver(await self.refresh(task))
 

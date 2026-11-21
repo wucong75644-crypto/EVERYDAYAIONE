@@ -545,7 +545,7 @@ def duplicate_image_plan_items(state, calls):
     """Block equivalent items using the same ledger as method image slots."""
     if state is None:
         return {}
-    from .content_objects import ContentRecord, objects
+    from .content_objects import ContentRecord, is_regeneration_variant, objects
 
     groups = {artifact.id: ContentRecord.model_validate_json(artifact.inline_text)
               for artifact in objects(state)}
@@ -576,7 +576,12 @@ def duplicate_image_plan_items(state, calls):
                 # create another variant; a real revision or different input file can.
                 slot = record.document.items[selection['item_index'] - 1]
                 effect = {'prompt': slot.body, 'options': slot.options}
-            item = (record.object_key, selection['item_index'], digest([effect, recipe['resolved']]))
+            variant = normalized.get('variant_id')
+            # A new request authorizes one image for this item even if the model
+            # changes its proposed reference while retrying the tool call.
+            request_key = variant if (is_regeneration_variant(variant)
+                and proof.get('arguments', {}).get('variant_id') == variant) else digest([effect, recipe['resolved']])
+            item = (record.object_key, selection['item_index'], request_key)
         by_call[artifact.source_call_id] = (item, artifact.step_id)
         if artifact.step_id in held:
             occupied[item] = artifact.step_id
@@ -660,8 +665,8 @@ async def select_content_owner(runtime, calls):
             runtime.task_followup_candidate = source
 
 
-def can_resume_content_calls(runtime, calls, *, server_image_plan=False):
-    from services.handlers.chat.content_tools import INPUT_TOOLS, validate_model_input
+def can_resume_content_calls(runtime, calls, request, *, server_image_plan=False):
+    from services.handlers.chat.content_tools import INPUT_TOOLS, bind_image_selection, validate_model_input
     from .content_objects import SAVE, SaveContent, compile_input, is_current, load
 
     revision = len(calls) == 1 and calls[0]['name'] == SAVE
@@ -684,6 +689,9 @@ def can_resume_content_calls(runtime, calls, *, server_image_plan=False):
             if not isinstance(args, dict) or 'content_source' not in args:
                 return False
             reference = args.pop('content_source')
+            if call['name'] == 'generate_image':
+                reference, action = bind_image_selection(runtime, request, state, reference)
+                args.update(action)
             compile_input(state, call['name'], args, reference)
     except (ValueError, TypeError, KeyError):
         return False

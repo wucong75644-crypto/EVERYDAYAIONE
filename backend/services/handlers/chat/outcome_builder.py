@@ -115,6 +115,8 @@ def _build_part(block: dict[str, Any]) -> ContentPart | None:
             failed=block.get("failed"),
             error=block.get("error"),
             retry_context=block.get("retry_context"),
+            source_message_id=block.get("source_message_id"),
+            source_content_index=block.get("source_content_index"),
         )
     if block_type == "file":
         return FilePart(
