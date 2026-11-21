@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { restoreMediaTask, reconcileChatTaskStates, type PendingTask } from '../taskRestoration';
+import { restoreMediaTask, reconcileChatTaskStates, subscribeRestoredTasks, type PendingTask } from '../taskRestoration';
 import { IMAGE_TASK_TIMEOUT } from '../../config/task';
 
 // ============================================================
@@ -237,6 +237,25 @@ describe('restoreMediaTask', () => {
     const addedMessage = mockAddMessage.mock.calls[0][1];
     expect(addedMessage.content[0].text).toBe('视频生成中');
   });
+  it('restores and subscribes to the same video placeholder before a provider ID exists', () => {
+    const task = createPendingImageTask({
+      type: 'video', external_task_id: '', client_task_id: null,
+      request_params: {
+        _agent_video_request_v1: { model: 'kling-2.6/text-to-video', aspect_ratio: 'landscape', duration_seconds: 10 },
+        _agent_video_lifecycle_v1: { phase: 'queued' },
+      },
+    });
+    restoreMediaTask(task);
+    expect(mockAddMessage).toHaveBeenCalledWith(task.conversation_id, expect.objectContaining({
+      id: task.placeholder_message_id, status: 'pending',
+      generation_params: expect.objectContaining({ origin: 'agent_video', task_id: task.id, aspect_ratio: 'landscape' }),
+    }));
+
+    const subscribe = vi.fn();
+    subscribeRestoredTasks({ chatTasks: [], mediaTasks: [task] }, subscribe);
+    expect(subscribe).toHaveBeenCalledWith(task.id, task.conversation_id);
+  });
+
 });
 
 describe('chat image recovery', () => {

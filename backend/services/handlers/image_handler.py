@@ -150,17 +150,12 @@ class ImageHandler(BaseHandler):
             }).execute().data)
         if not isinstance(result,dict) or result.get("outcome") not in {"accepted","replay"}:
             raise RuntimeError("CHAT_IMAGE_ACCEPTANCE_NOT_CONFIRMED")
-        try:
-            from schemas.websocket import build_media_pending
-            from services.websocket_manager import ws_manager
-            import json
-            message=await asyncio.to_thread(lambda:scoped.table("messages").select("*").eq("id",result["message_id"]).single().execute().data)
-            if isinstance(message.get("content"),str):
-                message["content"]=json.loads(message["content"])
-            await ws_manager.send_to_task_or_user(result["task_id"],owner.user_id,
-                build_media_pending(result["task_id"],owner.conversation_id,message,result["submission_state"]),org_id=owner.org_id)
-        except Exception as error:
-            logger.warning("Chat image accepted; pending snapshot delivery deferred | task={} | error_type={}",result["task_id"],type(error).__name__)
+        from services.handlers.media_delivery import send_pending_media
+        await send_pending_media(
+            scoped, task_id=result["task_id"], message_id=result["message_id"],
+            user_id=owner.user_id, org_id=owner.org_id, conversation_id=owner.conversation_id,
+            submission_state=result["submission_state"],
+        )
         return {"status":"submitted",**result,"mode":snapshot["mode"],
             "model":snapshot["model"],"aspect_ratio":snapshot["aspect_ratio"],
             "resolution":snapshot["resolution"],"estimated_credits":snapshot["estimated_credits"]}

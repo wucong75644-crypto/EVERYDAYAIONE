@@ -68,6 +68,12 @@ async def accept(owner,args):
         if receipt['outcome'] not in {'accepted','replay'}:raise ValueError()
         UUID(receipt['task_id']);UUID(receipt['message_id'])
     except (TypeError,ValueError,KeyError):raise TaskError('VIDEO_ACCEPTANCE_UNCONFIRMED') from None
+    from services.handlers.media_delivery import send_pending_media
+    await send_pending_media(
+        owner.db, task_id=receipt['task_id'], message_id=receipt['message_id'],
+        user_id=str(parent['user_id']), org_id=owner.org_id,
+        conversation_id=str(parent['conversation_id']), submission_state=receipt['submission_state'],
+    )
     return receipt
 
 

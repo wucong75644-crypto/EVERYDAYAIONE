@@ -95,3 +95,45 @@ async def test_kling_chat_video_submits_exactly_once_with_its_own_format(aspect_
     assert observer.await_count == 2
     client.create_task_once.assert_awaited_once()
     client.create_task.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('delivery_fails', [False, True])
+async def test_native_video_acceptance_delivers_persisted_placeholder(monkeypatch, delivery_fails):
+    from unittest.mock import MagicMock
+    from uuid import uuid4
+
+    from services.task_execution import video_operations
+    from services.websocket_manager import ws_manager
+
+    parent_id, child_id, message_id, actor_id, conversation_id = (str(uuid4()) for _ in range(5))
+    parent = {'id': parent_id, 'user_id': actor_id, 'conversation_id': conversation_id}
+    placeholder = {
+        'id': message_id, 'conversation_id': conversation_id, 'role': 'assistant', 'status': 'pending',
+        'content': '[{"type":"text","text":"视频任务排队中"}]',
+        'generation_params': {'origin': 'agent_video', 'type': 'video', 'task_id': child_id},
+    }
+    receipt = {'outcome': 'accepted', 'task_id': child_id, 'message_id': message_id, 'submission_state': 'queued'}
+    db = MagicMock()
+    for table, row in [('tasks', parent), ('messages', placeholder)]:
+        query = MagicMock()
+        query.select.return_value.eq.return_value.single.return_value.execute.return_value.data = row
+        if table == 'tasks':
+            task_query = query
+        else:
+            message_query = query
+    db.table.side_effect = {'tasks': task_query, 'messages': message_query}.__getitem__
+    db.rpc.return_value.execute.return_value.data = receipt
+    monkeypatch.setattr(video_operations, 'frozen_request', lambda *_: {})
+    send = AsyncMock(side_effect=OSError('disconnected') if delivery_fails else None)
+    monkeypatch.setattr(ws_manager, 'send_to_task_or_user', send)
+    owner = SimpleNamespace(db=db, _task_id=parent_id, image_execution_token=str(uuid4()), org_id=None)
+
+    assert await video_operations.accept(owner, {'prompt': '第四条视频脚本'}) == receipt
+    db.rpc.assert_called_once()
+    send.assert_awaited_once()
+    task_id, user_id, event = send.await_args.args
+    assert (task_id, user_id) == (child_id, actor_id)
+    assert event['type'] == 'message_pending'
+    assert event['message_id'] == message_id
+    assert event['payload']['message']['content'] == [{'type': 'text', 'text': '视频任务排队中'}]
