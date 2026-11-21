@@ -6,7 +6,6 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
-from config.file_call_contract import file_analyze_arguments
 from services.handlers.chat_context.attachments import attachment_action, attachment_status
 from services.file_resources import FileTargetResolver, file_version
 
@@ -71,18 +70,22 @@ def project(owner, attachments, *, visual_budget):
                 raise ValueError('STEER_ATTACHMENT_CHANGED')
             target.validate()
             record.update(reference={'resource_ref': item.resource_ref}, path=item.workspace_path)
-            record['status'] = 'image' if item.kind == 'image' else attachment_status(record['name'])
-            if record['status'] == 'raw':
-                record['read_call'] = {'tool': 'file_analyze',
-                                       'arguments': file_analyze_arguments(resource_ref=item.resource_ref)}
-            if record['status'] == 'image':
+            # Only the image kind ran the image-content check in bind().
+            if item.kind == 'image':
+                record['status'] = 'image'
                 url = resolver.files.get_cdn_url(item.workspace_path) if len(images) < visual_budget else None
                 record['visually_present'] = bool(url)
                 if url:
                     images.append({'type': 'image_url', 'image_url': {'url': url}})
+            else:
+                status = attachment_status(record['name'])
+                record['status'] = 'binary' if status == 'image' else status
         except (ValueError, PermissionError, OSError):
             record = {'kind': item.kind, 'name': record['name'], 'status': 'unavailable'}
-        record['action'] = attachment_action(record['status'], visually_present=record.get('visually_present'))
+        action = attachment_action(record['status'], visually_present=record.get('visually_present'))
+        if record['status'] == 'raw':
+            action += '。先用 file_search 按 path 定位表格，再复制搜索结果提供的 read_call。'
+        record['action'] = action
         records.append(record)
     return (
         '\n本条补充上传的素材来自工作区。按每项 action 使用，path 是工作区相对路径；'

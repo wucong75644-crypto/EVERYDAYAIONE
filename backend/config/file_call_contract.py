@@ -2,8 +2,8 @@
 
 FILE_ANALYZE_SELECTOR_GUIDANCE = (
     "file_analyze 的读取参数直接复制 read_call：本轮附件提供 file_id，"
-    "搜索结果或已验证的追加附件提供 resource_ref。只传给出的一个选择器，不再补文件名或路径。"
-    "没有 resource_ref 时省略；它只能是系统提供的完整 fref1_ 引用，不能填 name、path 或 file_id。"
+    "搜索结果提供 resource_ref。只传给出的一个选择器，不再补文件名或路径。"
+    "没有 resource_ref 时省略；它只能是搜索返回的完整 fref1_ 引用，不能填 name、path 或 file_id。"
     "旧版合法多选择器调用仍支持，但必须全部指向同一文件。"
 )
 

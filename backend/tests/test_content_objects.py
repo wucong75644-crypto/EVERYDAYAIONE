@@ -1668,6 +1668,42 @@ async def test_steer_attachments_project_to_original_turn_with_verified_workspac
                    user_id=request.user_id, org_id=None, conversation_id=request.conversation_id)
 
 
+def test_steer_visual_input_requires_verified_image_kind(tmp_path, monkeypatch):
+    from PIL import Image
+    from core.config import get_settings
+    from services.file_executor import FileExecutor
+    from services.task_execution import steer_attachments as media
+
+    owner = SimpleNamespace(user_id='tester', org_id=None, conversation_id='chat')
+    monkeypatch.setattr(get_settings(), 'file_workspace_root', str(tmp_path))
+    root = Path(FileExecutor(str(tmp_path), owner.user_id, owner.org_id).workspace_root)
+    (root / 'renamed.png').write_text('This is plain text.')
+    Image.new('RGB', (8, 8), 'green').save(root / 'verified.png')
+    urls = []
+
+    def cdn_url(self, relative):
+        urls.append(relative)
+        return 'https://cdn.example.test/' + relative
+
+    monkeypatch.setattr(FileExecutor, 'get_cdn_url', cdn_url)
+    with pytest.raises(OSError):
+        media.bind(media.normalize([{'kind': 'image', 'workspace_path': 'renamed.png'}]), **vars(owner))
+
+    selectors = media.normalize([
+        {'kind': 'file', 'workspace_path': 'renamed.png'},
+        {'kind': 'image', 'workspace_path': 'verified.png'},
+    ])
+    bound = [media.Attachment.model_validate(item) for item in media.bind(selectors, **vars(owner))]
+    notice, images = media.project(owner, bound, visual_budget=1)
+
+    ordinary, verified = json.loads(notice.split('\n')[-1])
+    assert ordinary['kind'] == 'file' and ordinary['status'] != 'image'
+    assert ordinary['path'] == 'renamed.png'
+    assert verified['visually_present'] is True
+    assert urls == ['verified.png']
+    assert images == [{'type': 'image_url', 'image_url': {'url': 'https://cdn.example.test/verified.png'}}]
+
+
 @pytest.mark.asyncio
 async def test_inflight_attachment_restarts_real_gateway_with_the_original_task(tmp_path, monkeypatch):
     import asyncio

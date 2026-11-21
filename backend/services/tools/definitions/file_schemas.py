@@ -126,7 +126,7 @@ def build_file_tools() -> List[Dict[str, Any]]:
                     "type": "object",
                     "properties": {
                         "resource_ref": {
-                            "type": "string", "description": "按 read_call 原样传入搜索结果或已验证追加附件的资源引用。文件变化后需重新选择。",
+                            "type": "string", "description": "file_search 返回的资源引用，原样复制；可自动确定位置，系统仍检查当前动作权限。文件变化后需重新搜索。",
                         },
                         "file_id": {
                             "type": "string",
