@@ -1,6 +1,9 @@
 """Atomically bind one model image draft to the existing content/native ledgers."""
 from dataclasses import replace
 import json
+from uuid import UUID
+
+from pydantic import Field, StrictInt
 
 from services.tools.argument_validation import _issues, validate_model_image_arguments
 from services.tools.policy import ToolPolicy
@@ -39,6 +42,32 @@ class InlineRequest(Fact):
         return draft, definitions
 
 
+class SingleImageEdit(Fact):
+    source_message_id: UUID = Field(description='原样复制已选成图的 reference.message_id。')
+    source_content_index: StrictInt = Field(ge=0, description='原样复制 reference.content_index，从 0 开始。')
+    edit_instruction: str = Field(min_length=1, max_length=20000, description='本次修改以及需要保留的内容。')
+
+    def content_item(self):
+        reference = content.MaterialReference(message_id=str(self.source_message_id),
+                                              content_index=self.source_content_index)
+        return content.ContentItem(title='编辑成图', body=self.edit_instruction, materials=(
+            content.Material(reference=reference, role='编辑底图', usage='input'),
+        ))
+
+
+def request_type(properties):
+    if 'edit_instruction' in properties:
+        return SingleImageEdit
+    if 'draft' in properties:
+        return InlineRequest
+    return None
+
+
+def has_prepared_call(runtime, call):
+    record = getattr(runtime, 'checkpoint_base', {}).get(KEY)
+    return isinstance(record, dict) and record.get('call_id') == call['id']
+
+
 def is_inline_call(call):
     if call['name'] != TOOL:
         return False
@@ -47,7 +76,7 @@ def is_inline_call(call):
         value = json.loads(call.get('arguments') or '{}')
     except (ValueError, TypeError, RecursionError):
         return False
-    return isinstance(value, dict) and 'draft' in value
+    return isinstance(value, dict) and ('draft' in value or 'edit_instruction' in value)
 
 
 def allowed_for_offer(runtime, *, server_image_plan, reuse_source):
@@ -104,8 +133,23 @@ async def prepare(runtime, handler, request, prepared, call, args, registry, *, 
     from .direct_loop import bind_image_recipes, stage_native_calls
 
     context = prepared.execution_context
-    value = InlineRequest.model_validate(args)
-    item = value.draft
+    edit = SingleImageEdit.model_validate(args) if 'edit_instruction' in args else None
+    item = edit.content_item() if edit is not None else InlineRequest.model_validate(args).draft
+    if edit is not None:
+        def verify_generated_source():
+            resolver = native_resolver(handler, request, context)
+            material, = item.materials
+            original, = resolver.resolve([
+                {**material.reference.model_dump(mode='json', exclude_none=True), 'role': material.role},
+            ])
+            if (original.get('source') != 'generated' or not original.get('task_id')
+                    or original.get('message_id') == resolver.input_message_id):
+                raise TaskError('CHAT_INLINE_IMAGE_GENERATED_SOURCE_REQUIRED')
+
+        try:
+            await asyncio.to_thread(verify_generated_source)
+        except (ValueError, PermissionError, OSError) as error:
+            raise TaskError('CHAT_INLINE_IMAGE_GENERATED_SOURCE_REQUIRED') from error
     from services.tools.argument_validation import ToolArgumentValidationError
 
     native = registry.require(TOOL).to_schema()['function']['parameters']['properties']

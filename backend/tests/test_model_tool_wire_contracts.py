@@ -15,7 +15,7 @@ from services.adapters.types import StreamChunk
 from services.handlers.chat import content_tools
 from services.skills.runtime import ACTIVATE_SKILL_SCHEMA, DEACTIVATE_SKILL_SCHEMA
 from services.task_execution import bootstrap, content_objects, controller, direct_loop, requirement_changes
-from services.task_execution.inline_image_action import InlineRequest
+from services.task_execution.inline_image_action import InlineRequest, SingleImageEdit
 from services.tools.argument_validation import _issues, _local_schema_reference
 from services.tools import build_legacy_catalog
 from services.tools.catalog import build_capability_catalog
@@ -25,13 +25,12 @@ from tests.test_model_directed_loop import case, execute
 from tests.test_task_execution_model_bridge import call
 
 
-@pytest.fixture
-async def wire_contracts(monkeypatch):
+async def image_wire_contracts(monkeypatch, text, *, single_image_edit=True):
     from core.config import get_settings
 
     monkeypatch.setattr(get_settings(), 'chat_inline_image_enabled', True)
+    monkeypatch.setattr(get_settings(), 'chat_single_image_edit_enabled', single_image_edit)
     runtime, prepared, handler, request = case()
-    text = '参考这张图的配色重新生成一张'
     request = replace(request, content=[TextPart(text=text)])
     prepared.messages = [{'role': 'user', 'content': text}]
     prepared.core_tools = [build_legacy_catalog().require('generate_image').to_schema()]
@@ -49,6 +48,46 @@ async def wire_contracts(monkeypatch):
     responses = {tool['name']: tool['parameters'] for tool in response_tools(tools, ())}
     assert chat == responses
     return chat
+
+
+@pytest.fixture
+async def wire_contracts(monkeypatch):
+    return await image_wire_contracts(monkeypatch, '参考这张图的配色重新生成一张')
+
+
+@pytest.mark.parametrize(('text', 'enabled', 'simple'), [
+    ('把你刚生成的那张图的桌面颜色调浅一点', True, True),
+    ('把你刚生成的那张图的桌面颜色调浅一点', False, False),
+    ('把你生成的第二张图的桌面颜色调浅一点', True, True),
+    ('把你刚生成的那张图改成竖版', True, False),
+    ('把你刚生成的那张图调浅，并另外生成一张新图', True, False),
+    ('把你刚生成的那张图调浅，同时生成一段视频', True, False),
+])
+async def test_single_edit_publishes_flat_contract_only_for_supported_requests(monkeypatch, text, enabled, simple):
+    contracts = await image_wire_contracts(monkeypatch, text, single_image_edit=enabled)
+    parameters = contracts['generate_image']
+    if not simple:
+        assert 'edit_instruction' not in parameters['properties']
+        return
+
+    arguments = {
+        'source_message_id': '4825ec68-a21c-49d0-b941-f3668ea7c228',
+        'source_content_index': 0,
+        'edit_instruction': '桌面调浅，保留福字主体',
+    }
+    assert set(parameters['properties']) == set(parameters['required']) == set(arguments)
+    assert '$defs' not in parameters
+    validator = Draft202012Validator(parameters)
+    assert validator.is_valid(arguments)
+    assert offered_argument_error('generate_image', arguments, parameters) is None
+    edit = SingleImageEdit.model_validate(arguments)
+    assert edit.content_item().body == arguments['edit_instruction']
+    for invalid in ({**arguments, 'source_content_index': index} for index in (-1, '0', True)):
+        assert not validator.is_valid(invalid)
+        assert offered_argument_error('generate_image', invalid, parameters)
+        with pytest.raises(ValidationError):
+            SingleImageEdit.model_validate(invalid)
+    assert offered_argument_error('generate_image', {**arguments, 'draft': {}}, parameters)
 
 
 SOURCE = {'message_id': 'saved-message', 'content_index': 1}

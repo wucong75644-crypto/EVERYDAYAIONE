@@ -71,7 +71,7 @@ def _changes_image(text):
     return bool(re.search(r'(?:改成|改为|改一下|编辑|调整|换成|替换|去掉|移除|擦掉|加上|调亮|调暗|调浅|调深)', text))
 
 
-def requests_generated_image_edit(request):
+def requests_generated_image_edit(request, *, allow_named_output=False):
     """Recognize a change to a generated image even when its object is implicit."""
     text = ' '.join(getattr(part, 'text', '') for part in getattr(request, 'content', ()) or ())
     if (_QUOTED_REQUEST.search(text) or _IMAGE_EXPLANATION.search(text)
@@ -79,10 +79,34 @@ def requests_generated_image_edit(request):
             or _previous_item_pointer(text)):
         return False
     source = re.search(r'(?:刚才|刚|上次|上一轮|之前)(?:你)?(?:生成|做|画|出)(?:好|成)?的(?:那张|这张)?(?:图|图片|图像)', text)
+    if not source and allow_named_output:
+        source = re.search(r'(?:生成|做|画|出)(?:过|好|成)?的第[0-9一二三四五六七八九十百]+张(?:图|图片|图像)', text)
     if not source:
         return False
     changes = re.sub(r'(?:不要|别|不用|无需|不必|不)\s*(?:改成|改为|改一下|编辑|调整|换成|替换|去掉|移除|擦掉|加上|调亮|调暗|调浅|调深)', '', text)
     return _changes_image(changes)
+
+
+def is_single_generated_image_edit(request):
+    from services.handlers.image_size_requirements import ImageSizeError, user_size_intent
+
+    if not requests_generated_image_edit(request, allow_named_output=True) or any(
+            part.type != 'text' for part in request.content):
+        return False
+    text = ' '.join(part.text for part in request.content)
+    # Keep the existing entry for combined work, variants and unstructured size requests.
+    if (requested_delivery_tools(request) or waits_for_video_confirmation(request) or re.search(
+            r'另外|顺便|同时|分别|各自|每张|两张|多张|多版|备选|'
+            r'(?<![第0-9一二两三四五六七八九十])(?:[2-9]|[1-9]\d+|十[一二三四五六七八九]?|[二两三四五六七八九])\s*(?:张|幅|版)'
+            r'|(?:再|还|接着|然后|并且|并)\s*(?:帮我|给我)?\s*(?:生成|做|画|出|编辑|修改)'
+            r'|(?:生成|做成|导出|写|制作).{0,10}(?:短片|视频|文档|脚本|文案|表格|提示词)',
+            text)):
+        return False
+    try:
+        size = user_size_intent(text)
+    except ImageSizeError:
+        return False
+    return not (size.get('orientation') and 'aspect_ratio' not in size and size.get('mode') != 'auto')
 
 
 def repeats_saved_image(request):
@@ -449,7 +473,7 @@ SCHEMAS = (
     READ_SCHEMA,
 )
 
-def model_tools(tools, *, selectable_source_images=False, server_image_plan=False, reuse_source=False, first_delivery=False, current_images=(), inline_image=False, generated_image_edit=False):
+def model_tools(tools, *, selectable_source_images=False, server_image_plan=False, reuse_source=False, first_delivery=False, current_images=(), inline_image=False, generated_image_edit=False, single_image_edit=False):
     """Project the one entry contract selected by the current workflow."""
     from services.task_execution.content_objects import ContentReference, ImageContentReference, selection_parameters
     from services.handlers.image_size_requirements import SIZE_GUIDANCE
@@ -550,8 +574,20 @@ def model_tools(tools, *, selectable_source_images=False, server_image_plan=Fals
                     '用户指定当前上传图片时，从本轮图片引用中绑定该图。'
                 )
             if name == 'generate_image' and inline_image:
-                from services.task_execution.inline_image_action import InlineRequest
+                from services.task_execution.inline_image_action import InlineRequest, SingleImageEdit
 
+                if single_image_edit:
+                    tool['function']['parameters'] = SingleImageEdit.model_json_schema()
+                    tool['function']['description'] = (
+                        '编辑一张已生成的图。按用户指代找到确切的成图，'
+                        '从该图的 reference 原样复制 message_id 和 content_index 到对应字段。'
+                        '第一张指会话中的成图顺序。content_index 是消息内的位置。'
+                        '定位缺失时先读取会话图片，定位不唯一时请用户选择。'
+                        'edit_instruction 写明本轮修改和保留的要求，画布规格由后台依据用户消息与底图确定。'
+                        '本工具保存编辑要求并提交一次。'
+                    )
+                    result.append(tool)
+                    continue
                 projected = tool['function']['parameters']
                 draft, definitions = InlineRequest.parameters(parameters['properties'])
                 if generated_image_edit:

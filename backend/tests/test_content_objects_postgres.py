@@ -180,7 +180,11 @@ async def test_direct_content_selection_adopts_saved_task_before_business_dispat
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('scenario', [
-    'text-to-image', 'image-to-image', 'inline-text-to-image', 'inline-image-to-image', 'inline-first-turn-upload', 'inline-edit-selected-output', 'inline-repair-then-image', 'inline-resume-before-reserve', 'inline-resume-after-acceptance', 'recorded-first', 'recorded-fifth', 'recorded-sixth-size', 'recorded-write-once', 'recorded-retired',
+    'text-to-image', 'image-to-image', 'inline-text-to-image', 'inline-image-to-image', 'inline-first-turn-upload',
+    'inline-edit-selected-output', 'inline-edit-latest-output', 'inline-edit-selected-legacy', 'inline-edit-reload-source',
+    'inline-edit-resume-before-reserve', 'inline-edit-resume-after-acceptance',
+    'inline-repair-then-image', 'inline-resume-before-reserve', 'inline-resume-after-acceptance',
+    'recorded-first', 'recorded-fifth', 'recorded-sixth-size', 'recorded-write-once', 'recorded-retired',
     'recorded-third-output', 'new-third-output', 'new-regeneration-output', 'recorded-quoted-output',
     'recorded-third-history', 'new-third-history',
 ])
@@ -237,9 +241,17 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
 
     inline = scenario.startswith('inline-')
     image_repair = scenario == 'inline-repair-then-image'
-    interrupted = scenario.startswith('inline-resume-')
+    before_reserve = scenario.endswith('-resume-before-reserve')
+    after_acceptance = scenario.endswith('-resume-after-acceptance')
+    interrupted = before_reserve or after_acceptance
     crashed = False
-    with_original = scenario not in {'text-to-image', 'inline-text-to-image'} and not interrupted
+    edit_selected = scenario.startswith('inline-edit-')
+    edit_latest = scenario == 'inline-edit-latest-output'
+    bad_edit_source = scenario == 'inline-edit-reload-source'
+    flat_edit = edit_selected and scenario != 'inline-edit-selected-legacy'
+    if not flat_edit:
+        monkeypatch.setattr(settings, 'chat_single_image_edit_enabled', False)
+    with_original = edit_selected or (scenario not in {'text-to-image', 'inline-text-to-image'} and not interrupted)
     recorded = scenario.startswith('recorded-')
     history_import = scenario.endswith('-history')
     recorded_output = scenario in {'recorded-third-output', 'recorded-third-history'}
@@ -251,8 +263,7 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
     followup = recorded or automatic_output
     sixth = scenario == 'recorded-sixth-size'
     first_upload = scenario == 'inline-first-turn-upload'
-    edit_selected = scenario == 'inline-edit-selected-output'
-    repairs_arguments = image_repair or edit_selected
+    repairs_arguments = image_repair or (edit_selected and not flat_edit) or bad_edit_source
     fifth = scenario == 'recorded-fifth'
     write_once = scenario == 'recorded-write-once'
     retired = scenario == 'recorded-retired'
@@ -260,14 +271,15 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
     body = '  纸品封面，保留细纹理。\n避免改变装订孔及商标。  '
     synthetic_original = scenario in {'image-to-image', 'inline-image-to-image', 'inline-first-turn-upload'} or image_repair or sixth or edit_selected
     ratio = 'auto' if edit_selected else '3:4' if synthetic_original or new_output else '1:1'
-    resolution = '2K' if new_output or edit_selected else '1K'
+    resolution = '4K' if edit_latest else '2K' if new_output or edit_selected else '1K'
     question = '参考这张原图修改封面，只生成一张' if with_original else '帮我直接生成一张纸品封面图'
     if scenario == 'inline-image-to-image' or image_repair:
         question += '，输出比例3:4。'
     if first_upload:
         question = '这个是图片。你用你写的提示词帮我生成新的图片'
     if edit_selected:
-        question = '把你刚生成的那张图的桌面颜色再调浅一点，福字主体不动，比例你定。直接生成一张。'
+        target = '刚生成的那张图' if edit_latest or not flat_edit else '生成过的第一张图'
+        question = f'把你{target}的桌面颜色再调浅一点，福字主体不动，比例你定。直接生成一张。'
     first_document = None
     first_arguments = None
     if quoted:
@@ -429,8 +441,8 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
         connection.execute("UPDATE messages SET status='completed', context_revision=0, turn_id=%s, content=%s WHERE id=%s",
             (f['turn'], json.dumps([p.model_dump(mode='json', exclude_none=True) for p in parts]), f['message']))
         if edit_selected:
-            selected_message = str(uuid4())
-            for message, revision, tier in ((selected_message, 0, '2K'), (str(uuid4()), 1, '4K')):
+            generated_messages = [str(uuid4()), str(uuid4())]
+            for revision, (message, tier) in enumerate(zip(generated_messages, ('2K', '4K'))):
                 image_task = str(uuid4())
                 result_part = {'type': 'image', 'workspace_path': file_path,
                                'url': 'https://local.invalid/' + file_path, 'task_id': image_task}
@@ -443,7 +455,7 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
                                (json.dumps([parts[0].model_dump()]), f['message']))
             connection.execute("UPDATE tasks SET base_context_revision=1 WHERE id=%s", (f['task'],))
             parts = [parts[0]]
-            materials[0]['reference'] = {'message_id': selected_message, 'content_index': 0}
+            materials[0]['reference'] = {'message_id': generated_messages[int(edit_latest)], 'content_index': 0}
 
     class RestartTest(Exception):
         pass
@@ -456,7 +468,7 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
             else:
                 result = connection.execute('SELECT save_generation_checkpoint(%s,%s,%s,%s)',
                     (f['task'], f['token'], point.value, Jsonb({**payload, 'safe_point': point.value}))).fetchone()[0]
-        if scenario == 'inline-resume-before-reserve' and payload.get('_inline_media_action') and not crashed:
+        if before_reserve and payload.get('_inline_media_action') and not crashed:
             assert result['outcome'] == 'saved' and not payload['_task_execution']['operations']
             crashed = True
             raise RestartTest
@@ -663,7 +675,7 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
         parsed = ToolCall(raw['id'], raw['name'], native)
         binding = task_image_operations.bindings[raw['id']]
         if kwargs.get('recovery_only'):
-            assert scenario == 'inline-resume-after-acceptance' and crashed
+            assert after_acceptance and crashed
             context = replace(p.execution_context, call_id=parsed.call_id)
             actor = SimpleNamespace(_actor_enabled=True, _actor_invocation_store=object(),
                                     _actor_turn_id=f['turn'], _actor_execution_token=f['token'])
@@ -690,7 +702,7 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
                     await ImageHandler(scoped).accept_chat_image(owner, {**native, 'prompt': '不完整'})
             result_from_tool = await MediaToolMixin._generate_image(owner, native)
             receipt = result_from_tool.metadata
-            if scenario == 'inline-resume-after-acceptance' and not crashed:
+            if after_acceptance and not crashed:
                 assert receipt['accepted'] is True
                 crashed = True
                 raise RestartTest
@@ -714,6 +726,13 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
         }
     execution_body = ('保留产品结构。画布尺寸按平台输出规格适配。输出比例以平台输出规格为准。'
                       if sixth else body)
+    model_arguments = {'draft': doc['items'][0]}
+    if flat_edit:
+        model_arguments = {
+            'source_message_id': materials[0]['reference']['message_id'],
+            'source_content_index': materials[0]['reference']['content_index'],
+            'edit_instruction': body,
+        }
     seen = 0
     if not followup:
         row = selection = None
@@ -764,7 +783,10 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
             yield StreamChunk(content='图片任务已受理。')
         elif inline:
             if repairs_arguments and seen == 1:
-                if edit_selected:
+                if bad_edit_source:
+                    wrong_source = {**model_arguments, 'source_message_id': str(uuid4())}
+                    yield tool_chunk('generate_image', arguments=json.dumps(wrong_source, ensure_ascii=False))
+                elif edit_selected:
                     yield tool_chunk('generate_image', arguments=json.dumps({'content_source': {
                         'artifact_id': 'old-plan', 'item_index': 1, 'regenerate': question,
                         'image_override': [materials[0]['reference']],
@@ -775,15 +797,19 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
             if seen == (2 if repairs_arguments else 1):
                 if repairs_arguments:
                     rejection = next(m['content'] for m in reversed(kwargs['messages']) if m['role'] == 'tool')
-                    assert json.loads(rejection.splitlines()[0])['recovery']['action'] == 'repair_arguments'
+                    action = 'reload_source' if bad_edit_source else 'repair_arguments'
+                    assert json.loads(rejection.splitlines()[0])['recovery']['action'] == action
                     assert not receipts and not co.objects(r.task_execution_state)
                 offered = next(tool['function']['parameters'] for tool in kwargs['tools']
                                if tool['function']['name'] == 'generate_image')
-                assert 'draft' in offered['properties']
-                if edit_selected:
-                    assert list(offered['properties']) == ['draft']
-                assert offered['$defs']
-                yield tool_chunk('generate_image', arguments=json.dumps({'draft': doc['items'][0]}, ensure_ascii=False))
+                if flat_edit:
+                    assert set(offered['properties']) == set(model_arguments)
+                else:
+                    assert 'draft' in offered['properties']
+                    if edit_selected:
+                        assert list(offered['properties']) == ['draft']
+                    assert offered['$defs']
+                yield tool_chunk('generate_image', arguments=json.dumps(model_arguments, ensure_ascii=False))
             else:
                 assert receipts and seen == (3 if repairs_arguments else 2), kwargs['messages'][-4:]
                 yield StreamChunk(content='图片任务已受理。')
@@ -819,7 +845,8 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
             r.task_image_resource_resolver = create_resolver(h, q, p.execution_context)
             r.task_operation_store = store
             h._execute_tool_calls.side_effect = dispatch
-            monkeypatch.setattr(settings, 'chat_inline_image_enabled', False)
+            monkeypatch.setattr(settings, 'chat_single_image_edit_enabled' if flat_edit
+                                else 'chat_inline_image_enabled', False)
         else:
             restored = {}
         sink, blocks, _ = await run_content_loop(r, p, h, q, model, blocks=copy.deepcopy(restored.get('content_blocks', [])))
@@ -834,7 +861,7 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
             assert not pending_calls(p.messages)[0]
             external_calls = [c for msg in p.messages for c in msg.get('tool_calls') or []]
             assert [item['function']['name'] for item in external_calls] == ['generate_image'] * (2 if repairs_arguments else 1)
-            assert json.loads(external_calls[-1]['function']['arguments']) == {'draft': doc['items'][0]}
+            assert json.loads(external_calls[-1]['function']['arguments']) == model_arguments
         assert body not in sink.text and not any(body in block.get('text','') for block in blocks)
         receipt = receipts[0]
         assert receipt['accepted'] is True and receipt['completed'] is False
@@ -853,6 +880,8 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
             assert snapshot['variant_id'] == f"regenerate:{f['message']}"
         if with_original:
             reference = snapshot['references'][0]
+            if edit_selected:
+                assert reference['message_id'] == materials[0]['reference']['message_id']
             edge = 1024 if fifth or write_once or automatic_output else 1254
             assert (reference['width'], reference['height']) == ((739, 981) if first_upload or sixth or edit_selected else (edge, edge))
 
