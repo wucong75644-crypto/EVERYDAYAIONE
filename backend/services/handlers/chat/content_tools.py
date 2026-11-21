@@ -167,7 +167,15 @@ def image_execution_request(request, runtime=None):
 
 
 def requested_delivery_tools(request):
-    text = ' '.join(part.text for part in request.content if part.type == 'text')
+    from schemas.message import TextPart
+
+    texts = []
+    for part in request.content or ():
+        if isinstance(part, TextPart):
+            texts.append(part.text)
+        elif isinstance(part, dict) and part.get('type') == 'text' and isinstance(part.get('text'), str):
+            texts.append(part['text'])
+    text = ' '.join(texts)
     if _IMAGE_EXPLANATION.search(text):
         return {}
     actions = re.sub(r'(?:不要|不用|别|无需|不必|暂不)(?:实际|立即|直接)?(?:生成|制作|做成|转成|导出)[^，。！？；,!?;\n]*',
