@@ -960,6 +960,7 @@ async def _run_loop(
                 tools, selectable_source_images=content_objects.has_selectable_source_images(content_state),
                 server_image_plan=server_image_plan, reuse_source=reuse_source,
                 inline_image=allowed_for_offer(runtime, server_image_plan=server_image_plan, reuse_source=reuse_source),
+                generated_image_edit=content_tools.requests_generated_image_edit(request),
                 current_images=content_objects.current_source_images(request),
                 first_delivery=first_delivery,
             ), *content_tools.SCHEMAS]
@@ -1962,7 +1963,7 @@ async def _execute_tools_impl(
                     direct_errors[call['id']] = gate
         selected_content = (
             not recovery_only and getattr(prepared, 'content_controls_available', False)
-            and scoped_content and not direct_errors
+            and scoped_content and not direct_errors and not repair_rejections
             and not (read_only_image and any(c['name'] == 'generate_image' for c in calls))
             and not (turn_text.strip() and any(c['name'] == content_objects.SAVE for c in calls))
             and can_resume_content_calls(runtime, calls, request, server_image_plan=server_image_plan)

@@ -252,13 +252,14 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
     sixth = scenario == 'recorded-sixth-size'
     first_upload = scenario == 'inline-first-turn-upload'
     edit_selected = scenario == 'inline-edit-selected-output'
+    repairs_arguments = image_repair or edit_selected
     fifth = scenario == 'recorded-fifth'
     write_once = scenario == 'recorded-write-once'
     retired = scenario == 'recorded-retired'
     item_index = 3 if recorded_output or new_output else 2 if write_once else 6 if sixth else 5 if fifth else 1
     body = '  纸品封面，保留细纹理。\n避免改变装订孔及商标。  '
     synthetic_original = scenario in {'image-to-image', 'inline-image-to-image', 'inline-first-turn-upload'} or image_repair or sixth or edit_selected
-    ratio = '3:4' if synthetic_original or new_output else '1:1'
+    ratio = 'auto' if edit_selected else '3:4' if synthetic_original or new_output else '1:1'
     resolution = '2K' if new_output or edit_selected else '1K'
     question = '参考这张原图修改封面，只生成一张' if with_original else '帮我直接生成一张纸品封面图'
     if scenario == 'inline-image-to-image' or image_repair:
@@ -266,7 +267,7 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
     if first_upload:
         question = '这个是图片。你用你写的提示词帮我生成新的图片'
     if edit_selected:
-        question = '把较早生成的那张图桌面颜色调浅一点，福字主体不动。'
+        question = '把你刚生成的那张图的桌面颜色再调浅一点，福字主体不动，比例你定。直接生成一张。'
     first_document = None
     first_arguments = None
     if quoted:
@@ -762,21 +763,29 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
             assert receipts and seen == 1, 'A checked selection should resume before asking the model again'
             yield StreamChunk(content='图片任务已受理。')
         elif inline:
-            if image_repair and seen == 1:
-                yield tool_chunk('generate_image', arguments='{"draft": <invalid>}')
+            if repairs_arguments and seen == 1:
+                if edit_selected:
+                    yield tool_chunk('generate_image', arguments=json.dumps({'content_source': {
+                        'artifact_id': 'old-plan', 'item_index': 1, 'regenerate': question,
+                        'image_override': [materials[0]['reference']],
+                    }}))
+                else:
+                    yield tool_chunk('generate_image', arguments='{"draft": <invalid>}')
                 return
-            if seen == (2 if image_repair else 1):
-                if image_repair:
+            if seen == (2 if repairs_arguments else 1):
+                if repairs_arguments:
                     rejection = next(m['content'] for m in reversed(kwargs['messages']) if m['role'] == 'tool')
                     assert json.loads(rejection.splitlines()[0])['recovery']['action'] == 'repair_arguments'
                     assert not receipts and not co.objects(r.task_execution_state)
                 offered = next(tool['function']['parameters'] for tool in kwargs['tools']
                                if tool['function']['name'] == 'generate_image')
                 assert 'draft' in offered['properties']
+                if edit_selected:
+                    assert list(offered['properties']) == ['draft']
                 assert offered['$defs']
                 yield tool_chunk('generate_image', arguments=json.dumps({'draft': doc['items'][0]}, ensure_ascii=False))
             else:
-                assert receipts and seen == (3 if image_repair else 2), kwargs['messages'][-4:]
+                assert receipts and seen == (3 if repairs_arguments else 2), kwargs['messages'][-4:]
                 yield StreamChunk(content='图片任务已受理。')
         elif seen == 1:
             args = {'document':copy.deepcopy(doc),'continue_execution':True}
@@ -814,7 +823,7 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
         else:
             restored = {}
         sink, blocks, _ = await run_content_loop(r, p, h, q, model, blocks=copy.deepcopy(restored.get('content_blocks', [])))
-        expected_rounds = 4 if history_import else 1 if followup else 2 if inline and not image_repair else 3
+        expected_rounds = 4 if history_import else 1 if followup else 2 if inline and not repairs_arguments else 3
         assert seen == expected_rounds and len(receipts) == 1, blocks
         if inline:
             from services.task_execution.inline_image_action import read_record
@@ -824,7 +833,7 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
             assert saved.id == record.reference.artifact_id and saved.source_call_id == record.save_id
             assert not pending_calls(p.messages)[0]
             external_calls = [c for msg in p.messages for c in msg.get('tool_calls') or []]
-            assert [item['function']['name'] for item in external_calls] == ['generate_image'] * (2 if image_repair else 1)
+            assert [item['function']['name'] for item in external_calls] == ['generate_image'] * (2 if repairs_arguments else 1)
             assert json.loads(external_calls[-1]['function']['arguments']) == {'draft': doc['items'][0]}
         assert body not in sink.text and not any(body in block.get('text','') for block in blocks)
         receipt = receipts[0]

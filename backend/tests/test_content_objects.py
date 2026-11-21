@@ -1833,3 +1833,20 @@ async def test_confirmed_video_message_uses_actual_receipt_before_streaming(outc
     _, blocks, _ = await run_content_loop(runtime, prepared, handler, request, stream, sink=sink)
     assert sink.text == reply
     assert [block['text'] for block in blocks if block['type'] == 'text'] == [reply]
+
+
+
+@pytest.mark.parametrize('text,expected', [
+    ('把你刚生成的那张图的桌面颜色再调浅一点，福字主体不动，比例你定。直接生成一张。', True),
+    ('把你刚生成的那张图调浅一点。', True),
+    ('你刚生成的那张图怎么调浅一点？', False),
+    ('你刚生成的那张图不要调浅。', False),
+    ('按第六个方案重新做，把刚生成的那张图的桌面调浅。', False),
+    ('刚生成的那张图发我看看。', False),
+])
+def test_generated_image_edit_is_separate_from_saved_plan_regeneration(text, expected):
+    from types import SimpleNamespace
+    from schemas.message import TextPart
+    from services.handlers.chat.content_tools import requests_generated_image_edit
+
+    assert requests_generated_image_edit(SimpleNamespace(content=[TextPart(text=text)])) is expected

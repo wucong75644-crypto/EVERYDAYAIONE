@@ -71,6 +71,20 @@ def _changes_image(text):
     return bool(re.search(r'(?:改成|改为|改一下|编辑|调整|换成|替换|去掉|移除|擦掉|加上|调亮|调暗|调浅|调深)', text))
 
 
+def requests_generated_image_edit(request):
+    """Recognize a change to a generated image even when its object is implicit."""
+    text = ' '.join(getattr(part, 'text', '') for part in getattr(request, 'content', ()) or ())
+    if (_QUOTED_REQUEST.search(text) or _IMAGE_EXPLANATION.search(text)
+            or _IMAGE_PROMPT_ONLY.search(text) or _PROMPT_ONLY_ACTION.search(text)
+            or _previous_item_pointer(text)):
+        return False
+    source = re.search(r'(?:刚才|刚|上次|上一轮|之前)(?:你)?(?:生成|做|画|出)(?:好|成)?的(?:那张|这张)?(?:图|图片|图像)', text)
+    if not source:
+        return False
+    changes = re.sub(r'(?:不要|别|不用|无需|不必|不)\s*(?:改成|改为|改一下|编辑|调整|换成|替换|去掉|移除|擦掉|加上|调亮|调暗|调浅|调深)', '', text)
+    return _changes_image(changes)
+
+
 def repeats_saved_image(request):
     text = ' '.join(part.text for part in request.content if part.type == 'text')
     return not _changes_image(text) and (_regenerates_image(text) or _repeat_wording(text))
@@ -164,7 +178,7 @@ def image_execution_request(request, runtime=None):
         if (state and any(op.capability == 'platform.generate_image' for op in state.operations)
                 or any(op.get('capability') == 'platform.generate_image' for op in prior.get('state', {}).get('operations', ()))):
             return True
-    return bool(re.search(_IMAGE_ACTION, actions, re.I)) or (
+    return requests_generated_image_edit(request) or bool(re.search(_IMAGE_ACTION, actions, re.I)) or (
         _previous_item_pointer(text) and repeats_saved_image(request)
     )
 
@@ -435,7 +449,7 @@ SCHEMAS = (
     READ_SCHEMA,
 )
 
-def model_tools(tools, *, selectable_source_images=False, server_image_plan=False, reuse_source=False, first_delivery=False, current_images=(), inline_image=False):
+def model_tools(tools, *, selectable_source_images=False, server_image_plan=False, reuse_source=False, first_delivery=False, current_images=(), inline_image=False, generated_image_edit=False):
     """Project the one entry contract selected by the current workflow."""
     from services.task_execution.content_objects import ContentReference, ImageContentReference, selection_parameters
     from services.handlers.image_size_requirements import SIZE_GUIDANCE
@@ -540,18 +554,29 @@ def model_tools(tools, *, selectable_source_images=False, server_image_plan=Fals
 
                 projected = tool['function']['parameters']
                 draft, definitions = InlineRequest.parameters(parameters['properties'])
-                projected.pop('required')
-                projected['properties']['draft'] = draft
-                projected['oneOf'] = [{'required': ['content_source']}, {'required': ['draft']}]
+                if generated_image_edit:
+                    projected['properties'] = {'draft': draft}
+                    projected['required'] = ['draft']
+                    tool['function']['description'] = (
+                        '编辑本轮用户指定的已生成图片。使用 draft.body 写清本轮修改和保留要求，'
+                        '在 draft.materials 以 usage=input 绑定选中的成图。'
+                        '直接复制会话中真实的 message_id 与 content_index；定位缺失时先查会话图片。'
+                        '本工具保存编辑稿并提交一次。' + SIZE_GUIDANCE
+                    )
+                else:
+                    projected.pop('required')
+                    projected['properties']['draft'] = draft
+                    projected['oneOf'] = [{'required': ['content_source']}, {'required': ['draft']}]
                 if definitions:
                     projected['$defs'] = definitions
-                tool['function']['description'] += (
-                    ' 用户要求创作单张新图或编辑一张已选图时，单独调用本工具传draft。'
-                    '用户指定已有提示词时先定位原稿，找不到就请用户补充。'
-                    '填写完整编辑要求body，并按draft.materials的字段说明绑定所用图片。'
-                    '系统保存原稿并提交，不需要先调用save_task_text。'
-                    '只改提示词时使用保存工具；多张图或已有策划继续用content_source。'
-                )
+                if not generated_image_edit:
+                    tool['function']['description'] += (
+                        ' 用户要求创作单张新图或编辑一张已选图时，单独调用本工具传draft。'
+                        '用户指定已有提示词时先定位原稿，找不到就请用户补充。'
+                        '填写完整编辑要求body，并按draft.materials的字段说明绑定所用图片。'
+                        '系统保存原稿并提交，不需要先调用save_task_text。'
+                        '只改提示词时使用保存工具；多张图或已有策划继续用content_source。'
+                    )
         else:
             if constraints:
                 parameters['anyOf']=[constraints,{'required':['content_source',*[key for key in constraints.get('required',[]) if key!='prompt']]}]

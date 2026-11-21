@@ -100,7 +100,7 @@ class Batch:
             if parameters is None:
                 continue
             chat_image = (repair_chat_images and name == 'generate_image'
-                          and 'content_source' in parameters.get('properties', {}))
+                          and not {'content_source', 'draft'}.isdisjoint(parameters.get('properties', {})))
             if not chat_image and name not in REVIEWED_MODEL_TOOLS:
                 continue
             args = {}
@@ -115,7 +115,8 @@ class Batch:
 
                     input_type = ImageContentReference if 'content_source' in args else InlineRequest
                     reference = args.get('content_source')
-                    if isinstance(reference, dict) and 'sha256' in reference:
+                    if (isinstance(reference, dict) and 'sha256' in reference
+                            and 'content_source' in parameters['properties']):
                         # Old clients may still supply a proof that is no longer
                         # advertised. Validate it and keep it for the version check.
                         fields = parameters['properties']
