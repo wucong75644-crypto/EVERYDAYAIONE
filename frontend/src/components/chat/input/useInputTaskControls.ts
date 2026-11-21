@@ -1,7 +1,12 @@
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { pauseTaskByMessageId } from '../../../services/message';
 import { useMessageStore } from '../../../stores/useMessageStore';
 import { logger } from '../../../utils/logger';
+
+export interface SteerAttachment {
+  kind: 'image' | 'file';
+  workspace_path: string;
+}
 
 interface UseInputTaskControlsOptions {
   conversationId: string | null;
@@ -93,19 +98,42 @@ export function useInputTaskControls({
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [isStreaming, handleStop]);
 
-  const sendSteer = useCallback((message: string): boolean => {
+  const pendingSteer = useRef<{ taskId: string; conversationId: string; message: string; attachments?: SteerAttachment[]; requestId: string } | null>(null);
+  const hasPendingSteer = useCallback((message: string, attachments?: SteerAttachment[]) =>
+    pendingSteer.current?.conversationId === conversationId && pendingSteer.current?.message === message
+    && JSON.stringify(pendingSteer.current?.attachments) === JSON.stringify(attachments), [conversationId]);
+
+  const sendSteer = useCallback((message: string, attachments?: SteerAttachment[]): Promise<boolean> | null => {
+    if (!conversationId) return null;
+    const previous = hasPendingSteer(message, attachments) ? pendingSteer.current : null;
     const streamingMessage = streamingMessageId
       ? useMessageStore.getState().getMessage(streamingMessageId)
       : undefined;
-    const taskId = streamingMessage?.task_id;
-    if (!taskId || !conversationId) return false;
+    const taskId = previous?.taskId || streamingMessage?.task_id;
+    if (!taskId) return null;
+    const command = previous ?? { taskId, conversationId, message, attachments, requestId: crypto.randomUUID() };
+    pendingSteer.current = command;
 
-    window.dispatchEvent(new CustomEvent('chat:user-steer', {
-      detail: { taskId, conversationId, message },
-    }));
-    logger.info('inputArea', '发送打断信号', { taskId, msgLen: message.length });
-    return true;
-  }, [streamingMessageId, conversationId]);
+    return new Promise(resolve => {
+      const finish = (accepted: boolean) => {
+        window.clearTimeout(timer);
+        window.removeEventListener('chat:steer-result', receive);
+        if (accepted && pendingSteer.current === command) pendingSteer.current = null;
+        resolve(accepted);
+      };
+      const receive = (event: Event) => {
+        const result = (event as CustomEvent).detail;
+        if (result.task_id !== taskId || result.conversation_id !== conversationId
+            || result.payload?.request_id !== command.requestId) return;
+        finish(result.payload.outcome === 'enqueued' || result.payload.outcome === 'control_applied');
+      };
+      const timer = window.setTimeout(() => finish(false), 8_000);
+      window.addEventListener('chat:steer-result', receive);
+      window.dispatchEvent(new CustomEvent('chat:user-steer', {
+        detail: { ...command, retry: previous !== null, onUnsent: () => finish(false) },
+      }));
+    });
+  }, [conversationId, hasPendingSteer, streamingMessageId]);
 
-  return { handleStop, handlePause, sendSteer };
+  return { handleStop, handlePause, sendSteer, hasPendingSteer };
 }

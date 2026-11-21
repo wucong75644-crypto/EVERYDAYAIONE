@@ -167,6 +167,8 @@ class ContentRecord(Fact):
     base_artifact_id: str | None = None
     source_images: tuple[SourceImage, ...] = ()
     presentation_profile: str | None = None
+    confirmation_items: tuple[int, ...] = ()
+    confirmation_tool: Literal['generate_image', 'generate_video'] | None = None
 
     @property
     def display_gaps(self):
@@ -395,6 +397,8 @@ def catalog(state, *, for_model=False, include_image_markers=False):
         items = []
         for index, item in enumerate(record.document.items, 1):
             entry = {'item_index': index, 'title': item.title, 'options': item.options}
+            if index in record.confirmation_items:
+                entry['awaiting_confirmation'] = True
             if for_model:
                 entry['has_bound_inputs'] = any(material.usage == 'input' for material in item.materials)
                 if base and index <= len(base.items) and item != base.items[index - 1]:
@@ -410,6 +414,8 @@ def catalog(state, *, for_model=False, include_image_markers=False):
             items.append(entry)
         row = {'artifact_id': artifact.id, 'object_key': record.object_key,
                'revision': record.revision, 'title': record.document.title, 'items': items}
+        if for_model and record.confirmation_tool:
+            row['confirmation_tool'] = record.confirmation_tool
         if not for_model:
             row['sha256'] = artifact.sha256
         if record.source_images and (not for_model or any(not item['has_bound_inputs'] for item in items)):
@@ -508,7 +514,8 @@ def current_source_images(request):
 
 
 def save(runtime, call, registry, *, has_image_attachments=False, source_images=(), checked_message=None,
-         display_gaps=(), author_request=None, allow_implicit_execution_materials=False):
+         display_gaps=(), author_request=None, allow_implicit_execution_materials=False, confirmation_items=(),
+         confirmation_tool=None):
     from services.tools import ToolCall
     from .model_directed import record_calls, call_binding
     from .direct_loop import active_image_methods
@@ -572,6 +579,8 @@ def save(runtime, call, registry, *, has_image_attachments=False, source_images=
     if base_record is not None:
         prior_artifact, prior_record, _ = base_record
         previous = prior_record.document
+        confirmation_items = tuple(sorted(set(confirmation_items) | set(prior_record.confirmation_items)))
+        confirmation_tool = prior_record.confirmation_tool or confirmation_tool
         source_images = prior_record.source_images
         presentation_profile = prior_record.presentation_profile or presentation_profile
         if not is_current(state, prior_artifact.id):
@@ -598,11 +607,15 @@ def save(runtime, call, registry, *, has_image_attachments=False, source_images=
         notes['_chat_display_layout'] = [*layout, display_gaps[-1]]
         document = ContentDocument.model_validate({**document.model_dump(),
             'notes': json.dumps(notes, ensure_ascii=False, separators=(',', ':'))})
+    if any(not 1 <= index <= len(document.items) for index in confirmation_items):
+        raise TaskError('CONTENT_CONFIRMATION_ITEMS_REQUIRED')
     body = ContentRecord(object_key=object_key,revision=revision,document=document,source_images=source_images,
                          base_artifact_id=value.base.artifact_id if value.base else None,
-                         presentation_profile=presentation_profile).model_dump_json(exclude={
+                         presentation_profile=presentation_profile, confirmation_items=confirmation_items,
+                         confirmation_tool=confirmation_tool).model_dump_json(exclude={
                              name for name, present in (
-                                 ('source_images', source_images), ('presentation_profile',presentation_profile))
+                                 ('source_images', source_images), ('presentation_profile',presentation_profile),
+                                 ('confirmation_items', confirmation_items), ('confirmation_tool', confirmation_tool))
                              if not present})
     if len(body.encode()) > 50000: raise TaskError('CONTENT_OBJECT_TOO_LARGE')
     checksum = hashlib.sha256(body.encode()).hexdigest()

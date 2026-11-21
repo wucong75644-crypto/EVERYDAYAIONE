@@ -265,7 +265,7 @@ export default function InputArea({
     }
   };
 
-  const { handleStop, handlePause, sendSteer } = useInputTaskControls({
+  const { handleStop, handlePause, sendSteer, hasPendingSteer } = useInputTaskControls({
     conversationId,
     isStreaming,
     streamingMessageId,
@@ -315,19 +315,19 @@ export default function InputArea({
     }
   }, [audioRecordingError, uploadError]);
 
-  const { clearPromptForSubmission, restorePromptAfterRejection } = useInputDraftTransaction({
-    prompt, setPrompt,
+  const { clearPromptForSubmission, restorePromptAfterRejection, clearConfirmedSteer } = useInputDraftTransaction({
+    prompt, setPrompt, conversationId,
   });
   const { handleAudioSubmit, handleSubmit } = useInputSubmission({
     knowledgeRefs: effectiveModelType === 'chat' ? knowledgeRefs : [],
     takeSelectedSkill: turnSkill.take,
     hasSkillIntent, skillTaskMode: skillUiVisible && effectiveModelType !== 'chat' ? skillTaskMode : undefined, skillScopeBlocked: skillBindings.blocked,
-    conversationId, selectedModel, prompt, clearPromptForSubmission,
+    conversationId, selectedModel, prompt, clearPromptForSubmission, clearConfirmedSteer,
     restorePromptAfterRejection, audioBlob, clearRecording,
     isSubmitting: isSubmitting || isPreparingSkillConversation, setIsSubmitting, setUploadError, setSendError,
     buildChatSettingsPayload, onConversationCreated: handleConversationCreated, onMessageSent,
     handleChatMessage, handleImageGeneration, handleVideoGeneration,
-    isEcomMode, effectiveModelType, smartSubMode, isStreaming, sendSteer,
+    isEcomMode, effectiveModelType, smartSubMode, isStreaming, sendSteer, hasPendingSteer,
     isUploading, hasImages, hasFiles,
     attachmentSnapshot: submissionSnapshot,
     getSendButtonState, detachAttachmentsForSubmission: detachForSubmission,

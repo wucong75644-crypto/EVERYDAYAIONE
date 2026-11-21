@@ -19,7 +19,11 @@ import { IMAGE_TASK_TIMEOUT } from '../../config/task';
 const streamingMessages = new Map<string, string>();
 const mockSetMessages = vi.fn();
 const mockGetMessages = vi.fn();
-vi.mock('../../services/message', () => ({ getMessages: (...args: unknown[]) => mockGetMessages(...args) }));
+const mockGetPublishedMessage = vi.fn();
+vi.mock('../../services/message', () => ({
+  getMessages: (...args: unknown[]) => mockGetMessages(...args),
+  getMessage: (...args: unknown[]) => mockGetPublishedMessage(...args),
+}));
 const mockGetMessage = vi.fn();
 const mockAddMessage = vi.fn();
 const mockMarkForceRefresh = vi.fn();
@@ -401,4 +405,24 @@ describe('settled child reconciliation receipts', () => {
       mockGetMessage.mockReset(); mockAddMessage.mockReset();
     }
   });
+});
+
+
+it.each(['completed', 'failed'] as const)('reconciles a %s video card while chat is still streaming', async status => {
+  vi.clearAllMocks();
+  const task = createPendingImageTask({
+    type: 'video', status, id: 'video-child', conversation_id: 'active-chat',
+    assistant_message_id: 'video-card', placeholder_message_id: 'video-card',
+    request_params: { _agent_video_request_v1: { model: 'kling', aspect_ratio: 'landscape', duration_seconds: 10 } },
+  });
+  const pending = { id: 'video-card', status: 'pending', context_revision: 1,
+    generation_params: { origin: 'agent_video', type: 'video', task_id: task.id } };
+  const complete = { ...pending, conversation_id: task.conversation_id, status, context_revision: 2 };
+  mockGetMessage.mockReturnValue(pending);
+  mockGetPublishedMessage.mockResolvedValue(complete);
+  await reconcileChatTaskStates([task, { ...task, id: 'active', type: 'chat', status: 'running' }]);
+  expect(mockGetPublishedMessage).toHaveBeenCalledWith('active-chat', 'video-card');
+  expect(mockUpdateMessage).toHaveBeenCalledWith('video-card', complete);
+  expect(mockSetMessages).not.toHaveBeenCalled();
+  expect(mockClearStreaming).not.toHaveBeenCalled();
 });

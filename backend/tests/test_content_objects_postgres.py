@@ -19,13 +19,13 @@ from tests.test_task_execution_followup_reuse_postgres import (followup_db,new_t
 def content_db(dispatch_db):
     root=__import__('pathlib').Path(__file__).parents[1]
     with psycopg.connect(dispatch_db) as c:
-        for migration in ('347_agent_task_image_reconciliation','376_agent_task_image_method_handoff','377_agent_task_content_objects','378_agent_content_followup_groups'):
+        for migration in ('347_agent_task_image_reconciliation','376_agent_task_image_method_handoff','377_agent_task_content_objects','378_agent_content_followup_groups','381_agent_media_confirmation_slots'):
             c.execute((root/f'migrations/{migration}.sql').read_text())
     yield dispatch_db
     with psycopg.connect(dispatch_db) as c:
         c.execute("DELETE FROM conversation_turn_checkpoints WHERE state ? '_task_execution'")
         c.execute('DELETE FROM agent_task_events');c.execute('DELETE FROM agent_task_states');c.execute('SET CONSTRAINTS ALL IMMEDIATE')
-        for migration in ('378_agent_content_followup_groups','377_agent_task_content_objects','376_agent_task_image_method_handoff','347_agent_task_image_reconciliation'):
+        for migration in ('381_agent_media_confirmation_slots','378_agent_content_followup_groups','377_agent_task_content_objects','376_agent_task_image_method_handoff','347_agent_task_image_reconciliation'):
             c.execute((root/f'migrations/rollback/{migration}_rollback.sql').read_text())
 
 @pytest.mark.asyncio
@@ -180,7 +180,7 @@ async def test_direct_content_selection_adopts_saved_task_before_business_dispat
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('scenario', [
-    'text-to-image', 'image-to-image', 'inline-text-to-image', 'inline-image-to-image', 'inline-repair-then-image', 'inline-resume-before-reserve', 'inline-resume-after-acceptance', 'recorded-first', 'recorded-fifth', 'recorded-write-once', 'recorded-retired',
+    'text-to-image', 'image-to-image', 'inline-text-to-image', 'inline-image-to-image', 'inline-first-turn-upload', 'inline-repair-then-image', 'inline-resume-before-reserve', 'inline-resume-after-acceptance', 'recorded-first', 'recorded-fifth', 'recorded-write-once', 'recorded-retired',
     'recorded-third-output', 'new-third-output', 'new-regeneration-output', 'recorded-quoted-output',
     'recorded-third-history', 'new-third-history',
 ])
@@ -254,10 +254,12 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
     retired = scenario == 'recorded-retired'
     item_index = 3 if recorded_output or new_output else 2 if write_once else 5 if fifth else 1
     body = '  纸品封面，保留细纹理。\n避免改变装订孔及商标。  '
-    synthetic_original = scenario in {'image-to-image', 'inline-image-to-image'} or image_repair
+    synthetic_original = scenario in {'image-to-image', 'inline-image-to-image', 'inline-first-turn-upload'} or image_repair
     ratio = '3:4' if synthetic_original or new_output else '1:1'
     resolution = '2K' if new_output else '1K'
     question = '参考这张原图修改封面，只生成一张' if with_original else '帮我直接生成一张纸品封面图'
+    if scenario == 'inline-first-turn-upload':
+        question = '这个是图片。你用你写的提示词帮我生成新的图片'
     first_document = None
     first_arguments = None
     if quoted:
@@ -435,7 +437,8 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
         p.execution_context = replace(p.execution_context, task_id=f['task'], conversation_id=f['conv'],
             actor_user_id=f['user'], workspace_owner_id=f['user'])
         q = replace(q, task_id=f['task'], conversation_id=f['conv'], user_id=f['user'], content=request_parts,
-                    context_anchor=SimpleNamespace(input_message_id=f['message']))
+                    context_anchor=SimpleNamespace(input_message_id=f['message'],
+                        base_revision=0 if scenario == 'inline-first-turn-upload' else None))
         p.messages = [{'role':'user','content':request_parts[0].text}]
         p.core_tools.append(build_tool_catalog().require('generate_image').to_schema())
         return r, p, h, q
@@ -1360,3 +1363,71 @@ async def test_tool_argument_failure_checkpoint_survives_actor_replacement(conte
     assert repairs.stopped(restarted, request)
     assert list(repairs.read(restarted).counts.values()) == [3]
     handler._execute_tool_calls.assert_not_awaited()
+
+
+async def test_confirmed_sibling_has_an_independent_slot_and_preserves_previous_dispatch_fence(content_db):
+    from dataclasses import replace
+    from types import SimpleNamespace
+    from uuid import uuid4
+    from psycopg.types.json import Jsonb
+
+    from schemas.message import TextPart
+    from services.task_execution.item_confirmation import slot
+    from services.task_execution.model_directed import record_calls
+    from services.task_execution.reducer import digest
+    from services.tools import ToolCall
+    from services.tools.catalog import build_capability_catalog
+
+    runtime, prepared, handler, request = case()
+    prepared.content_controls_available = True
+    user_text = '写三条视频脚本。第1条直接生成视频，第2条和第3条分别等我确认。'
+    request = replace(request, content=[TextPart(text=user_text)])
+    draft = {'title': '三条短片', 'items': [{'title': str(i), 'body': f'视频脚本{i}'} for i in range(1, 4)]}
+    await execute(runtime, prepared, handler, request, [call(co.SAVE, {'document': draft}, 'save')])
+    state = runtime.task_execution_state
+    row, = co.catalog(state)
+    registry = build_capability_catalog()
+    first = ToolCall('first', 'generate_video', {'prompt': '视频脚本1'})
+    second = ToolCall('second', 'generate_video', {'prompt': '视频脚本2'})
+    first_slot = slot(state, first.name, ref(row, 1))
+    second_slot = slot(state, second.name, ref(row, 2))
+    state = record_calls(state, runtime.task_bootstrap, [first], registry, media_slots={first.call_id: first_slot})
+    from services.task_execution.reducer import reserve_operation, record_operation
+    first_binding = state.call_bindings[-1]
+    state, operation, _ = reserve_operation(state, expected_revision=state.revision,
+        step_id=first_binding.step_id, capability='platform.generate_video', effect_key='video:first',
+        effect_version=1, arguments={'prompt': '视频脚本1'}, owner_task_id=runtime.task_id, invocation_id=first.call_id)
+    state = state.model_copy(update={'operations': (operation.model_copy(update={'tool_name': first.name}),)})
+    state = record_operation(state, operation.id, owner_task_id=runtime.task_id,
+                             status='accepted', receipt_ref=f'task:{uuid4()}')
+    approved_id = str(uuid4())
+    next_state = record_calls(state, runtime.task_bootstrap, [second], registry,
+        input_sha256=digest([approved_id]), media_slots={second.call_id: second_slot})
+    assert next_state.call_bindings[-1].step_id != first_binding.step_id
+    assert len(next_state.operations) == 1
+    persisted = next_state.model_dump(mode='json')
+    checkpoint = {
+        '_task_direct_seen': [approved_id],
+        '_task_user_changes': {'items': [{'event_id': approved_id, 'message': '确认第2条', 'delivered': True}]},
+    }
+    with psycopg.connect(content_db) as db:
+        def current(checkpoint):
+            return db.execute('SELECT agent_task_direct_operation_current(%s,%s,%s)',
+                (Jsonb(persisted), Jsonb(checkpoint), operation.id)).fetchone()[0]
+
+        assert db.execute('SELECT agent_task_direct_records_valid(%s)', (Jsonb(persisted),)).fetchone()[0]
+        assert db.execute("SELECT agent_media_confirmed_index('确认第2条')").fetchone()[0] == 2
+        assert db.execute('SELECT agent_task_direct_input_hash(%s)', (Jsonb(checkpoint),)).fetchone()[0] == digest([approved_id])
+        assert current(checkpoint)
+        changed = copy.deepcopy(checkpoint)
+        changed['_task_user_changes']['items'][0]['message'] = '取消上一条，改用新图'
+        assert not current(changed)
+        changed = copy.deepcopy(checkpoint)
+        changed['_task_user_changes']['items'][0]['message'] = '确认第3条'
+        assert not current(changed)
+        changed = copy.deepcopy(checkpoint)
+        changed['_task_user_changes']['items'][0]['attachments'] = [{}]
+        assert not current(changed)
+        tampered = copy.deepcopy(persisted)
+        tampered['call_bindings'][-1]['media_slot'] = 'object-' + '0' * 32 + ':2'
+        assert not db.execute('SELECT agent_task_direct_records_valid(%s)', (Jsonb(tampered),)).fetchone()[0]

@@ -248,6 +248,16 @@ class CallBinding(Fact):
     input_sha256: Digest = '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945'
 
 
+    media_slot: str | None = Field(default=None, pattern=r'^object-[a-f0-9]{32}:(?:[1-9][0-9]?|100)$')
+
+    @model_serializer(mode='wrap')
+    def omit_empty_media_slot(self, handler):
+        result = handler(self)
+        if self.media_slot is None:
+            result.pop('media_slot', None)
+        return result
+
+
 class ResolvedCallBinding(Fact):
     call_id: str = Field(min_length=1,max_length=200)
     arguments_sha256: Digest

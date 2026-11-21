@@ -145,7 +145,8 @@ async def test_durable_approval_returns_to_runtime_inbox_before_safe_point():
 
 
 @pytest.mark.asyncio
-async def test_actor_steer_is_durable_and_wakes_conversation_worker():
+@pytest.mark.parametrize("request_id", [None, "fb7da576-4aef-4dc4-a5ff-a53728d3f460"])
+async def test_actor_steer_is_durable_and_wakes_conversation_worker(request_id):
     task = _task(actor=True)
     control_tasks = SimpleNamespace(
         running=task,
@@ -153,7 +154,7 @@ async def test_actor_steer_is_durable_and_wakes_conversation_worker():
         to_router_state=lambda: {},
     )
     store = AsyncMock()
-    store.append.return_value = {"outcome": "enqueued"}
+    store.append.return_value = {"outcome": "enqueued", "event_id": "saved-steer", "payload": {"message": "请改为简短回答"}}
     wakeup = MagicMock()
     wakeup.publish = AsyncMock()
 
@@ -167,6 +168,7 @@ async def test_actor_steer_is_durable_and_wakes_conversation_worker():
              return_value=SimpleNamespace(action=ws.ControlAction.NONE),
          ), \
          patch.object(ws, "DatabaseConversationCommandStore", return_value=store), \
+         patch.object(ws.ws_manager, "send_to_connection", new_callable=AsyncMock) as send, \
          patch(
              "services.conversation_worker.RedisConversationWakeup",
              return_value=wakeup,
@@ -180,6 +182,7 @@ async def test_actor_steer_is_durable_and_wakes_conversation_worker():
                     "task_id": "task-1",
                     "conversation_id": "conversation-1",
                     "message": "请改为简短回答",
+                    **({"request_id": request_id} if request_id else {}),
                 },
             },
             org_id="org-1",
@@ -190,3 +193,31 @@ async def test_actor_steer_is_durable_and_wakes_conversation_worker():
     assert kwargs["command_type"] is CommandType.STEER
     assert kwargs["payload"] == {"message": "请改为简短回答"}
     wakeup.publish.assert_awaited_once_with("conversation-1", "org-1")
+    if request_id:
+        assert kwargs["dedupe_key"] == f"steer:{request_id}"
+        receipt = send.await_args.args[1]
+        assert receipt["type"] == "steer_result"
+        assert receipt["payload"] == {"request_id": request_id, "outcome": "enqueued", "event_id": "saved-steer"}
+    else:
+        send.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_steer_retry_reads_original_receipt_after_task_has_ended():
+    request_id = "fb7da576-4aef-4dc4-a5ff-a53728d3f460"
+    with patch.object(ws, "get_db", return_value=MagicMock()), \
+         patch.object(ws, "_find_steer_receipt", return_value="saved-steer") as find, \
+         patch.object(ws, "load_control_tasks") as active, \
+         patch.object(ws.ws_manager, "send_to_connection", new_callable=AsyncMock) as send:
+        await ws._handle_message("conn-1", "user-1", {
+            "type": "user_steer", "payload": {
+                "task_id": "task-1", "conversation_id": "conversation-1",
+                "request_id": request_id, "message": "改为白底", "retry": True,
+            },
+        }, org_id="org-1")
+    active.assert_not_called()
+    assert find.call_args.kwargs == {
+        "task_id": "task-1", "conversation_id": "conversation-1", "user_id": "user-1",
+        "org_id": "org-1", "request_id": request_id, "message": "改为白底", "attachments": (),
+    }
+    assert send.await_args.args[1]["payload"]["event_id"] == "saved-steer"

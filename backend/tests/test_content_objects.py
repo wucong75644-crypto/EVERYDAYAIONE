@@ -543,7 +543,7 @@ async def test_model_request_assembles_one_current_contract_per_tool(monkeypatch
     handler._execute_tool_calls.assert_not_awaited()
 
 
-async def test_first_turn_reference_with_only_uploaded_image_asks_without_sampling_or_dispatch():
+async def test_first_turn_explicit_history_reference_asks_without_sampling_or_dispatch():
     from dataclasses import replace
     from unittest.mock import AsyncMock
 
@@ -551,7 +551,7 @@ async def test_first_turn_reference_with_only_uploaded_image_asks_without_sampli
     from services.tools import build_legacy_catalog
 
     runtime, prepared, handler, request = case()
-    text = '这个是图片。你用你写的提示词帮我生成新的图片'
+    text = '这个是图片。你用你上次写的提示词帮我生成新的图片'
     request = replace(request, content=[
         TextPart(text=text), ImagePart(name='福字.png', workspace_path='uploads/fu.png'),
     ], context_anchor=SimpleNamespace(base_revision=0, input_message_id=str(uuid4())))
@@ -842,7 +842,7 @@ async def test_unconfirmed_delivery_uses_one_repair_and_never_claims_submission(
     message = uuid4()
     q = replace(q, content=[TextPart(text=request_text)],
                 context_anchor=SimpleNamespace(input_message_id=message))
-    p.tool_context.discovered_tools.add(tool_name)
+    assert tool_name not in p.tool_context.discovered_tools
     rounds = []
 
     async def promise(**kwargs):
@@ -1509,3 +1509,143 @@ def test_prompt_authoring_can_be_followed_by_explicit_image_execution():
     assert image_execution_request(SimpleNamespace(content=[TextPart(
         text='不要生成第一张图片，只用第二张图出图。',
     )]))
+
+
+@pytest.mark.parametrize(('text', 'delivery', 'image'), [
+    ('解释怎么算转化率，然后导出 Excel', {'code_execute': '文件'}, False),
+    ('把这份表整理成可下载的 Excel', {'code_execute': '文件'}, False),
+    ('查近期的文具趋势，再生成一张图', {}, True),
+    ('怎么生成图片？', {}, False),
+    ('只写一份视频脚本，不要生成视频', {}, False),
+])
+def test_compound_requests_preserve_the_independent_delivery(text, delivery, image):
+    from schemas.message import TextPart
+    from services.handlers.chat import content_tools
+
+    request = SimpleNamespace(content=[TextPart(text=text)])
+    assert content_tools.requested_delivery_tools(request) == delivery
+    assert content_tools.image_execution_request(request) is image
+
+
+async def test_requested_video_waits_for_later_user_confirmation_even_if_tool_is_available():
+    from dataclasses import replace
+
+    from schemas.message import TextPart
+    from services.handlers.chat import content_tools
+
+    runtime, prepared, handler, request, row = await registered()
+    text = '先生成图片，等我确认后再生成视频'
+    request = replace(request, content=[TextPart(text=text)])
+    prepared.content_controls_available = True
+    prepared.content_visible_tool_names = {'generate_video'}
+    assert content_tools.image_execution_request(request)
+    assert 'generate_video' not in content_tools.requested_delivery_tools(request)
+
+    await execute(runtime, prepared, handler, request, [
+        call('generate_video', {'content_source': ref(row)}, 'video-before-confirmation'),
+    ])
+
+    handler._execute_tool_calls.assert_not_awaited()
+    assert '用户要求确认后再生成视频。本次未派发' in json.dumps(prepared.messages[-1]['content'], ensure_ascii=False)
+    assert not runtime.task_execution_state.operations
+
+
+@pytest.mark.asyncio
+async def test_independent_conditions_on_same_media_batch_bind_to_saved_item():
+    from dataclasses import replace
+    from schemas.message import TextPart
+    from services.task_execution.item_confirmation import check, wait_all
+
+    runtime, prepared, handler, request = case()
+    prepared.content_controls_available = True
+    text = '请写三条视频脚本。第1条直接生成视频，第2条和第3条分别等我确认。'
+    assert not wait_all(text)
+    assert wait_all('写三个视频脚本，每条分别等我确认。')
+    request = replace(request, content=[TextPart(text=text)])
+    draft = {'title': '三个海蓝手账短片',
+             'items': [{'title': f'脚本{i}', 'body': f'产品故事{i}，用横屏展示海蓝手账。'}
+                       for i in range(1, 4)]}
+    await execute(runtime, prepared, handler, request, [call(co.SAVE, {'document': draft, 'continue_execution': True}, 'group')])
+    state = runtime.task_execution_state
+    saved, = co.catalog(state, for_model=True)
+    assert [i.get('awaiting_confirmation', False) for i in saved['items']] == [False, True, True]
+
+    def submit(index):
+        return call('generate_video', {'content_source': {
+            'artifact_id': saved['artifact_id'], 'item_index': index,
+        }}, f'video-{index}')
+
+    assert check(submit(1), state, text) is None
+    assert check(submit(2), state, text)[0] == 'CHAT_MEDIA_AWAITING_USER'
+    assert check(submit(3), state, text)[0] == 'CHAT_MEDIA_AWAITING_USER'
+    assert check(submit(2), state, '确认第2条') is None
+    assert check(submit(3), state, '确认第2条')[0] == 'CONTENT_CONFIRMATION_DIFFERENT_ITEM'
+    assert check(submit(3), state, '我确认第3条，可以生成') is None
+    assert check(submit(2), state, '先不要确认第2条')[0] == 'CHAT_MEDIA_AWAITING_USER'
+    assert check(submit(3), state, '好的继续')[0] == 'CHAT_MEDIA_AWAITING_USER'
+    assert check(call('generate_video', {'prompt': '绕过来源'}, 'direct'), state,
+                 '确认第2条')[0] == 'CONTENT_CONFIRMATION_REFERENCE_REQUIRED'
+
+    dispatched = []
+
+    async def dispatch(calls, *args, **kwargs):
+        dispatched.extend(json.loads(c['arguments'])['prompt'] for c in calls if c['name'] == 'generate_video')
+        return [(c, '受控受理', False, '受控受理') for c in calls]
+
+    handler._execute_tool_calls.side_effect = dispatch
+    prepared.content_visible_tool_names = {'generate_video'}
+    await execute(runtime, prepared, handler, request, [submit(1), submit(2), submit(3)])
+    assert dispatched == [draft['items'][0]['body']]
+    approved_request = replace(request, content=[TextPart(text='确认第2条')])
+    await execute(runtime, prepared, handler, approved_request, [submit(2), submit(3)])
+    assert dispatched == [item['body'] for item in draft['items'][:2]]
+
+
+@pytest.mark.asyncio
+async def test_steer_attachments_project_to_original_turn_with_verified_workspace_versions(tmp_path, monkeypatch):
+    from dataclasses import replace
+    from PIL import Image
+    from core.config import get_settings
+    from services.file_executor import FileExecutor
+    from services.handlers.chat.execution_engine import _inject_runtime_steers
+    from services.task_execution import steer_attachments as media
+    from services.task_execution.user_changes import UserChange, UserChanges
+
+    runtime, prepared, _, request = case()
+    monkeypatch.setattr(get_settings(), 'file_workspace_root', str(tmp_path))
+    monkeypatch.setattr(FileExecutor, 'get_cdn_url', lambda self, relative: 'https://cdn.example.test/ref.png')
+    files = FileExecutor(str(tmp_path), request.user_id, None)
+    root = Path(files.workspace_root)
+    Image.new('RGB', (8, 8), 'blue').save(root / 'ref.png')
+    (root / 'brief.txt').write_text('原始资料')
+    inputs = [{'kind': 'image', 'workspace_path': 'ref.png'}, {'kind': 'file', 'workspace_path': 'brief.txt'}]
+    attachments = media.bind(media.normalize(inputs), user_id=request.user_id, org_id=None,
+                             conversation_id=request.conversation_id)
+    directive = '用这张参考图和文件继续原来的任务'
+    change = UserChange(event_id=uuid4(), owner_task_id=runtime.task_id, message=directive,
+                        message_sha256=hashlib.sha256(directive.encode()).hexdigest(), attachments=attachments)
+    runtime.task_user_changes = UserChanges(root_task_id=runtime.task_id, items=(change,))
+    runtime._steer_messages.append(directive)
+    await _inject_runtime_steers(runtime, prepared)
+    assert runtime.task_user_changes.items[0].delivered
+    entry = prepared.messages[-1]
+    assert entry['role'] == 'user'
+    text, visual = entry['content']
+    assert text['text'].startswith(directive)
+    assert all(item['resource_ref'] in text['text'] for item in attachments)
+    assert visual == {'type': 'image_url', 'image_url': {'url': 'https://cdn.example.test/ref.png'}}
+    await _inject_runtime_steers(runtime, prepared)
+    assert prepared.messages.count(entry) == 1
+
+    # The pre-resume inbox contains the same immutable selector; a changed file
+    # or different actor cannot turn it into a new attachment.
+    (root / 'brief.txt').write_text('文件被替换，不能以原批准引用读取')
+    runtime.task_user_changes = UserChanges(root_task_id=runtime.task_id, items=(change,))
+    runtime._steer_messages.append(directive)
+    await _inject_runtime_steers(runtime, prepared)
+    latest = prepared.messages[-1]['content'][0]['text']
+    assert 'unavailable' in latest and attachments[1]['resource_ref'] not in latest
+    assert not media.matches({'message': directive, 'attachments': attachments}, directive, media.normalize(inputs[::-1]))
+    with pytest.raises(PermissionError):
+        media.bind(media.normalize([{'kind': 'file', 'workspace_path': '../outside.txt'}]),
+                   user_id=request.user_id, org_id=None, conversation_id=request.conversation_id)

@@ -50,6 +50,7 @@ class WSMessageType(str, Enum):
     CHANGESET_UPDATED = "changeset_updated"       # 后端 → 前端：重新读取 ChangeSet
 
     # === 用户打断 ===
+    STEER_RESULT = "steer_result"                 # 后端 → 前端：追加消息持久化回执
     USER_STEER = "user_steer"                     # 前端 → 后端：打断当前执行
     CONTROL_RESULT = "control_result"             # 后端 → 前端：语义控制结果
 

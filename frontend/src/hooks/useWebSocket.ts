@@ -89,7 +89,8 @@ export type WSMessageType =
   | 'form_submit_result'
   | 'changeset_updated'
   // 用户打断
-  | 'user_steer';
+  | 'user_steer'
+  | 'steer_result';
 
 export interface WSMessage {
   type: WSMessageType;
@@ -117,7 +118,7 @@ export interface UseWebSocketReturn {
   subscribe: (type: WSMessageType, handler: MessageHandler) => () => void;
   subscribeTask: (taskId: string, lastIndex?: number) => void;
   unsubscribeTask: (taskId: string) => void;
-  send: (message: Omit<WSMessage, 'timestamp'>) => void;
+  send: (message: Omit<WSMessage, 'timestamp'>) => boolean;
 }
 
 // === 获取 Token 函数 ===
@@ -453,14 +454,10 @@ export function useWebSocket(): UseWebSocketReturn {
 
   // 发送消息
   const send = useCallback((message: Omit<WSMessage, 'timestamp'>) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(
-        JSON.stringify({
-          ...message,
-          timestamp: Date.now(),
-        })
-      );
-    }
+    const socket = wsRef.current;
+    if (socket?.readyState !== WebSocket.OPEN) return false;
+    socket.send(JSON.stringify({ ...message, timestamp: Date.now() }));
+    return true;
   }, []);
 
   // 页面可见性变化：切回前台时检查并重连

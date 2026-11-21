@@ -365,10 +365,16 @@ class ChatGenerationExecutor:
                 "credits_cost": result.credits_cost,
                 "tool_digest": result.tool_digest,
             }
-            await runtime.safe_point(
-                SafePoint.BEFORE_COMMIT,
-                replay_payload=replay_payload,
-            )
+            try:
+                await runtime.safe_point(
+                    SafePoint.BEFORE_COMMIT,
+                    replay_payload=replay_payload,
+                )
+            except Exception as error:
+                if 'ACTOR_STEER_ATTACHMENT_BEFORE_COMMIT' not in str(error):
+                    raise
+                diagnostic_outcome = 'steer_before_commit'
+                return await self.execute(task, claim, cancellation_event)
             diagnostic_outcome = "generated"
             return GenerationOutcome(
                 result_content=serialize_content_parts(result.parts),
@@ -431,7 +437,9 @@ class ChatGenerationExecutor:
                 boundary=boundary,
                 payload=dict(payload),
             )
-        except Exception:
+        except Exception as error:
+            if 'ACTOR_STEER_ATTACHMENT_BEFORE_COMMIT' in str(error):
+                raise
             # An acknowledgement can be lost after commit. Reconcile the whole
             # checkpoint, not merely a matching composition ID, before proceeding.
             from services.handlers.chat.tool_argument_repairs import KEY as ARGUMENT_REPAIRS

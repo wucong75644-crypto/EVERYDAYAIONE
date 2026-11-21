@@ -362,6 +362,34 @@ async function reconcileChatTaskStatesOnce(
     } catch (error) { logger.error('task:reconcile', '图片完成消息读取失败，保留刷新标记', error); }
   }));
 
+  const completedVideos = tasks.filter(task => task.type === 'video'
+    && task.request_params?._agent_video_request_v1
+    && RECONCILE_TASK_STATUSES.has(task.status) && task.conversation_id);
+  await Promise.all(completedVideos.map(async task => {
+    const messageId = task.assistant_message_id || task.placeholder_message_id;
+    if (!messageId) return;
+    const store = useMessageStore.getState();
+    const current = store.getMessage(messageId);
+    if (current?.generation_params?.task_id === task.id
+        && (current.status === 'completed' || current.status === 'failed')) return;
+    try {
+      const { getMessage } = await import('../services/message');
+      const raw = await getMessage(task.conversation_id, messageId);
+      const result = normalizeMessage(raw);
+      if (result.id !== messageId || result.conversation_id !== task.conversation_id
+          || result.generation_params?.origin !== 'agent_video'
+          || result.generation_params.task_id !== task.id
+          || (result.status !== 'completed' && result.status !== 'failed')) return;
+      const latest = store.getMessage(messageId);
+      if (latest?.context_revision != null && (result.context_revision ?? -1) < latest.context_revision) return;
+      store.updateMessage(messageId, result);
+      store.addMessage(task.conversation_id, result);
+    } catch (error) {
+      store.markForceRefresh(task.conversation_id);
+      logger.error('task:reconcile', '视频完成消息读取失败', error, { conversationId: task.conversation_id, taskId: task.id });
+    }
+  }));
+
   for (const task of tasks) {
     if (
       task.type !== 'chat'

@@ -21,7 +21,7 @@ MISSING_IMAGE_PROMPT_QUESTION = (
     '这条对话里还没有你提到的原提示词。可以发给我原稿，或告诉我按当前素材重新写一版再生成吗？'
 )
 _IMAGE_ACTION = (r'(?:生图|出图|改图|做图|画一张|(?:生成|做成?|制作|绘制)[^。！？!?；;，,\n]{0,14}'
-                 r'(?:图片|图像|主图|封面图)|generate (?:an? |the )?image)')
+                 r'(?:图片|图像|主图|封面图|一张图)|generate (?:an? |the )?image)')
 _NEGATED_IMAGE_ACTION = re.compile(
     rf"(?:(?:不(?:要|用|必)?|别|无需|暂不)\s*(?:(?:实际|直接|立即|马上)\s*)?|(?:do not|don't)\s+){_IMAGE_ACTION}",
     re.I,
@@ -145,16 +145,19 @@ def requests_existing_image(request):
                 and not image_execution_request(request) and not repeats_saved_image(request) and not _changes_image(text))
 
 
+def action_clauses(text):
+    return [clause for clause in re.split(r'[。！？!?；;，,\n]', text)
+            if not _IMAGE_EXPLANATION.search(clause)]
+
+
 def image_execution_request(request, runtime=None):
     """Hold execution narration until there is a receipt. This never starts a task."""
     text = ' '.join(getattr(part, 'text', '') for part in (getattr(request, 'content', None) or ()))
-    if _IMAGE_EXPLANATION.search(text):
-        return False
     if _IMAGE_PROMPT_ONLY.search(text):
         return False
     # Remove only the explicitly non-executing phrases. A positive request
     # elsewhere in the same message can still request a different image.
-    actions = _PROMPT_ONLY_ACTION.sub(' ', _NEGATED_IMAGE_ACTION.sub(' ', text))
+    actions = _PROMPT_ONLY_ACTION.sub(' ', _NEGATED_IMAGE_ACTION.sub(' ', '\n'.join(action_clauses(text))))
     if runtime and re.search(r'(?:剩余|剩下|其他|其余).{0,10}(?:也|一起|继续).{0,6}(?:做|生成)', actions):
         state = getattr(runtime, 'task_execution_state', None)
         prior = getattr(runtime, 'task_followup_candidate', None) or {}
@@ -176,16 +179,32 @@ def requested_delivery_tools(request):
         elif isinstance(part, dict) and part.get('type') == 'text' and isinstance(part.get('text'), str):
             texts.append(part['text'])
     text = ' '.join(texts)
-    if _IMAGE_EXPLANATION.search(text):
-        return {}
-    actions = re.sub(r'(?:不要|不用|别|无需|不必|暂不)(?:实际|立即|直接)?(?:生成|制作|做成|转成|导出)[^，。！？；,!?;\n]*',
-                     '', text)
+    actions = re.sub(r'(?:不要|不用|别|无需|不必|暂不)(?:实际|立即|直接)?(?:生成|制作|做成|转成|整理成|导出)[^，。！？；,!?;\n]*',
+                     '', '\n'.join(action_clauses(text)))
     requested = {}
-    if re.search(r'(?:生成|制作|做成?|转成?|产出)[^，。！？；,!?;\n]{0,12}(?:视频|短片)(?!脚本|文案|提示词)', actions):
+    if _VIDEO_ACTION.search(actions):
         requested['generate_video'] = '视频'
-    if re.search(r'(?:导出|做成|保存为|转成|生成)[^，。！？；,!?;\n]{0,14}(?:文件|文档|Word|PDF|Excel|CSV|PPT|docx|xlsx)(?!内容|示例)', actions, re.I):
+    if re.search(r'(?:导出|做成|保存为|转成|整理成|生成)[^，。！？；,!?;\n]{0,14}(?:文件|文档|Word|PDF|Excel|CSV|PPT|docx|xlsx)(?!内容|示例)', actions, re.I):
         requested['code_execute'] = '文件'
+    if waits_for_video_confirmation(request):
+        requested.pop('generate_video', None)
     return requested
+
+
+_VIDEO_ACTION = re.compile(
+    r'(?:生成|制作|做成?|转成?|产出)[^，。！？；,!?;\n]{0,12}(?:视频|短片)(?!脚本|文案|提示词)',
+)
+_VIDEO_WAIT = re.compile(
+    r'(?:等(?:到)?|待)(?:我|用户).{0,12}(?:确认|同意|满意)(?:了|之后|以后|后)?[，,、\s]*再'
+    r'[^。！？!?；;，,\n]{0,8}' + _VIDEO_ACTION.pattern,
+)
+
+
+def waits_for_video_confirmation(request):
+    text = ' '.join(getattr(part, 'text', '') for part in request.content or ())
+    condition = _VIDEO_WAIT.search(text)
+    # A separate video request in the same turn requires per-item planning.
+    return bool(condition and not _VIDEO_ACTION.search(text[:condition.start()]))
 
 
 def delivery_status(runtime, prepared, blocks, tool):
@@ -226,17 +245,22 @@ def visual_author_request(request, indexed):
     return None
 
 
-def _previous_item_pointer(text):
+def _previous_item_pointer(text, *, implicit_author=True):
     number = r'[零〇一二两三四五六七八九十百0-9]+'
     item = r'(?:方案|稿件|提示词|脚本|文案|条目)'
+    author = r'(?:你|助手)(?:给我|帮我)?(?:写|拟|生成|整理|提供|给|做|出)'
+    author_time = r'(?:之前|刚才|刚|上次|上一轮|先前)'
+    prior_author = (
+        rf'(?:你|助手){author_time}(?:给我|帮我)?(?:写|拟|生成|整理|提供|给|做|出)(?:过)?的(?:那[条份版个])?'
+        + (rf'|{author}(?:过)?的(?:那[条份版个])?' if implicit_author else rf'|{author}(?:过的(?:那[条份版个])?|的那[条份版个])')
+    )
     # A bare ordinal is a pointer only when the following words concern execution.
     # “第二条鱼” and “第一张图” are not saved documents.
     pointer = re.search(
         rf'第\s*{number}\s*(?:个|条|项|版|套)(?:{item}|(?=\s*(?:和原图|带原图|帮我|做|生成|出图|执行|$)))'
         rf'|{item}\s*[#＃]?\s*{number}'
-        rf'|(?:之前|刚才|上面|旧|原来|已保存)的?{item}'
-        rf'|(?:你|助手)(?:之前|刚才|刚|上次|上一轮|先前)?(?:给我|帮我)?'
-        rf'(?:写|拟|生成|整理|提供|给|做|出)(?:过)?的(?:那[条份版个])?\s*{item}', text)
+        rf'|(?:之前|刚才|上面|旧|原来|上一轮|上次|已保存)的?{item}'
+        rf'|(?:{prior_author})\s*{item}', text)
     if not pointer:
         return False
     if (re.search(r'(?:不用|别用|不要用|舍弃|忽略|取消)\s*$', text[:pointer.start()])
@@ -254,7 +278,15 @@ def _previous_item_pointer(text):
 def selects_previous_item(request):
     """An explicit pointer in an execution request cannot authorize a fresh draft."""
     text = ' '.join(part.text for part in request.content if part.type == 'text')
-    return _previous_item_pointer(text) and (image_execution_request(request) or bool(re.search(
+    previous_item = _previous_item_pointer(text)
+    image_action = image_execution_request(request)
+    if (previous_item and image_action
+            and getattr(getattr(request, 'context_anchor', None), 'base_revision', None) == 0
+            and not _previous_item_pointer(text, implicit_author=False)):
+        from services.task_execution.content_objects import current_source_images
+        if len(current_source_images(request)) == 1:
+            return False
+    return previous_item and (image_action or bool(re.search(
         r'(?:导出|做成|制成|生成|转成)(?:一份|一个|一段)?(?:视频|文件|文档|Word|PDF)', text, re.I)))
 
 

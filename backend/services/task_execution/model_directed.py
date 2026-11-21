@@ -119,7 +119,7 @@ def operation_binding(state, call):
     return step.id, key, effect_version(state, key)
 
 
-def record_calls(state, bootstrap, calls, registry,*,input_sha256=None):
+def record_calls(state, bootstrap, calls, registry,*,input_sha256=None,media_slots=None):
     """Prepare append-only, concrete tool obligations, not guessed user goals.
 
     Previously accepted calls bind back to their original slot. Separate calls
@@ -136,7 +136,9 @@ def record_calls(state, bootstrap, calls, registry,*,input_sha256=None):
     bindings = list(state.call_bindings) if state else []
     previous_operations = tuple(state.operations) if state else ()
     input_sha256=input_sha256 or digest([])
+    media_slots = media_slots or {}
     for call in calls:
+        slot = media_slots.get(call.call_id)
         spec = registry.get(call.name)
         if call.name in {SAVE_IMAGE_PLAN, 'save_task_text'}:
             capability = 'task.image_plan.save' if call.name == SAVE_IMAGE_PLAN else 'task.text.save'
@@ -147,14 +149,22 @@ def record_calls(state, bootstrap, calls, registry,*,input_sha256=None):
         checksum = digest(thaw(call.arguments))
         known = next((v for v in bindings if v.call_id == call.call_id), None)
         if known is not None:
-            if (known.tool_name, known.arguments_sha256) != (call.name, checksum):
+            if ((known.tool_name, known.arguments_sha256) != (call.name, checksum)
+                    or slot is not None and slot != known.media_slot):
                 raise TaskError('TASK_DIRECT_CALL_ARGUMENTS_CHANGED')
             continue
         # A changed call ID is not proof of a new authorized effect. Equally,
         # identical parameters are not proof that two earlier outputs are one
         # slot: do not choose an arbitrary operation from a parallel batch.
+        prior_slots = {b.step_id: b.media_slot for b in bindings if b.media_slot}
+        siblings = {step for step, prior in prior_slots.items() if slot and prior != slot
+                    and prior.split(':', 1)[0] == slot.split(':', 1)[0]}
+        same_slot = [v for v in previous_operations if slot and prior_slots.get(v.step_id) == slot
+                     and v.status != 'failed_before_dispatch']
+        if any(v.arguments_sha256 != checksum or v.status in {'completed', 'failed_after_dispatch'} for v in same_slot):
+            raise TaskError('TASK_DIRECT_RESULT_REUSE_REQUIRED')
         matches = [v for v in previous_operations
-            if v.tool_name == call.name and (v.arguments_sha256 == checksum or any(
+            if v.tool_name == call.name and v.step_id not in siblings and (v.arguments_sha256 == checksum or any(
                 b.step_id==v.step_id and b.tool_name==call.name and b.arguments_sha256==checksum for b in bindings))
             and v.status!='failed_before_dispatch'
             and (v.status in {'reserved','accepted','uncertain'} or any(
@@ -165,7 +175,8 @@ def record_calls(state, bootstrap, calls, registry,*,input_sha256=None):
         if original is not None and original.status in {'completed', 'failed_after_dispatch'}:
             raise TaskError('TASK_DIRECT_RESULT_REUSE_REQUIRED')
         if any(v.capability == capability and v.status in {'reserved', 'accepted', 'uncertain'}
-               and v is not original for v in previous_operations):
+               and v is not original and not (v.status == 'accepted' and v.step_id in siblings)
+               for v in previous_operations):
             raise TaskError('TASK_DIRECT_EFFECT_UNRESOLVED')
         if original is not None:
             step_id = original.step_id
@@ -182,7 +193,7 @@ def record_calls(state, bootstrap, calls, registry,*,input_sha256=None):
                 capability=capability, requirement_ids=(rid,),
                 image_item_index=1 if kind == 'image' else None))
         bindings.append(CallBinding(call_id=call.call_id, tool_name=call.name,
-            arguments_sha256=checksum, step_id=step_id,input_sha256=input_sha256))
+            arguments_sha256=checksum, step_id=step_id,input_sha256=input_sha256,media_slot=slot))
     if state is None:
         if not requirements:
             return None

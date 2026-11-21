@@ -322,7 +322,7 @@ def stage_plan_calls(runtime,prepared,blocks,calls,assistant):
     return [c for c in calls if c['name']!='update_task_plan'],True
 
 
-def stage_native_calls(runtime,prepared,calls,registry,*,server_image_plan=False):
+def stage_native_calls(runtime,prepared,calls,registry,*,server_image_plan=False,media_slots=None):
     candidate=runtime.task_execution_state
     errors={}
     for call in calls:
@@ -347,7 +347,7 @@ def stage_native_calls(runtime,prepared,calls,registry,*,server_image_plan=False
             if decision.outcome=='deny':continue  # The original runtime returns the real denial.
             if decision.operation in {'read','analysis'} and call['name']!='code_execute':continue
             try:candidate=record_calls(candidate,runtime.task_bootstrap,[parsed],registry,
-                input_sha256=digest(sorted(getattr(runtime,'task_direct_seen',()))))
+                input_sha256=digest(sorted(getattr(runtime,'task_direct_seen',()))), media_slots=media_slots)
             except TaskError as error:errors[call['id']]=(str(error),'本次调用未派发：'+str(error)+'。先读取原结果或核实已有操作，不能重复执行。')
         except (ValueError,TypeError):continue  # Native argument validation keeps its original correction path.
     if candidate is not None and runtime.task_execution_state is None:
