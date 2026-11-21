@@ -8,6 +8,7 @@ export interface SkillAssetSummary {
   id: string; name: string; summary: string;
   kind: 'reference' | 'template' | 'example_input' | 'example_output';
   format: 'md' | 'txt' | 'json' | 'csv';
+  loading?: 'eager' | 'on_demand';
   bytes?: number;
   file_format?: SkillFileFormat;
   file_bytes?: number;

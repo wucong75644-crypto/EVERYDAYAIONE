@@ -442,9 +442,9 @@ async def test_real_planner_resume_reuses_only_valid_stages_and_preserves_raw_in
 
 @pytest.mark.parametrize('kind,available,model_calls,skill_loads', [
     ('main_images',True,1,1),('ordinary_image',True,1,0),('needs_input',True,1,0),
-    ('main_images',False,0,0),
+    ('main_images',False,0,1),
 ])
-async def test_real_first_image_entry_activates_before_model_and_blocks_diy_text(
+async def test_real_bound_image_entry_activates_before_model_and_blocks_diy_text(
         ecom_db,monkeypatch,kind,available,model_calls,skill_loads):
     import asyncio
     import json
@@ -470,12 +470,28 @@ async def test_real_first_image_entry_activates_before_model_and_blocks_diy_text
     p.execution_context=replace(p.execution_context,org_id=None,context_scope='user',execution_mode='interactive',
         feature_flags={'ecom_image_planning_enabled':True,'chat_image_async_enabled':True})
     tools=('get_conversation_context','plan_ecommerce_images','generate_image')
-    source=Source([item('ecommerce-main-images',revision='v3',tools=tools)] if available else [],
-        body='必须调用主图策划子 Agent，不能自己编写主图方案。')
+    from tests.test_skill_coordination import workflow
+    from services.skills.contracts import SkillError
+    candidate=item('ecommerce-main-images',revision='v3',tools=tools,
+        coordination=workflow('ecommerce.server_plan'))
+    source=Source([candidate], body='必须调用主图策划子 Agent，不能自己编写主图方案。')
+    # Current main selects methods through manual/session/model choices. Image
+    # routing alone must not silently select a method for the user.
+    if kind=='main_images':
+        source.session_bindings.return_value=[candidate]
+    if not available:
+        source.load.side_effect=SkillError('SKILL_LOAD_UNAVAILABLE')
     skills=state(source,platform_tool_names=tools)
     await skills.initialize()
+    # This entry test isolates the checkpoint transport; real composition SQL
+    # fencing/rollback is exercised by test_skill_composition_postgres.
+    checkpoints=[]
+    async def save_checkpoint(point, payload):
+        checkpoints.append((point, payload))
+        return {'outcome':'saved'}
     runtime=ConversationTurnRuntime(conversation_id=f['conv'],task_id=f['task'],turn_id=turn,
-        execution_token=f['token'],cancellation_event=asyncio.Event())
+        execution_token=f['token'],cancellation_event=asyncio.Event(),
+        replay_checkpoint_callback=save_checkpoint)
     async def create(**kwargs):
         kwargs['runtime'].skill_runtime=skills
         return skills
@@ -497,7 +513,7 @@ async def test_real_first_image_entry_activates_before_model_and_blocks_diy_text
     sink=CollectingExecutionSink()
     try:
         if kind=='main_images' and not available:
-            with pytest.raises(SkillBindingError,match='主图入口 Skill 无法启用'):
+            with pytest.raises(SkillBindingError,match='会话固定的 Skill 无法启用'):
                 await execute_chat(handler=h,request=request,runtime=runtime,sink=sink)
         else:
             result=await execute_chat(handler=h,request=request,runtime=runtime,sink=sink)
@@ -508,12 +524,15 @@ async def test_real_first_image_entry_activates_before_model_and_blocks_diy_text
                 assert sink.text==sink.thinking==''
                 assert '我自行编写' not in json.dumps(sink.blocks,ensure_ascii=False)
                 assert result.content_blocks[0]['type']=='skill_step'
-                with psycopg.connect(ecom_db) as c:
-                    saved=c.execute("SELECT request_params->'_ecom_workflow' FROM tasks WHERE id=%s",(f['task'],)).fetchone()[0]
-                    assert saved['kind']=='main_images' and saved['skill']['revision']=='v3'
+                saved=[payload['_ecom_workflow'] for _,payload in checkpoints if '_ecom_workflow' in payload]
+                assert saved and saved[-1]['kind']=='main_images'
+                assert any(any(active['skill_key']=='ecommerce-main-images'
+                               for active in payload['skill_runtime']['active'])
+                           for _,payload in checkpoints)
             elif kind in {'ordinary_image','needs_input'}:
-                assert '我自行编写' in serialized and 'ecommerce-main-images' not in skills.active
-                assert sink.text=='我自行编写五张主图方案'
+                assert 'ecommerce-main-images' not in skills.active
+                assert '本轮没有提交图片任务' in serialized
+                assert '我自行编写' not in serialized
             else:
                 assert '图片用途尚未确认' in serialized and '我自行编写' not in serialized
         assert len(seen)==model_calls and source.load.await_count==skill_loads

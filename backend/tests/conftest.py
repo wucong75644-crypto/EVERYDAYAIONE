@@ -17,6 +17,54 @@ from datetime import datetime, timezone
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
+# Registered globally because imported image fixtures are used by several
+# modules. This fixture starts only when explicitly requested, never autouse.
+from tests.test_scheduled_task_draft_delete_integration import (
+    postgres_socket as chat_image_postgres_socket,  # noqa: F401
+)
+
+
+def pytest_unconfigure(config):
+    """Finalize unreachable generators while native time hooks still have modules.
+
+    time-machine 2.14.x permanently patches the C clock functions on Python 3.12.
+    Calling them from cyclic generator finalizers during interpreter shutdown
+    can segfault after pytest has reported success. This normal collection does
+    not change the test result or bypass fixture teardown.
+    """
+    import gc
+    gc.collect()
+
+
+@pytest.fixture(autouse=True)
+def _close_test_owned_knowledge_pool(request):
+    """Close only a real KB pool owned by this test's asyncio loop.
+
+    Unit completion hooks can lazily open the module singleton. Function-scoped
+    loops must not leave it for interpreter shutdown or the following test.
+    Module-owned/injected/mock pools are outside this fixture's ownership.
+    """
+    import pytest_asyncio
+    if not pytest_asyncio.is_async_test(request.node):
+        yield
+        return
+    loop = request.getfixturevalue('event_loop')
+    yield
+    cfg = sys.modules.get('services.knowledge_config')
+    pool = getattr(cfg, '_pg_pool', None)
+    if pool is None:
+        return
+    from psycopg_pool import AsyncConnectionPool
+    if not isinstance(pool, AsyncConnectionPool):
+        return
+    workers = getattr(pool, '_workers', ())
+    if not any(task.get_loop() is loop for task in workers):
+        return
+    loop.run_until_complete(pool.close())
+    if cfg._pg_pool is pool:
+        cfg._pg_pool = None
+        cfg._kb_available = None
+
 
 # ============ 时间事实层 fixtures ============
 # 设计文档：docs/document/TECH_ERP时间准确性架构.md §8.4

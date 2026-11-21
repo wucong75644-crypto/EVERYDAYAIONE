@@ -65,6 +65,11 @@ def classify_error(error: Exception, *, model_call: bool = False) -> ClassifiedE
     except ImportError:
         pass
 
+    # Local Skill context refusal is not a provider outage or a paid attempt.
+    from core.exceptions import AppException
+    if isinstance(error, AppException) and error.code == 'SKILL_CONTEXT_WINDOW_EXCEEDED':
+        return ClassifiedError(ErrorCategory.BUSINESS, False, False, False, False, error.code, error)
+
     # Chat Gateway 的 Provider 契约补全只在模型调用边界启用，避免改变
     # KIE 图片/视频任务及其他外部服务已有的重试和退款语义。
     if model_call:

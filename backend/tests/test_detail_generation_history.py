@@ -162,7 +162,7 @@ def test_reuse_all_inputs_preserves_old_files_plans_and_image_order(history_db,t
 
     config=get_settings()
     for key,value in {'file_workspace_root':str(tmp_path),'detail_page_generation_enabled':True,
-        'kie_api_key':'test-key','detail_gemini_input_credits_per_million':1,
+        'kie_api_key':'test-key','detail_gemini_enabled':True,'detail_gemini_input_credits_per_million':1,
         'detail_gemini_output_credits_per_million':1,'chat_image_max_requests':15,
         'chat_image_max_credits':300}.items():
         monkeypatch.setattr(config,key,value)

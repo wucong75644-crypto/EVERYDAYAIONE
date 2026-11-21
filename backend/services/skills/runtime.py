@@ -7,17 +7,18 @@ import copy
 import json
 from typing import Any, Literal
 
-from pydantic import Field, ValidationError, field_serializer
+from pydantic import Field, ValidationError, field_serializer, model_serializer
 
 from services.skills.contracts import Contract, Sha256, SkillError, SkillKey, RevisionKey
 from services.skills.renderer import (
     MAX_ACTIVE_SKILLS, MAX_ARGS_BYTES, MAX_ARGUMENTS, MAX_DIRECTORY_BYTES,
     MAX_DIRECTORY_ENTRIES, MAX_BODY_BYTES, MAX_RENDERED_BYTES, MAX_TURN_RENDERED_BYTES,
     SkillTemplateArgsError, argument_summary, bounded, digest, encoded,
-    asset_manifest_digest, prepare_resources, referenced_assets, render_resources,
+    asset_manifest_digest, prepare_resources, referenced_assets, render_resources, deferred_assets,
 )
 from services.skills.resolver import SkillCandidate, skill_tool_ceiling
 from services.skills.context import instruction_message, model_messages
+from services.skills.observability import measure_skill
 from services.skills.discovery_policy import retired_platform_skill
 from services.skills.selection import SkillSelection
 from services.skills.coordination import (
@@ -26,6 +27,10 @@ from services.skills.coordination import (
 from services.skills.workflow_contracts import (
     contract_for, required_protocol_tools, incompatible_protocol_tools, image_planning_participants,
 )
+
+
+from services.skills.resource_runtime import (READ_SKILL_ASSET, READ_SKILL_ASSET_SCHEMA,
+    read_skill_asset, validate_resource_snapshot)
 
 
 ACTIVATE_SKILL = "activate_skill"
@@ -50,7 +55,7 @@ ACTIVATE_SKILL_SCHEMA = {
 
 
 DEACTIVATE_SKILL = "deactivate_skill"
-SKILL_CONTROL_TOOLS = frozenset({ACTIVATE_SKILL, DEACTIVATE_SKILL})
+SKILL_CONTROL_TOOLS = frozenset({ACTIVATE_SKILL, DEACTIVATE_SKILL, READ_SKILL_ASSET})
 DEACTIVATE_SKILL_SCHEMA = {"type": "function", "function": {
     "name": DEACTIVATE_SKILL,
     "description": "退出本轮模型自动选择但不适用的 Skill。不能退出用户手动选择、会话固定或计划任务方法。批次屏障：下一轮按实际工具继续。",
@@ -83,6 +88,14 @@ class ActiveSkill(Contract):
     effective_allowed_tool_names: frozenset[str]
     asset_manifest_sha256: Sha256 | None = None
     loaded_asset_ids: tuple[SkillKey, ...] = Field(default=(), max_length=16)
+    deferred_asset_ids: tuple[SkillKey, ...] = Field(default=(), max_length=16)
+
+    @model_serializer(mode='wrap')
+    def preserve_legacy_resource_snapshot(self, handler):
+        result = handler(self)
+        if not self.deferred_asset_ids:
+            result.pop('deferred_asset_ids', None)
+        return result
 
     @field_serializer("effective_allowed_tool_names", when_used="json")
     def serialize_effective_allowed_tool_names(self, value: frozenset[str]) -> list[str]:
@@ -116,7 +129,7 @@ class SkillRuntime:
     def __init__(self, *, turn_id: str, source, platform_tool_names, authorized_tool_names,
                  cancellation_event: asyncio.Event, template_context: dict | None = None,
                  execution_mode: str = "interactive", available_tool_names=None, maximum_body=MAX_BODY_BYTES,
-                 maximum_rendered=MAX_RENDERED_BYTES, maximum_turn_rendered=MAX_TURN_RENDERED_BYTES, task_execution_state=None):
+                 maximum_rendered=MAX_RENDERED_BYTES, maximum_turn_rendered=MAX_TURN_RENDERED_BYTES, task_execution_state=None, allow_deferred_assets=True):
         if min(maximum_body, maximum_rendered, maximum_turn_rendered) <= 0:
             raise ValueError("Skill byte budgets must be positive")
         self.maximum_body = maximum_body
@@ -124,6 +137,7 @@ class SkillRuntime:
         self.maximum_turn_rendered = maximum_turn_rendered
         self.turn_id, self.source = turn_id, source
         self.execution_mode = execution_mode
+        self.allow_deferred_assets = allow_deferred_assets and execution_mode == 'interactive'
         self.scheduled_snapshot = None
         self.platform_tool_names = frozenset(platform_tool_names)
         self.available_tool_names = (self.platform_tool_names if available_tool_names is None else
@@ -333,6 +347,14 @@ class SkillRuntime:
         self.adopt(staged)
         return control_result('SKILL_REQUIRED_SET_ACTIVATED', ok=True)
 
+    @property
+    def has_deferred_assets(self):
+        return self.allow_deferred_assets and any(a.deferred_asset_ids for a in self.active.values())
+
+    @measure_skill('assets')
+    async def read_asset(self, arguments):
+        return await read_skill_asset(self, arguments)
+
     def _check_cancelled(self):
         if self.cancellation_event.is_set():
             raise asyncio.CancelledError
@@ -357,6 +379,7 @@ class SkillRuntime:
         return [c for c in self.directory.values()
                 if c.catalog_metadata.model_selectable and not self._retired(c.skill_key)]
 
+    @measure_skill("initialize")
     async def initialize(self, checkpoint: dict | None = None, selection: SkillSelection | None = None,
                          *, load_session_bindings: bool = True, discover_catalog: bool = True):
         self._check_cancelled()
@@ -373,7 +396,12 @@ class SkillRuntime:
             raise SkillBindingError("会话固定的 Skill 超过容量或配置无效，请检查会话设置。")
         self.session_skill_ids = tuple(c.skill_key for c in bindings)
         try:
-            candidates = await self.source.discover() if discover_catalog or selection else []
+            if discover_catalog:
+                candidates = await self.source.discover()
+            elif selection:
+                candidates = await self.source.discover_selection(selection)
+            else:
+                candidates = []
         except Exception:
             if bindings:
                 raise SkillBindingError("无法加载会话固定的 Skill，请检查会话设置后重试。") from None
@@ -492,6 +520,13 @@ class SkillRuntime:
         ))
 
     def model_messages(self, messages, tools):
+        from services.agent.observability.chat_lifecycle import chat_phase
+        visible = [a for a in self.active.values() if not self._retired(a.skill_key)]
+        chat_phase('skill.context', turn_id=self.turn_id, metrics={
+            'active_count': len(visible), 'tool_count': len(tools),
+            'asset_count': sum(len(a.loaded_asset_ids) for a in visible),
+            'rendered_bytes': sum(len(a.rendered.encode('utf-8')) for a in visible),
+        })
         if self.recommendation_batch is not None and self.allows_dynamic_activation:
             suggestions = [{"skill_id": c.skill_id, "revision": c.revision,
                             "reasons": [r.model_dump(mode="json") for r in c.reasons]}
@@ -587,6 +622,7 @@ class SkillRuntime:
             raise SkillBindingError("会话 Skill 配置无效，请检查会话设置。")
         return await self.activate(encoded({"skill_id": skill_id}), session=True)
 
+    @measure_skill("activate")
     async def activate(self, raw_arguments: str, *, manual: bool = False, session: bool = False,
                        scheduled: bool = False, action: ActionContext | None = None) -> dict:
         result = await self._activate(raw_arguments, manual=manual, session=session, scheduled=scheduled, action=action)
@@ -649,7 +685,8 @@ class SkillRuntime:
             remaining = self.maximum_turn_rendered - sum(len(a.rendered.encode('utf-8')) for a in (*self.active.values(), *self.resident.values()))
             maximum = min(self.maximum_rendered, remaining)
             ids, base, values = prepare_resources(validated, self.template_context, maximum,
-                maximum_body=self.maximum_body, maximum_rendered=self.maximum_rendered)
+                maximum_body=self.maximum_body, maximum_rendered=self.maximum_rendered,
+                defer_assets=self.allow_deferred_assets and self.checkpoint_version == 2 and self.context_version == 2)
             texts = await self.source.load_assets(candidate, validated, ids) if ids else {}
             self._check_cancelled()
             rendered = render_resources(validated, ids, base, values, texts, maximum)
@@ -667,6 +704,8 @@ class SkillRuntime:
                 rendered_sha256=digest(rendered), args_summary=summary,
                 effective_allowed_tool_names=ceiling,
                 asset_manifest_sha256=asset_manifest_digest(validated.resources), loaded_asset_ids=ids,
+                deferred_asset_ids=(deferred_assets(validated) if self.allow_deferred_assets
+                                    and self.checkpoint_version == 2 and self.context_version == 2 else ()),
             )
             if (self.checkpoint_version == 2 and action.action in {'plan', 'other'}
                     and not (manual or session or scheduled)):
@@ -766,9 +805,10 @@ class SkillRuntime:
                 bounded(validated.body, self.maximum_body, "SKILL_REPLAY_RENDER_INVALID")
                 if saved.body_sha256 != validated.body_sha256:
                     raise SkillError("SKILL_REPLAY_HASH_MISMATCH")
-                if (saved.asset_manifest_sha256 != asset_manifest_digest(validated.resources)
-                        or saved.loaded_asset_ids != referenced_assets(validated)):
+                if saved.asset_manifest_sha256 != asset_manifest_digest(validated.resources):
                     raise SkillError('SKILL_REPLAY_ASSET_MISMATCH')
+                validate_resource_snapshot(saved, validated, allow_deferred=self.allow_deferred_assets
+                    and checkpoint.version == 2 and checkpoint.context_version == 2)
                 if saved.rendered_sha256 != digest(saved.rendered):
                     raise SkillError("SKILL_REPLAY_RENDER_MISMATCH")
                 bounded(saved.rendered, self.maximum_rendered, "SKILL_REPLAY_RENDER_INVALID")
@@ -906,6 +946,7 @@ async def create_skill_runtime(*, handler, context, runtime, replay_context=None
     state = SkillRuntime(
         turn_id=runtime.turn_id, source=source, execution_mode=context.execution_mode,
         task_execution_state=getattr(runtime, 'task_execution_state', None),
+        allow_deferred_assets=not explicit_only and not scheduled,
         **skill_budget_options(settings),
         platform_tool_names=(s.name for s in capability_registry.specs()),
         authorized_tool_names=currently_authorized,
@@ -927,7 +968,8 @@ async def create_skill_runtime(*, handler, context, runtime, replay_context=None
     else:
         await state.initialize(checkpoint, selection, load_session_bindings=not bool(replay_context),
                                **({"discover_catalog": False} if explicit_only else {}))
-    if (recommendations and not scheduled and checkpoint is None and not replay_context
+    if (recommendations and selection is None and not state.session_skill_ids
+            and not scheduled and checkpoint is None and not replay_context
             and getattr(settings, "skill_recommendations_enabled", False) is True):
         from services.skills.recommendation_service import model_recommendations
         await model_recommendations(state)

@@ -337,6 +337,7 @@ class ModelGatewaySession:
         request_index: int,
         request_id: str,
         turn_index: int | None,
+        skill_context: bool = False,
         **kwargs: Any,
     ) -> AsyncIterator[StreamChunk]:
         """T3/T4 的单次 Provider 生命周期、deadline 和资源清理边界。"""
@@ -427,6 +428,9 @@ class ModelGatewaySession:
             policy = self.request.retry_policy
             if isinstance(policy, ModelRetryPolicy) and policy.prepare_stream is not None:
                 kwargs = policy.prepare_stream(self, kwargs)
+            if skill_context:
+                from services.skills.context_budget import assess_context
+                assess_context(messages, kwargs.get('tools'), self.effective_context_window, kwargs.get('max_tokens'))
             stream_timeout = self._stream_timeout
             if stream_timeout is None:
                 stream_timeout = _resolve_request_timeout(self.request)

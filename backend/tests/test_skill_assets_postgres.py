@@ -88,6 +88,99 @@ async def test_replay_uses_old_asset_snapshot_after_assignment_and_context_chang
     assert resumed.checkpoint() == checkpoint
 
 
+@pytest.mark.parametrize('resume', [False, True])
+@pytest.mark.parametrize('already_loaded', [False, True])
+async def test_active_deprecated_revision_keeps_lazy_reads_but_not_new_activation(
+    environment, resume, already_loaded,
+):
+    svc, pid, revision = create(environment, document(attachment(loading='on_demand')))
+    source = actor_source(environment)
+    source.load = AsyncMock(wraps=source.load)
+    runtime = state(source)
+    await runtime.initialize()
+    assert (await runtime.activate(activate('asset-report')))['ok']
+    request = json.dumps({'skill_id': 'asset-report', 'asset_id': 'guide'})
+    if already_loaded:
+        assert (await runtime.read_asset(request))['ok']
+    checkpoint = runtime.checkpoint()
+    action(svc, pid, 'start_draft')
+    draft = svc.detail(pid)['draft']
+    svc.save(pid, SaveDraft(expected_version=draft['version'], content=document(
+        attachment(loading='on_demand', content='New revision must not replace the pinned reference.'))))
+    assert publish(svc, pid)['draft']['revision'] != revision
+    action(svc, pid, 'deprecate')
+    if resume:
+        runtime = state(source)
+        await runtime.initialize(checkpoint)
+        assert runtime.checkpoint() == checkpoint
+    before_scope = runtime.effective_allowed_tool_names
+    source.load_assets.reset_mock()
+    result = await runtime.read_asset(request)
+    assert result['ok'], result
+    assert result['code'] == ('SKILL_ASSET_ALREADY_LOADED' if already_loaded else 'SKILL_ASSET_LOADED')
+    source.load.assert_awaited_with(runtime.directory['asset-report'], restoring=True)
+    assert runtime.active['asset-report'].revision == revision
+    assert runtime.active['asset-report'].rendered.count('A private reference.') == 1
+    assert runtime.effective_allowed_tool_names == before_scope
+    assert source.load_assets.await_count == (0 if already_loaded else 1)
+    # A successful read remains an exact, resumable snapshot.
+    restored = state(source)
+    await restored.initialize(runtime.checkpoint())
+    assert restored.checkpoint() == runtime.checkpoint()
+    fresh = state(source)
+    await fresh.initialize()
+    assert not fresh.directory
+    fresh.directory = runtime.directory.copy()
+    assert (await fresh.activate(activate('asset-report')))['code'] == 'SKILL_PINNED_REVISION_UNAVAILABLE'
+
+
+@pytest.mark.parametrize('damage', ['revoked', 'disabled', 'retired', 'hash', 'permission', 'tenant'])
+async def test_active_lazy_reads_still_recheck_authority_and_integrity(environment, damage):
+    content = document(attachment(loading='on_demand'))
+    content = content.model_copy(update={'catalog_metadata': content.catalog_metadata.model_copy(
+        update={'required_permissions': ('order.view',)})})
+    svc, pid, revision = create(environment, content)
+    source = actor_source(environment)
+    context = source._resolution_context.return_value.model_copy(update={'permissions': frozenset({'order.view'})})
+    source._resolution_context.return_value = context
+    runtime = state(source)
+    await runtime.initialize()
+    assert (await runtime.activate(activate('asset-report')))['ok']
+    saved = svc.repository.assigned_revision(pid, revision)
+    before = runtime.checkpoint()
+    if damage == 'revoked':
+        svc.repository.set_assignment(pid, saved.id, enabled=False)
+    elif damage == 'disabled':
+        action(svc, pid, 'disable')
+    elif damage == 'retired':
+        svc.repository.retire_revision(pid, saved.id)
+    elif damage == 'hash':
+        path = (environment.root / saved.nas_path).parent / 'assets/guide.md'
+        path.chmod(0o640)
+        path.write_text('tampered')
+    else:
+        # Deprecated versions may continue only under the current scope/grant.
+        action(svc, pid, 'deprecate')
+        source._resolution_context.return_value = context.model_copy(update=(
+            {'permissions': frozenset()} if damage == 'permission' else {'org_id': None}))
+    result = await runtime.read_asset(json.dumps({'skill_id': 'asset-report', 'asset_id': 'guide'}))
+    assert not result['ok']
+    assert runtime.checkpoint() == before
+    if damage != 'hash':
+        source.load_assets.assert_not_awaited()
+    if damage == 'hash':
+        # An unread asset stays unread on restore; its hash is enforced on use.
+        resumed = state(source)
+        await resumed.initialize(before)
+        assert resumed.checkpoint() == before
+        assert not (await resumed.read_asset(json.dumps(
+            {'skill_id': 'asset-report', 'asset_id': 'guide'})))['ok']
+        assert resumed.checkpoint() == before
+    else:
+        with pytest.raises(SkillReplayError):
+            await state(source).initialize(before)
+
+
 @pytest.mark.parametrize('damage', ['hash', 'missing', 'manifest', 'checkpoint', 'retired', 'revoked', 'disabled'])
 async def test_old_asset_replay_fails_closed_and_never_selects_latest(environment, damage):
     svc, pid, revision = create(environment)
@@ -164,7 +257,8 @@ def test_legacy_package_management_copy_preserves_assets(environment):
     svc.repository.set_assignment(package.id, saved.id, enabled=True)
     copied = action(svc, package.id, 'start_draft')['draft']['content']
     assert copied['assets'][0]['content'] == 'A private reference.'
-    assert set(copied['assets'][0]) == set(AssetDraft.model_fields) - {'source'}
+    assert set(copied['assets'][0]) == set(AssetDraft.model_fields) - {'source', 'loading'}
+    assert AssetDraft.model_validate(copied['assets'][0]).loading == 'eager'
     publish(svc, package.id)
     assert svc.read_revision(package.id, 'v1').asset_summaries[0]['id'] == 'guide'
 
@@ -215,3 +309,22 @@ def test_manage_existing_uploaded_revision_preserves_original(environment):
     assert AssetSourceDraft.model_validate(copied['assets'][0]['source']).raw() == original.raw()
     released = publish(svc, package.id)
     assert svc.read_revision(package.id, released['draft']['revision']).asset_summaries[0]['file_format'] == 'txt'
+
+
+def test_on_demand_mode_survives_publish_revision_edit_and_republish(environment):
+    from services.skills.authoring_contracts import DraftContent
+    env = environment
+    svc = env.service()
+    content = document(attachment(loading='on_demand'))
+    pid = svc.create(CreateSkill(skill_key='lazy-reference', content=content))['package_id']
+    release = publish(svc, pid)
+    revision = release['draft']['revision']
+    view = svc.read_revision(pid, revision)
+    assert view.asset_summaries[0]['loading'] == 'on_demand'
+    original_asset = view.asset_summaries[0]
+    editing = action(svc, pid, 'start_draft')
+    assert editing['draft']['content']['assets'][0]['loading'] == 'on_demand'
+    saved_content = DraftContent.model_validate(editing['draft']['content'])
+    assert saved_content.assets[0].content == 'A private reference.'
+    publish(svc, pid)
+    assert svc.read_revision(pid, revision).asset_summaries[0] == original_asset

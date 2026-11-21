@@ -35,7 +35,7 @@ from services.conversation_commands import (
 from services.conversation_turn_runtime import ConversationTurnRuntime
 from services.conversation_state import ConversationState, ConversationStopRequested
 from services.skills.runtime import (ACTIVATE_SKILL, ACTIVATE_SKILL_SCHEMA, DEACTIVATE_SKILL,
-    DEACTIVATE_SKILL_SCHEMA, SKILL_CONTROL_TOOLS, control_result)
+    DEACTIVATE_SKILL_SCHEMA, SKILL_CONTROL_TOOLS, control_result, READ_SKILL_ASSET, READ_SKILL_ASSET_SCHEMA)
 from services.skills.selection import SkillSelection
 from services.skills.feedback import skill_step
 from services.handlers.chat import content_tools, tool_argument_repairs
@@ -234,6 +234,9 @@ async def execute_chat(
         request.replay_context,
     )
     try:
+        # Start the existing delivery stream before Skill/workflow IO. This only
+        # acknowledges execution; activation success is reported separately.
+        await output.start()
         skills = None
         selection_error = None
         from services.agent.image.ecommerce_planner.workflow import EcommerceWorkflow
@@ -312,7 +315,6 @@ async def execute_chat(
             completed_phase_ids = {binding.skill_key for binding in completed_phase_bindings(runtime.task_execution_state)}
             if skills is not None:
                 completed_phase_ids.update(skills.resident)
-        await output.start()
         workflow = getattr(prepared, "ecom_workflow", None)
         if workflow and not (skills and (skills.manual_skill_id == "ecommerce-main-images"
                 or "ecommerce-main-images" in skills.session_skill_ids)):
@@ -880,6 +882,8 @@ async def _run_loop(
                    for key in runtime.skill_runtime.active):
                 tools.append(DEACTIVATE_SKILL_SCHEMA)
         if runtime and runtime.skill_runtime is not None:
+            if runtime.skill_runtime.has_deferred_assets:
+                tools.append(READ_SKILL_ASSET_SCHEMA)
             tools = runtime.skill_runtime.filter_protocol_tools(tools)
         knowledge_plan=getattr(prepared,'knowledge_answer_plan',None)
         fast_knowledge=knowledge_plan and knowledge_plan.get('mode') in ('answer','missing')
@@ -1391,6 +1395,7 @@ async def _read_turn(
 
     if isinstance(model_gateway, ModelGatewaySession):
         stream_kwargs["turn_index"] = model_round
+        stream_kwargs['skill_context'] = bool(skills and skills.has_active_skills)
     from services.agent.observability.chat_stream import ModelTurnTiming
     from services.agent.observability.chat_lifecycle import chat_phase
     chat_phase('model.begin', task_id=request.task_id if request else None, model_round=model_round)
@@ -2394,9 +2399,12 @@ async def _execute_tools_impl(
             build_checkpoint=_build_replay_context, sink=sink,
             repeated_tool_call_guard=repeated_tool_call_guard,assistant_already_present=assistant_already_present)
         return None
-    if (runtime and (runtime.task_execution_state is not None or runtime.task_bootstrap is not None)
-            and any(call['name'] in SKILL_CONTROL_TOOLS for call in calls)):
-        # New task method selection reads pinned bodies but dispatches no
+    if runtime and any(call['name'] in SKILL_CONTROL_TOOLS for call in calls):
+        # Honor queued cancellation before resource IO, without checkpointing
+        # an assistant whose control results do not exist yet.
+        runtime.set_state(ConversationState.WAITING_TOOL)
+        await runtime.safe_point(SafePoint.BEFORE_TOOL)
+        # Method controls read pinned bodies but dispatch no
         # business IO. Save the complete batch, rather than a pending assistant
         # tool_calls checkpoint which a resumed model cannot consume safely.
         import copy
@@ -2846,8 +2854,7 @@ async def _execute_skill_batch(**kwargs) -> None:
     try:
         await _execute_skill_batch_impl(**kwargs)
     except BaseException:
-        if (runtime and (original_task is not None or runtime.task_bootstrap is not None)
-                and runtime.replay_save_sequence != save_sequence):
+        if runtime and runtime.replay_save_sequence != save_sequence:
             # Commands may stop execution after the new projection was saved.
             # Keep its task facts, Skill facts and closed call/result pairs.
             raise
@@ -2906,7 +2913,9 @@ async def _execute_skill_batch_impl(
                 key = json.loads(call.get("arguments", ""))["skill_id"]
             except (ValueError, TypeError, KeyError):
                 key = None
-            if call["name"] == DEACTIVATE_SKILL:
+            if call["name"] == READ_SKILL_ASSET:
+                result = await skills.read_asset(call.get('arguments', ''))
+            elif call["name"] == DEACTIVATE_SKILL:
                 task_state = runtime.task_execution_state
                 bound = next((b for b in task_state.method_bindings if b.skill_key == key), None) if task_state else None
                 if bound is not None:
@@ -2982,8 +2991,7 @@ async def _execute_skill_batch_impl(
                 ),
             )
         except BaseException:
-            if ((runtime.task_execution_state is None and runtime.task_bootstrap is None)
-                    or runtime.replay_save_sequence == save_sequence):
+            if runtime.replay_save_sequence == save_sequence:
                 runtime.skill_runtime = original_skills
             raise  # No business IO may follow an unconfirmed composition save.
         if original_skills is not None and skills is not original_skills:
@@ -3171,11 +3179,13 @@ async def _apply_budget_stop(
     from services.agent.stop_policy import synthesize_wrap_up
     from services.handlers.chat.stream_finalize import stop_message
 
+    skills = getattr(runtime, 'skill_runtime', None)
     synthesis = await synthesize_wrap_up(
         model_gateway=_get_model_gateway(prepared),
         messages=prepared.messages,
         content_blocks=blocks,
         reason=stop_message(prepared.budget.stop_reason),
+        **({'skill_context': True} if skills and skills.has_active_skills else {}),
     )
     if synthesis:
         totals.text = synthesis

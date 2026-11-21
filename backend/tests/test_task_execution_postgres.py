@@ -536,15 +536,17 @@ def test_deleting_logical_state_cannot_orphan_a_new_checkpoint(task_db):
             c.execute('DELETE FROM agent_task_states WHERE root_task_id=%s', (f['task'],))
 
 
-def test_content_selections_and_stop_state_share_existing_atomic_checkpoint(task_db):
-    from services.handlers.chat.content_tools import STATE, remember_selection
+def test_observed_history_and_stop_state_share_existing_atomic_checkpoint(task_db):
+    from services.handlers.chat.content_tools import STATE, checkpoint_state
+    from types import SimpleNamespace
     import hashlib
     f = seed(task_db)
     payload = task_payload(f)
-    sources = [{'message_id': f['message'], 'content_index': 0, 'text': text,
-                'sha256': hashlib.sha256(text.encode()).hexdigest()} for text in ('第一条原文', '第二条修订稿')]
-    payload[STATE] = {**remember_selection({'task_id': f['task']}, {'sources': sources}),
-                      'source_selection_failed': True, 'stop_message': '本轮已停止提交。'}
+    observed = {f"{f['message']}:0": {
+        'sha256': hashlib.sha256('第一条原文'.encode()).hexdigest(), 'context_revision': 1}}
+    payload[STATE] = {'task_id': f['task'], 'names': ['read_conversation_text'],
+                      'observed_history': observed, 'stop_message': '本轮已停止提交。'}
+    assert checkpoint_state(SimpleNamespace(task_id=f['task'], checkpoint_base=payload)) == payload[STATE]
     with connect(f) as c:
         assert save(c, f, payload)['outcome'] == 'saved'
         restored = c.execute('SELECT state FROM conversation_turn_checkpoints WHERE task_id=%s', (f['task'],)).fetchone()[0]

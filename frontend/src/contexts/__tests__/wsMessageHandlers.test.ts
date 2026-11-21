@@ -718,6 +718,20 @@ describe('wsMessageHandlers', () => {
   // ========================================
 
   describe('message_error', () => {
+    it('handles Skill preparation failure after start without projecting a completed answer', () => {
+      handlers.message_start({ message_id: 'msg_1', conversation_id: 'conv_1', task_id: 'task_1' });
+      handlers.message_error({
+        message_id: 'msg_1', conversation_id: 'conv_1', task_id: 'task_1',
+        error: { message: '固定 Skill 已停用', code: 'SKILL_ACCESS_DENIED' },
+      });
+      expect(store.setStatus).toHaveBeenCalledWith('msg_1', 'streaming');
+      expect(store.failTask).toHaveBeenCalledWith('task_1', '固定 Skill 已停用');
+      expect(store.completeStreaming).toHaveBeenCalledWith('conv_1');
+      expect(store.setStatus).not.toHaveBeenCalledWith('msg_1', 'completed');
+      expect(store.appendStreamingContent).not.toHaveBeenCalled();
+      expect(store.appendContentBlock).not.toHaveBeenCalled();
+    });
+
     it('should update message status to failed', () => {
       handlers.message_error({
         task_id: 'task_1',

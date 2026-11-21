@@ -6,7 +6,10 @@ V2 阶段：在此基础上叠加 user_extra_grants 和 user_revocations
 设计文档: docs/document/TECH_组织架构与权限模型.md §5
 """
 from __future__ import annotations
+
+import asyncio
 from typing import Any, Dict, Optional
+from collections.abc import Iterable
 
 from loguru import logger
 
@@ -56,6 +59,27 @@ class PermissionChecker:
             )
             return False
 
+        return await self._check_assignment(user_id, permission_code, assignment, resource)
+
+    async def check_many(self, user_id: str, org_id: str | None, permission_codes: Iterable[str]) -> frozenset[str]:
+        """One fresh assignment for a read-only permission batch, never a grant cache.
+
+        Callers must still recheck at activation/dispatch. Empty/personal batches
+        do no IO; no snapshot is retained across requests or security boundaries.
+        """
+        codes = sorted(set(permission_codes))
+        if not codes or org_id is None:
+            return frozenset()
+        assignment = await self._get_assignment(user_id, org_id)
+        if not assignment:
+            return frozenset()
+        allowed = set()
+        for code in codes:
+            if await self._check_assignment(user_id, code, assignment, None):
+                allowed.add(code)
+        return frozenset(allowed)
+
+    async def _check_assignment(self, user_id, permission_code, assignment, resource):
         position_code = assignment["position_code"]
 
         # 1. 老板：全部允许
@@ -163,7 +187,11 @@ class PermissionChecker:
     async def get_assignment(
         self, user_id: str, org_id: str
     ) -> Optional[Dict[str, Any]]:
-        """查询用户在组织内的任职信息（V1 直查 DB，无缓存）"""
+        """Read fresh authority off the event loop; no cross-request cache."""
+        return await asyncio.to_thread(self._load_assignment, user_id, org_id)
+
+    def _load_assignment(self, user_id: str, org_id: str) -> Optional[Dict[str, Any]]:
+        """Synchronous LocalDB reads run together on one worker thread."""
         try:
             result = self.db.table("org_member_assignments") \
                 .select(

@@ -1,10 +1,11 @@
-"""Real PostgreSQL concurrency/rollback/RLS. Requires explicitly isolated DSN.
+"""Real PostgreSQL concurrency/rollback/RLS in a test-owned, socket-only cluster.
 
-Run with CHAT_IMAGE_TEST_ADMIN_DSN pointing at the local temporary cluster.
+An explicit CHAT_IMAGE_TEST_ADMIN_DSN retains its original fixed-socket gate.
 Creates and removes a dedicated database. Never uses application DATABASE_URL.
 """
 from concurrent.futures import ThreadPoolExecutor
 import asyncio
+import getpass
 from copy import deepcopy
 import os
 from pathlib import Path
@@ -21,13 +22,17 @@ ROOT = Path(__file__).parents[1]
 
 
 @pytest.fixture(scope="module")
-def isolated_db():
+def isolated_db(request):
     dsn = os.getenv("CHAT_IMAGE_TEST_ADMIN_DSN")
-    if not dsn:
-        pytest.skip("Explicit isolated PostgreSQL DSN required")
-    # Restrict this destructive fixture to our Unix-socket temporary cluster.
-    info = psycopg.conninfo.conninfo_to_dict(dsn)
-    assert info.get("host") == "/private/tmp" and info.get("port") == "55439"
+    if dsn:
+        # Preserve the explicit override's existing destructive-fixture gate.
+        info = psycopg.conninfo.conninfo_to_dict(dsn)
+        assert info.get("host") == "/private/tmp" and info.get("port") == "55439"
+    else:
+        # No configured/production database is consulted. The shared fixture
+        # owns initdb/start/stop and a unique Unix socket, with TCP disabled.
+        socket = request.getfixturevalue('chat_image_postgres_socket')
+        dsn = psycopg.conninfo.make_conninfo(host=socket, dbname='postgres', user=getpass.getuser())
     name = "chat_image_test_" + uuid4().hex
     admin = psycopg.connect(dsn, autocommit=True)
     for role in ("everydayai", "everydayai_worker", "everydayai_owner", "image_untrusted"):

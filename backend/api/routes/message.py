@@ -9,7 +9,7 @@ import asyncio
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from loguru import logger
 
 from api.deps import CurrentUser, CurrentUserId, Database, OrgCtx, ScopedDB, TaskLimitSvc
@@ -320,12 +320,25 @@ async def _do_generate_message(
         gen_type, db, org_id=ctx.org_id, user_id=user_id,
         request_id=request.headers.get("X-Request-Id", ""),
     )
+    async def prepare_skill_intent():
+        nonlocal skill_intent
+        if skill_intent is None:
+            try:
+                skill_intent = await capture_intent(
+                    handler, user_id=user_id, conversation_id=conversation_id,
+                    task_mode=skill_task_mode, selection=body.selected_skill, turn_id=requested_turn_id,
+                )
+            except HTTPException as exc:
+                # The outer route persists AppException status/code for HTTP
+                # idempotency. A normal Skill refusal must not replay as 500.
+                raise AppException('SKILL_SELECTION_UNAVAILABLE', str(exc.detail), exc.status_code) from None
     handler, conversation, user_message = await prepare_generation_request(
         db=db, conversation_id=conversation_id, body=body, gen_type=gen_type,
         user_id=user_id, org_id=ctx.org_id, handler=handler,
         conversation_service=get_conversation_service(db),
         create_user_message_fn=create_user_message,
         turn_id=requested_turn_id,
+        before_message=prepare_skill_intent if skill_intent is None else None,
     )
 
     if body.params is None:
@@ -345,11 +358,6 @@ async def _do_generate_message(
     if body.selected_skill is not None:
         body.params["_selected_skill"] = body.selected_skill.model_dump()
 
-    if skill_intent is None:
-        skill_intent = await capture_intent(
-            handler, user_id=user_id, conversation_id=conversation_id,
-            task_mode=skill_task_mode, selection=body.selected_skill,
-        )
     body.params['_skill_intent'] = skill_intent.model_dump(mode='json')
     body.params['_skill_retry'] = body.operation != MessageOperation.SEND
     if restored_workflow:

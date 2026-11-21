@@ -17,6 +17,13 @@ _CAPTURE: ContextVar = ContextVar('chat_lifecycle_capture', default=None)
 _SCOPE: ContextVar = ContextVar('chat_lifecycle_scope', default=None)
 _PHASES = frozenset('enqueue.begin enqueue.persisted enqueue.wakeup claim.begin claim.end executor.begin executor.inputs context.begin context.history context.knowledge context.ready answer.prepare.begin answer.prepare.end model.begin model.first_body model.end verification.begin verification.end sink.first_body sink.first_persisted sink.first_push generation.end terminal.commit.begin terminal.commit.end'.split())
 
+_SKILL_STAGES = ('intent', 'initialize', 'bindings', 'discovery', 'selection', 'identity',
+                 'permissions', 'body', 'assets', 'activate', 'media_prompt')
+_PHASES |= frozenset(f'skill.{stage}.{boundary}' for stage in _SKILL_STAGES for boundary in ('begin', 'end'))
+_PHASES |= {'skill.context', 'skill.context_budget'}
+_METRICS = frozenset({'ok', 'cancelled', 'candidate_count', 'active_count', 'asset_count',
+                      'rendered_bytes', 'tool_count', 'estimated_input_tokens', 'output_reserve_tokens', 'context_window'})
+
 
 @contextmanager
 def chat_lifecycle_scope(task_id, *, turn_id=None, attempt=None):
@@ -37,7 +44,7 @@ def capture_chat_lifecycle(rows):
         _CAPTURE.reset(token)
 
 
-def chat_phase(phase, *, task_id=None, turn_id=None, attempt=None, model_round=None, elapsed_ms=None, rpc_started_ns=None):
+def chat_phase(phase, *, task_id=None, turn_id=None, attempt=None, model_round=None, elapsed_ms=None, rpc_started_ns=None, metrics=None):
     if phase not in _PHASES:
         return
     scope = _SCOPE.get() or {}
@@ -51,6 +58,9 @@ def chat_phase(phase, *, task_id=None, turn_id=None, attempt=None, model_round=N
         row['elapsed_ms'] = elapsed_ms
     if rpc_started_ns is not None:
         row['rpc_started_ns'] = rpc_started_ns
+    if metrics:
+        row['metrics'] = {key: value for key, value in metrics.items()
+                          if key in _METRICS and type(value) in (int, bool) and 0 <= value <= 100_000_000}
     try:
         observer = _CAPTURE.get()
         if observer is not None:

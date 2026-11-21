@@ -13,6 +13,7 @@ from services.task_execution.reducer import digest
 from services.tools.catalog import build_capability_catalog
 from tests.test_model_directed_loop import case, execute
 from tests.test_task_execution_model_bridge import call
+from tests.test_skill_storage import storage  # noqa: F401
 
 
 def document():
@@ -1548,13 +1549,17 @@ def test_compound_requests_preserve_the_independent_delivery(text, delivery, ima
     assert content_tools.image_execution_request(request) is image
 
 
-async def test_requested_video_waits_for_later_user_confirmation_even_if_tool_is_available():
+@pytest.mark.parametrize('with_skill', [False, True])
+async def test_requested_video_waits_for_later_user_confirmation_even_if_tool_is_available(storage, with_skill):
     from dataclasses import replace
 
     from schemas.message import TextPart
     from services.handlers.chat import content_tools
 
     runtime, prepared, handler, request, row = await registered()
+    if with_skill:
+        from tests.test_skill_multiturn_integration import attach_lazy_method
+        source = await attach_lazy_method(runtime, storage)
     text = '先生成图片，等我确认后再生成视频'
     request = replace(request, content=[TextPart(text=text)])
     prepared.content_controls_available = True
@@ -1569,6 +1574,8 @@ async def test_requested_video_waits_for_later_user_confirmation_even_if_tool_is
     handler._execute_tool_calls.assert_not_awaited()
     assert '用户要求确认后再生成视频。本次未派发' in json.dumps(prepared.messages[-1]['content'], ensure_ascii=False)
     assert not runtime.task_execution_state.operations
+    if with_skill:
+        source.load_assets.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -1724,7 +1731,8 @@ def test_steer_visual_input_requires_verified_image_kind(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_inflight_attachment_restarts_real_gateway_with_the_original_task(tmp_path, monkeypatch):
+@pytest.mark.parametrize('with_skill', [False, True])
+async def test_inflight_attachment_restarts_real_gateway_with_the_original_task(tmp_path, monkeypatch, storage, with_skill):
     import asyncio
     from dataclasses import replace
     from unittest.mock import AsyncMock
@@ -1741,6 +1749,10 @@ async def test_inflight_attachment_restarts_real_gateway_with_the_original_task(
 
     monkeypatch.setattr('services.agent.observability.chat_lifecycle.chat_phase', lambda *args, **kwargs: None)
     runtime, prepared, handler, request = case()
+    if with_skill:
+        from tests.test_skill_multiturn_integration import attach_lazy_method
+        source = await attach_lazy_method(runtime, storage)
+        original_method = runtime.skill_runtime.active['skill0']
     request = replace(request, content=[TextPart(text='写策划书，只写文字，不生成图片或视频。')])
     monkeypatch.setattr(get_settings(), 'file_workspace_root', str(tmp_path))
     monkeypatch.setattr(FileExecutor, 'get_cdn_url', lambda self, relative: 'https://cdn.example.test/ref.png')
@@ -1799,6 +1811,11 @@ async def test_inflight_attachment_restarts_real_gateway_with_the_original_task(
         assert runtime.task_user_changes.items[0].delivered
         assert str(change.event_id) in runtime.task_direct_seen
         adapter.close.assert_not_awaited()
+        if with_skill:
+            assert runtime.skill_runtime.active['skill0'].rendered == original_method.rendered
+            assert runtime.skill_runtime.active['skill0'].loaded_asset_ids == ('guide',)
+            source.load_assets.assert_awaited_once()
+            assert sum('A private reference.' in str(message.get('content')) for message in prepared.messages) == 1
     finally:
         await prepared.model_gateway.close()
     adapter.close.assert_awaited_once()

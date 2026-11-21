@@ -101,6 +101,8 @@ def test_personal_skill_is_private_and_resolvable_only_by_its_owner(environment)
     assert detail['revisions'][0]['revision'] == detail['available_revision']
 
     owner_candidates = authoring.repository.catalog_candidates()
+    assert authoring.repository.catalog_candidates(skill_key='private-process') == owner_candidates
+    assert authoring.repository.catalog_candidates(skill_key='not-present') == []
     context = SkillResolutionContext(actor_user_id=environment.actor, org_id=None,
         conversation_scope='user', agent_domain='general', execution_mode='interactive',
         enabled_feature_flags=frozenset({'skill_catalog_enabled'}))

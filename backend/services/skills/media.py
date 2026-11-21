@@ -12,6 +12,8 @@ from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from core.config import get_settings
+from services.skills.observability import measure_skill
+from services.skills.context_budget import SkillContextBudgetError
 from services.skills.available import _conversation_org
 from services.skills.context import instruction_message
 from services.skills.runtime import create_skill_runtime
@@ -137,6 +139,7 @@ def parse_media_prompt(content):
     return result.prompt.strip()
 
 
+@measure_skill("media_prompt")
 async def prepare_media_prompt(handler, *, conversation_id, user_id, params, metadata,
                                task_mode, prompt, image_urls):
     state = await load_media_skills(handler, conversation_id=conversation_id, user_id=user_id,
@@ -164,9 +167,9 @@ async def prepare_media_prompt(handler, *, conversation_id, user_id, params, met
             model_id=model, org_id=handler.org_id, db=handler.db,
             task_id=metadata.client_task_id, timeout=settings.image_enhance_timeout,
         ))
-        response = await _collect_stream_response(session, messages=messages, tools=[])
+        response = await _collect_stream_response(session, messages=messages, tools=[], skill_context=True)
         return parse_media_prompt(response.content)
-    except HTTPException:
+    except (HTTPException, SkillContextBudgetError):
         raise
     except Exception:
         raise HTTPException(503, 'Skill 提示词准备失败，请稍后重试') from None

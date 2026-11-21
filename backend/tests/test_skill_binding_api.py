@@ -22,7 +22,7 @@ def binding_api(api, monkeypatch):
     repository.add_binding.return_value = binding_id
     factory = Mock(return_value=repository)
     monkeypatch.setattr(bindings, "SkillBindingRepository", factory)
-    checker = Mock(check=AsyncMock(return_value=True))
+    checker = Mock(check_many=AsyncMock(return_value=frozenset({"order.view"})))
     monkeypatch.setattr(bindings, "PermissionChecker", lambda _: checker)
     return api, repository, factory, checker
 
@@ -80,7 +80,7 @@ def test_only_current_org_admin_can_configure_another_users_conversation(binding
     ]
     assert call(binding_api, "POST", json={"skill_id": "report", "revision": "v1"}).status_code == expected
     if expected == 201:
-        checker.check.assert_awaited_with(owner, str(ORG), "order.view")
+        checker.check_many.assert_awaited_with(owner, str(ORG), {"order.view"})
 
 
 @pytest.mark.parametrize("table", ["users", "org_members", "organizations"])
@@ -100,7 +100,7 @@ def test_stale_revision_is_rejected_and_revoked_binding_remains_removable(bindin
     repo.add_binding.assert_not_called()
     c = candidate(catalog_metadata={"required_permissions": ["order.view"]})
     repo.bindings.return_value = [c.model_dump() | {"id": uuid4(), "available": True}]
-    checker.check.return_value = False
+    checker.check_many.return_value = frozenset()
     response = call(binding_api)
     assert response.json()[0]["available"] is False
     assert response.json()[0]["revision"] == "v1"
