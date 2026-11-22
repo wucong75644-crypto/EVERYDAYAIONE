@@ -1024,7 +1024,21 @@ describe('menu and focus lifecycle',()=>{
   });
   it('returns focus and clears old multi-selection after search location',async()=>{
     f.api.search.mockResolvedValue({items:[{...node,excerpt:'搜索命中'}],next_cursor:null});
-    show();await ready();changeField(screen.getByLabelText('搜索当前范围标题与正文'),{target:{value:'项目'}});
+    show();await ready();
+    // This focus test must cross the real component's debounce boundary
+    // deterministically rather than spending findByRole's wall-clock timeout.
+    vi.useFakeTimers({toFake:['setTimeout','clearTimeout']});
+    try {
+      changeField(screen.getByLabelText('搜索当前范围标题与正文'),{target:{value:'项目'}});
+      expect(f.api.search).not.toHaveBeenCalled();
+      await act(async()=>{await vi.advanceTimersByTimeAsync(249);});
+      expect(f.api.search).not.toHaveBeenCalled();
+      await act(async()=>{await vi.advanceTimersByTimeAsync(1);});
+      expect(f.api.search).toHaveBeenCalledExactlyOnceWith('p','项目',undefined,expect.any(AbortSignal));
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
     const hit=await screen.findByRole('button',{name:'项目总纲 搜索命中'});hit.focus();fireEvent.click(hit);
     await waitFor(()=>expect(screen.getByLabelText('知识画布')).toHaveFocus());
     expect(screen.getByRole('article',{name:'项目总纲'})).toHaveClass('selected');
