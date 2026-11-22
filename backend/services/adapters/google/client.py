@@ -148,6 +148,9 @@ class GoogleClient:
                 top_k=config.get("top_k", 40),
                 max_output_tokens=config.get("max_output_tokens", 8192),
             )
+            from services.agent.observability.model_request import record_request
+            record_request({'model': model, 'input': contents,
+                            **generation_config.model_dump(exclude_none=True)}, 'google.generate_content')
 
             logger.debug(
                 f"Google stream request | model={model} | "
@@ -211,6 +214,9 @@ class GoogleClient:
                 top_k=config.get("top_k", 40),
                 max_output_tokens=config.get("max_output_tokens", 8192),
             )
+            from services.agent.observability.model_request import record_request
+            record_request({'model': model, 'input': contents,
+                            **generation_config.model_dump(exclude_none=True)}, 'google.generate_content')
 
             logger.debug(
                 f"Google request | model={model} | "

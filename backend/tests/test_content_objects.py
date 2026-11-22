@@ -752,8 +752,11 @@ async def test_mixed_draft_preserves_visible_text_without_saving_second_version(
         yield model_save_chunk(incomplete)
 
     sink, blocks, totals = await run_content_loop(r, p, h, q, stream)
-    part, = build_content_parts(blocks, fallback_text=totals.text)
-    assert rounds == 1 and part.text == sink.text == body
+    parts = build_content_parts(blocks, fallback_text=totals.text)
+    assert rounds == 2  # One bounded protocol correction, then explicit failure.
+    assert parts[0].text == body and sink.text.startswith(body)
+    assert all('另一份草稿' not in part.text for part in parts)
+    assert parts[-1].content_incomplete is True
     assert not co.catalog(r.task_execution_state)
     h._execute_tool_calls.assert_not_awaited()
 

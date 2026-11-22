@@ -121,7 +121,8 @@ class DashScopeChatAdapter(BaseChatAdapter):
     async def _stream_responses(self, messages, thinking_mode, reasoning_effort, **kwargs):
         builtins = BUILTIN_TOOLS[self._model_id]
         # web_extractor is rejected by Bailian in non-thinking mode.
-        effort = reasoning_effort or ("medium" if thinking_mode in ("enabled", "deep_think") else "none")
+        from services.model_reasoning import dashscope_effort
+        effort = dashscope_effort(self._model_id, thinking_mode, reasoning_effort)
         thinking = effort != "none"
         if not thinking:
             builtins = tuple(name for name in builtins if name != "web_extractor")
@@ -139,6 +140,8 @@ class DashScopeChatAdapter(BaseChatAdapter):
         if kwargs.get("max_tokens") is not None:
             request["max_output_tokens"] = kwargs["max_tokens"]
         headers = {"x-dashscope-session-cache": "enable" if self._session_cache_enabled else "disable"}
+        from services.agent.observability.model_request import record_request
+        record_request(request, 'dashscope.responses')
         parser = ResponseStream(self._model_id)
         client = await self._get_client()
         try:
@@ -176,8 +179,10 @@ class DashScopeChatAdapter(BaseChatAdapter):
     # ============================================================
 
     def _request_body(self, messages, *, stream, reasoning_effort, thinking_mode, **kwargs):
+        from services.model_reasoning import validate_reasoning
+        validate_reasoning(self._model_id, 'dashscope', thinking_mode)
         body = {"model": self._model_id, "messages": chat_messages(messages, cache=self._session_cache_enabled if self._model_id in CACHE_MODELS else None), "stream": stream,
-                "enable_thinking": self._model_id == "kimi-k3" or thinking_mode in ("enabled", "deep_think")}
+                "enable_thinking": self._model_id == "kimi-k3" or (thinking_mode in ("enabled", "deep_think") and reasoning_effort != "none")}
         if stream:
             body["stream_options"] = {"include_usage": True}
         if kwargs.get("tools"):
@@ -208,6 +213,8 @@ class DashScopeChatAdapter(BaseChatAdapter):
                 body["response_format"] = response_format
                 if kwargs.get("max_tokens") is not None:
                     body["max_tokens"] = kwargs["max_tokens"]
+        from services.agent.observability.model_request import record_request
+        record_request(body, 'dashscope.chat_completions')
         return body
 
     def _transport_options(self, body):

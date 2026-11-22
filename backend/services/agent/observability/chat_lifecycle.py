@@ -20,7 +20,8 @@ _PHASES = frozenset('enqueue.begin enqueue.persisted enqueue.wakeup claim.begin 
 _SKILL_STAGES = ('intent', 'initialize', 'bindings', 'discovery', 'selection', 'identity',
                  'permissions', 'body', 'assets', 'activate', 'media_prompt')
 _PHASES |= frozenset(f'skill.{stage}.{boundary}' for stage in _SKILL_STAGES for boundary in ('begin', 'end'))
-_PHASES |= {'skill.context', 'skill.context_budget'}
+_PHASES |= {'skill.context', 'skill.context_budget', 'content.proposal_saved',
+            'content.registration.end', 'content.published'}
 _METRICS = frozenset({'ok', 'cancelled', 'candidate_count', 'active_count', 'asset_count',
                       'rendered_bytes', 'tool_count', 'estimated_input_tokens', 'output_reserve_tokens', 'context_window'})
 

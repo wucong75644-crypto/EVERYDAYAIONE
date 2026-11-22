@@ -10,6 +10,7 @@ from .contracts import Artifact, Fact, Key, TaskError
 from .reducer import digest, register_artifacts, complete_step
 
 SAVE = 'save_task_text'
+MIXED_TEXT_GUIDANCE = '若同轮先输出开场说明，必须与document.display_prefix逐字一致；说明不能代替条目正文。'
 DRAFT_CONFLICT = 'CONTENT_SAVE_DRAFT_CONFLICT'
 INVALID_OBJECT = 'CONTENT_OBJECT_INVALID'
 ATTACHMENT_USAGE_REQUIRED = 'CONTENT_ATTACHMENT_USAGE_REQUIRED'
@@ -246,14 +247,15 @@ class MessageContentSource(Fact):
 class SaveContent(Fact):
     model_config = {**Fact.model_config, 'json_schema_extra': {'oneOf': [
         {'required': ['document']}, {'required': ['base', 'updates']}, {'required': ['message_source']},
-    ]}}
+    ], 'allOf': [{'if': {'required': ['new_content'], 'properties': {'new_content': {'const': True}}},
+                   'then': {'required': ['continue_execution', 'document'], 'properties': {'continue_execution': {'const': True}}}}]}}
     document: ContentDocument | None = None
     base: ContentReference | None = None
     message_source: MessageContentSource | None = None
     updates: tuple[ItemUpdate, ...] = Field(default=(), max_length=100)
     continue_execution: bool = Field(default=False, description='仅在本轮还要求实际执行时设为 true。保存成功后仍需调用目标工具。')
     new_content: Literal[True] | None = Field(
-        default=None, description='本轮明确撰写新的执行正文时，随 document 填 true。可在 materials 指定已选的历史成图或原图。修订已有提示词用 base 和 updates。')
+        default=None, description='仅当本轮已明确要求实际执行且 continue_execution=true 时，随 document 标记新的执行正文。仅撰写文字、方案或新系列设计必须省略本字段，不能因内容是新作就填写。可在 materials 指定已选成图或原图。修订已有文字用 base 和 updates。')
     show_content: bool | None = Field(default=None, description=(
         '仅在用户同时要求交付文字且继续执行时设为true；只要求执行时省略，输入在后台登记。'))
 
@@ -310,7 +312,7 @@ def selection_parameters(model=ContentReference):
 
 
 SCHEMA = {'type': 'function', 'function': {'name': SAVE,
-    'description': '交付可供后续选择的方案、提示词或脚本：只提交一次document，每条写title和body，页面直接展示这份原文。普通问答直接回复。'
+    'description': MIXED_TEXT_GUIDANCE + '交付可供后续选择的方案、提示词或脚本：只提交一次document，每条写title和body，页面直接展示这份原文。普通问答直接回复。'
         '只执行已有成果时，直接将目录条目的content_source交给目标工具。未登记的分条正文用message_source指定原回复消息，后台定位整组原文；continue_execution=true。'
         '仅后台无法识别边界时才按已核实的完整行范围指定条目。'
         '用户明确修改一张成图时，可用document和new_content=true编写新的编辑指令，在materials绑定这张图。只修订历史文字用base和updates。'
@@ -477,6 +479,16 @@ def render(document, gaps=()):
     return '\n\n'.join(parts)
 
 
+def matches_visible_prefix(value, text):
+    """Only an explicit, byte-identical display prefix can accompany a save.
+
+    Nonempty text alone says nothing about whether the requested body was shown.
+    Never silently replace a different visible draft with tool arguments.
+    """
+    return bool(text and value.document is not None and value.document.display_prefix
+                and text == value.document.display_prefix)
+
+
 def retry_pending(messages):
     """Recognize a failed draft registration in the current user turn."""
     tool_results = {}
@@ -496,7 +508,7 @@ def retry_pending(messages):
                     if isinstance(result, dict):
                         if result.get('ok') is True:
                             return False
-                        if result.get('code') in {DRAFT_CONFLICT, INVALID_OBJECT, ATTACHMENT_USAGE_REQUIRED, PRESENTATION_INCOMPLETE}:
+                        if result.get('ok') is False:
                             return True
     return False
 
@@ -504,7 +516,7 @@ def retry_pending(messages):
 
 def save_repair_exhausted(messages):
     """Count closed, consecutive validation failures since the current input."""
-    repair_codes = {INVALID_OBJECT, ATTACHMENT_USAGE_REQUIRED}
+    repair_codes = {INVALID_OBJECT, ATTACHMENT_USAGE_REQUIRED, DRAFT_CONFLICT, PRESENTATION_INCOMPLETE}
     count = 0
     result = None
     for message in reversed(messages):
@@ -525,7 +537,7 @@ def save_repair_exhausted(messages):
         if len(calls) != 1 or calls[0].get('id') != result or calls[0].get('function', {}).get('name') != SAVE:
             return False
         count += 1
-        if count == 3:
+        if count >= (2 if payload.get('code') == DRAFT_CONFLICT else 3):
             return True
         result = None
     return False

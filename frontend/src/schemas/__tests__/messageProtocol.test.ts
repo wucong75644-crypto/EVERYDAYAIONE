@@ -163,3 +163,13 @@ it('retains progress discovery through history and WS parsing without trusting e
     .toEqual({ type: 'task_progress', root_task_id: root });
   expect(parseContentPart({ type: 'task_progress', root_task_id: 'invalid' })).toBeNull();
 });
+
+
+it('preserves delivery failure facts and accepts old nullable metadata', () => {
+  expect(parseContentPart({ type: 'text', text: '登记失败', content_incomplete: true })).toMatchObject({
+    type: 'text', content_incomplete: true,
+  });
+  expect(parseContentPart({ type: 'text', text: '旧消息', content_incomplete: null })).toEqual({
+    type: 'text', text: '旧消息',
+  });
+});

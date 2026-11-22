@@ -67,7 +67,8 @@ def classify_error(error: Exception, *, model_call: bool = False) -> ClassifiedE
 
     # Local Skill context refusal is not a provider outage or a paid attempt.
     from core.exceptions import AppException
-    if isinstance(error, AppException) and error.code == 'SKILL_CONTEXT_WINDOW_EXCEEDED':
+    if isinstance(error, AppException) and error.code in {
+            'SKILL_CONTEXT_WINDOW_EXCEEDED', 'MODEL_REASONING_OFF_UNSUPPORTED', 'CONTENT_RESPONSE_TOO_LARGE'}:
         return ClassifiedError(ErrorCategory.BUSINESS, False, False, False, False, error.code, error)
 
     # Chat Gateway 的 Provider 契约补全只在模型调用边界启用，避免改变

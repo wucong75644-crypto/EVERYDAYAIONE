@@ -244,6 +244,8 @@ class GoogleChatAdapter(BaseChatAdapter):
         Raises:
             GoogleAPIError: API 调用失败
         """
+        from services.model_reasoning import validate_reasoning
+        validate_reasoning(self._model_id, 'google', thinking_mode)
         # 转换消息格式
         google_messages = await self._convert_to_google_format(messages)
 

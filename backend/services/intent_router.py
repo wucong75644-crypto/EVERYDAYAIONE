@@ -239,6 +239,7 @@ class IntentRouter:
         generation_type: GenerationType,
         failed_models: List[str],
         error_message: str,
+        excluded_models: Optional[List[str]] = None,
     ) -> Optional[RoutingDecision]:
         """重试路由：将失败信息发给千问，让它选择替代模型
 
@@ -246,9 +247,10 @@ class IntentRouter:
         """
         from core.config import get_settings
 
+        unavailable = list(dict.fromkeys([*failed_models, *(excluded_models or [])]))
         settings = get_settings()
         if not settings.dashscope_api_key:
-            return self._deterministic_fallback(generation_type, failed_models)
+            return self._deterministic_fallback(generation_type, unavailable)
 
         retry_message = (
             f"原始请求：{original_content}\n"
@@ -257,7 +259,10 @@ class IntentRouter:
             f"请从剩余可用模型中选择一个替代模型重试。"
         )
 
-        retry_tools = build_retry_tools(generation_type, failed_models)
+        if excluded_models:
+            retry_message += '\n当前模式不适用的模型（未尝试）：' + ', '.join(excluded_models)
+
+        retry_tools = build_retry_tools(generation_type, unavailable)
         real_tools = [t for t in retry_tools if t["function"]["name"] != "give_up"]
         if not real_tools:
             logger.info(f"No remaining models for retry | type={generation_type.value}")
@@ -280,7 +285,7 @@ class IntentRouter:
                 )
                 if decision and decision.raw_tool_name == "give_up":
                     logger.info(f"Router chose to give_up | model={router_model}")
-                    return self._deterministic_fallback(generation_type, failed_models)
+                    return self._deterministic_fallback(generation_type, unavailable)
                 if decision:
                     logger.info(
                         f"Retry routed | recommended={decision.recommended_model} | "
@@ -290,7 +295,7 @@ class IntentRouter:
             except Exception as e:
                 logger.warning(f"Retry router failed | model={router_model} | error={type(e).__name__}: {e or 'no detail'}")
 
-        return self._deterministic_fallback(generation_type, failed_models)
+        return self._deterministic_fallback(generation_type, unavailable)
 
     def _deterministic_fallback(
         self,

@@ -465,7 +465,7 @@ class TestStreamChat:
         adapter._client.stream = mock_stream
         async for _ in adapter.stream_chat(
             messages=[{"role": "user", "content": "hi"}], reasoning_effort=effort,
-            thinking_mode="disabled",
+            thinking_mode="default",
         ):
             pass
 

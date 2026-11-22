@@ -287,7 +287,7 @@ class ModelGatewaySession:
                             decision = await self._await_retry_routing(policy.route(policy.context))
                             _raise_if_cancelled(self.request.cancel_token, self.task_id)
                             new_model = getattr(decision, "recommended_model", None)
-                            if self._valid_retry_model(new_model, policy):
+                            if self._valid_retry_model(new_model, policy, thinking_mode=thinking_mode):
                                 previous = self._last_attempt_context
                                 self.request = replace(self.request, model_id=new_model)
                                 self._provider = _resolve_provider(new_model)
@@ -428,6 +428,8 @@ class ModelGatewaySession:
             policy = self.request.retry_policy
             if isinstance(policy, ModelRetryPolicy) and policy.prepare_stream is not None:
                 kwargs = policy.prepare_stream(self, kwargs)
+            from services.model_reasoning import validate_reasoning
+            validate_reasoning(self.model_id, self._provider, thinking_mode)
             if skill_context:
                 from services.skills.context_budget import assess_context
                 assess_context(messages, kwargs.get('tools'), self.effective_context_window, kwargs.get('max_tokens'))
@@ -709,13 +711,16 @@ class ModelGatewaySession:
                 error_code=self.last_result.error_code, stop_reason=self.last_result.stop_reason,
             ))
 
-    def _valid_retry_model(self, model_id: str | None, policy: ModelRetryPolicy) -> bool:
+    def _valid_retry_model(self, model_id: str | None, policy: ModelRetryPolicy, *, thinking_mode=None) -> bool:
         if not model_id or model_id in policy.context.failed_models or self._adapter_factory is None:
             return False
         from services.adapters.factory import MODEL_REGISTRY
 
         # 工厂会把未知 ID 静默映射为默认模型；retry 不能借此绕过失败模型排除。
-        return model_id in MODEL_REGISTRY
+        if model_id not in MODEL_REGISTRY:
+            return False
+        from services.model_reasoning import supports_off
+        return thinking_mode != 'disabled' or supports_off(model_id, MODEL_REGISTRY[model_id].provider)
 
     async def _await_retry_routing(self, routing: Any) -> Any:
         """路由期间响应同一取消 token/执行预算，不新增退避次数或 deadline。"""

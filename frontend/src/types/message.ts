@@ -33,6 +33,8 @@ export interface TextPart {
   type: 'text';
   text: string;
   content_artifact_id?: string;
+  content_replaces_text?: string;
+  content_incomplete?: boolean;
 }
 
 export interface TaskProgressPart {

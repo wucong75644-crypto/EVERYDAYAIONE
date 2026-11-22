@@ -13,7 +13,7 @@ const optionalNumber = z.number().optional();
 // equivalent of an omitted field so historical user attachments remain
 // renderable after a refresh.
 const nullEquivalentFields: Record<string, readonly string[]> = {
-  text: ['content_artifact_id'],
+  text: ['content_artifact_id', 'content_replaces_text', 'content_incomplete'],
   image: [
     'original_url', 'thumbnail_url', 'preview_url', 'download_url', 'asset_id',
     'width', 'height', 'alt', 'failed', 'error', 'error_code', 'name',
@@ -82,7 +82,7 @@ const formFieldSchema = z.object({
 }).passthrough();
 
 const contentPartSchema = z.preprocess(normalizeNullEquivalentFields, z.discriminatedUnion('type', [
-  z.object({ type: z.literal('text'), text: z.string(), content_artifact_id: optionalString }).passthrough(),
+  z.object({ type: z.literal('text'), text: z.string(), content_artifact_id: optionalString, content_replaces_text: optionalString, content_incomplete: z.boolean().optional() }).passthrough(),
   z.object({
     type: z.literal('image'),
     url: z.string().nullable(),

@@ -22,7 +22,7 @@ vi.mock('../../../utils/tabSync', () => ({
   tabSync: { broadcast: vi.fn() },
 }));
 
-const selectedModel = { id: 'test-model' } as UnifiedModel;
+const selectedModel = { id: 'test-model', capabilities: {} } as UnifiedModel;
 
 describe('message handlers error propagation', () => {
   beforeEach(() => {
@@ -39,6 +39,28 @@ describe('message handlers error propagation', () => {
     const sent = sendMessageMock.mock.calls[0][0];
     expect(sent.selectedSkill).toEqual(selectedSkill);
     expect(sent.params).not.toHaveProperty('selected_skill');
+  });
+
+  it.each([false, true])('sends an explicit reasoning mode when enabled=%s', async enabled => {
+    sendMessageMock.mockResolvedValue('task');
+    const { result } = renderHook(() => useTextMessageHandler({
+      selectedModel, thinkingEffort: 'low', deepThinkMode: enabled,
+      onMessagePending: vi.fn(), onMessageSent: vi.fn(),
+    }));
+    await result.current.handleChatMessage('继续聊天', 'conv');
+    expect(sendMessageMock.mock.calls[0][0].params).toMatchObject({
+      thinking_mode: enabled ? 'deep_think' : 'disabled', thinking_effort: 'low',
+    });
+  });
+
+  it.each([false, true])('keeps fixed reasoning and its depth setting enabled=%s', async enabled => {
+    sendMessageMock.mockResolvedValue('task');
+    const { result } = renderHook(() => useTextMessageHandler({
+      selectedModel: { ...selectedModel, capabilities: { ...selectedModel.capabilities, thinkingRequired: true } },
+      thinkingEffort: 'low', deepThinkMode: enabled, onMessagePending: vi.fn(), onMessageSent: vi.fn(),
+    }));
+    await result.current.handleChatMessage('继续聊天', 'conv');
+    expect(sendMessageMock.mock.calls[0][0].params.thinking_mode).toBe(enabled ? 'deep_think' : 'default');
   });
 
   it('media handler rethrows a rejected send so the input layer can preserve content', async () => {

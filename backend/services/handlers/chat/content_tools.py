@@ -500,9 +500,9 @@ def model_tools(tools, *, selectable_source_images=False, server_image_plan=Fals
                                            'continue_execution=true；修订用base和updates。')
             elif first_delivery:
                 # Preserve authoring Skill presentation requirements in the prefix.
-                from services.task_execution.content_objects import SCHEMA
+                from services.task_execution.content_objects import SCHEMA, MIXED_TEXT_GUIDANCE
                 description = function['description'].removesuffix(SCHEMA['function']['description'])
-                function['description'] = description + (
+                function['description'] = description + MIXED_TEXT_GUIDANCE + (
                     '写方案、提示词或脚本时只交付一次document。每条body保留完整原文和限制，'
                     '只交付文字时页面直接展示正文，后台保留当前原图待选。还要求执行时设continue_execution=true，'
                     '有上传图片则在每条的materials中绑定所用图片，保存后再调用目标工具。')

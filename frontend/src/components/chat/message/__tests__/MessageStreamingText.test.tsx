@@ -34,7 +34,7 @@ describe('actual message streaming presentation', () => {
       : format === 'code' ? `\`\`\`js\n${'const value = 1;\n'.repeat(30)}\`\`\``
       : format === 'table' ? `| 字段 | 数值 |\n|---|---|\n${'| 项目 | 内容 |\n'.repeat(25)}` : text;
     const view = render(<Bubble message={current()} />);
-    expect(view.container.textContent).toContain('AI 正在思考');
+    expect(view.container.textContent).toContain('AI 正在处理');
     act(() => store().appendStreamingContent('conversation', content));
     view.rerender(<Bubble message={current()} />);
     expect(requestAnimationFrame).toHaveBeenCalled();
