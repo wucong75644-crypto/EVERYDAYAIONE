@@ -214,15 +214,15 @@ class TestKeywordFallback:
         assert result.generation_type == GenerationType.CHAT
         assert result.routed_by == "keyword"
 
-    def test_image_keyword(self, router):
+    def test_free_text_image_request_stays_in_chat(self, router):
         content = _make_text_content("画一只猫")
         result = router._keyword_fallback(content)
-        assert result.generation_type == GenerationType.IMAGE
+        assert result.generation_type == GenerationType.CHAT
 
-    def test_video_keyword(self, router):
+    def test_free_text_video_request_stays_in_chat(self, router):
         content = _make_text_content("生成视频：海浪")
         result = router._keyword_fallback(content)
-        assert result.generation_type == GenerationType.VIDEO
+        assert result.generation_type == GenerationType.CHAT
 
 
 # ============================================================
@@ -257,15 +257,15 @@ class TestExtractText:
 
 class TestRoute:
     @pytest.mark.asyncio
-    async def test_disabled_router_uses_keyword(self, router):
-        """路由器禁用时回退到关键词"""
+    async def test_disabled_router_keeps_free_text_in_chat(self, router):
+        """路由器禁用时由聊天模型理解自然语言，不猜测媒体执行权"""
         with patch("core.config.get_settings") as mock_settings:
             mock_settings.return_value = MagicMock(
                 intent_router_enabled=False,
             )
             content = _make_text_content("画一只猫")
             result = await router.route(content, "user-1", "conv-1")
-            assert result.generation_type == GenerationType.IMAGE
+            assert result.generation_type == GenerationType.CHAT
             assert result.routed_by == "keyword"
 
     @pytest.mark.asyncio
@@ -379,8 +379,8 @@ class TestRoute:
             assert call_count == 2
 
     @pytest.mark.asyncio
-    async def test_all_models_fail_uses_keyword(self, router):
-        """所有模型失败时回退到关键词"""
+    async def test_all_models_fail_keep_free_text_in_chat(self, router):
+        """所有路由模型失败时保留聊天，不凭关键词派发媒体"""
         with patch("core.config.get_settings") as mock_settings:
             mock_settings.return_value = MagicMock(
                 intent_router_enabled=True,
@@ -398,7 +398,7 @@ class TestRoute:
             content = _make_text_content("画一只猫")
             result = await router.route(content, "user-1", "conv-1")
 
-            assert result.generation_type == GenerationType.IMAGE
+            assert result.generation_type == GenerationType.CHAT
             assert result.routed_by == "keyword"
 
 

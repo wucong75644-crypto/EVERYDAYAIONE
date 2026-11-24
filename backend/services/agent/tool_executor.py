@@ -519,8 +519,13 @@ class ToolExecutor(
         call_id = current_dispatch_call_id()
         context = self.tool_runtime.context()
         structured_chat = bool(call_id and context.entrypoint == "model" and context.execution_mode == "interactive")
-        # The model already sees session history and emits definition once.
-        # Do not replace it with a reconstruction based on clarification wording.
+        # Keep source provenance for the form, without reconstructing history
+        # or changing the model-authored execution definition.
+        if structured_chat and action == "create":
+            from services.scheduler.task_request_context import latest_user_text
+            source_text = latest_user_text(getattr(self, "_parent_messages", None))
+            if source_text:
+                args = {**args, "description": source_text}
         managed_key = None
         if call_id and action != "list":
             from services.task_execution.scheduled_operations import native_request_key

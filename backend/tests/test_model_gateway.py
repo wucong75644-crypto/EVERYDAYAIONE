@@ -246,6 +246,7 @@ async def test_execute_chat_closes_gateway_session_on_cancellation(monkeypatch) 
     )
     prepared = SimpleNamespace(
         model_gateway=session,
+        execution_context=None,
         permission=SimpleNamespace(need_exit_attachment=False),
         core_tools=[],
         stream_kwargs={},
@@ -468,7 +469,7 @@ async def test_execute_chat_exposes_child_task_failure_context_for_retry(monkeyp
         ModelCallRequest(model_id="model-1", task_id="task-1", trace_id="trace-1"),
         event_publisher=_SamplingEvents(),
     )
-    prepared = SimpleNamespace(model_gateway=session)
+    prepared = SimpleNamespace(model_gateway=session, execution_context=None)
 
     async def fake_prepare(**_kwargs):
         return prepared

@@ -22,6 +22,12 @@ def _text(message: dict[str, Any]) -> str:
     return content.strip() if isinstance(content, str) else ''
 
 
+def latest_user_text(messages: list[dict[str, Any]] | None) -> str:
+    """Current source text only; never infer clarification boundaries or intent."""
+    return next((_text(message) for message in reversed(messages or [])
+                 if message.get('role') == 'user'), '')
+
+
 def current_creation_text(messages: list[dict[str, Any]] | None) -> str:
     messages = messages or []
     latest = next((i for i in range(len(messages) - 1, -1, -1)
