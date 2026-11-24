@@ -136,8 +136,11 @@ def create_resolver(handler,request,context):
         def read():
             from services.handlers.image_size_requirements import resolve_size_requirement
             native=native_resolver(handler,request,context)
-            intent,previous=native.size_context()
-            return resolve_size_requirement(dict(arguments),references,intent=intent,previous=previous)
+            actor=getattr(native.owner,'_actor_runtime',None)
+            projection=getattr(actor,'workflow_projection',None) or request.params.get('_ecom_workflow') or {}
+            action=projection.get('intent')
+            intent,previous=native.size_context(use_previous=action not in {'write','generate','write_then_submit_images'})
+            return resolve_size_requirement(dict(arguments),references,intent=intent,previous=previous,action=action)
         return await asyncio.to_thread(read)
     async def prepare_request(arguments,state,call_id,*,binding_required=True,reference_cache=None):
         def read():

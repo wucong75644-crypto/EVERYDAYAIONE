@@ -117,6 +117,7 @@ def prepare_input(resolver,args,*,scoped,workflow,settings,composition=None,entr
     legacy_options = {}
     fresh_draft = False
     semantic_context = getattr(workflow, 'request_context', None)
+    action = getattr(workflow, 'intent', None)
     semantic_actor = '_media_decisions_v1' in getattr(getattr(owner,'_actor_runtime',None),'checkpoint_base',{})
     if source and 'content_object' in source:
         intent, previous = resolver.size_context(use_previous=False, infer_attachment_canvas=False,
@@ -136,7 +137,8 @@ def prepare_input(resolver,args,*,scoped,workflow,settings,composition=None,entr
         spec_fields = ('output_format',) if fresh_draft else ('aspect_ratio', 'resolution', 'output_format')
         bound_specs = {key: normalized[key] for key in spec_fields if key in normalized}
     else:
-        intent, previous = resolver.size_context(**({'semantic_context': semantic_context} if semantic_context is not None else {}))
+        intent, previous = resolver.size_context(**({'semantic_context': semantic_context,
+            'use_previous': action not in {'write','generate','write_then_submit_images'}} if semantic_context is not None else {}))
     if not plan_proof and len(refs) == 1 and (refs[0].get('source') == 'generated'
             or refs[0].get('source') == 'quoted' and refs[0].get('quoted_task_id')):
         previous = resolver.selected_image_size(refs[0]) or previous
@@ -166,11 +168,11 @@ def prepare_input(resolver,args,*,scoped,workflow,settings,composition=None,entr
                 normalized.get('model') or default_chat_image_model(normalized.get('mode'))])
         locked_size = plan["target_size"]
         ratio = locked_size["aspect_ratio"]
-        ratio_width, ratio_height = map(int, ratio.split(":"))
+        ratio_width, ratio_height = (map(int, ratio.split(":")) if ratio != 'auto' else (0, 0))
         if (any(key in intent for key in ("width", "height"))
                 or (intent.get("aspect_ratio") and intent["aspect_ratio"] != ratio)
                 or (intent.get("resolution") and intent["resolution"] != locked_size.get("resolution"))
-                or intent.get("mode") == "auto"
+                or intent.get("mode") == "auto" and ratio != 'auto'
                 or (intent.get("mode") == "inherit_reference"
                     and locked_size.get("mode") != "inherit_reference")
                 or (intent.get("orientation") == "portrait" and ratio_width >= ratio_height)
@@ -188,7 +190,7 @@ def prepare_input(resolver,args,*,scoped,workflow,settings,composition=None,entr
                          if key in bound_specs})
         if 'aspect_ratio' in bound_specs:
             previous['mode'] = 'auto' if bound_specs['aspect_ratio'] == 'auto' else 'explicit'
-        normalized, target_size = resolve_size_requirement(normalized, refs, intent=intent, previous=previous)
+        normalized, target_size = resolve_size_requirement(normalized, refs, intent=intent, previous=previous, action=action)
         if any(normalized.get(key) != value for key, value in bound_specs.items()):
             raise ChatImageNotAcceptedError('IMAGE_SIZE_CONFLICT', '当前规格与已保存方案不同，请先更新方案再执行。')
     if "source_task_id" in normalized:

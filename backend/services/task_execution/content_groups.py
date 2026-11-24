@@ -181,6 +181,23 @@ def bind_group(document, images, request_text, selected=None, *, infer_materials
         except ImageSizeError:
             shared_size={}  # Prose may discuss alternatives; saving must not choose one.
     shared_options={key:shared_size[key] for key in ('aspect_ratio','resolution') if key in shared_size}
+    selected_materials = getattr(semantic_context, 'materials', None)
+    if selected_materials is not None and any(material.reference not in [image.reference for image in images]
+                                               for material in selected_materials):
+        from .contracts import TaskError
+        raise TaskError('CONTENT_SOURCE_IMAGE_UNAVAILABLE')
+    canvas = None
+    if semantic_context is not None:
+        if semantic_context.canvas_resource:
+            canvas = next((image.reference for image in images
+                           if image.reference.resource_ref == semantic_context.canvas_resource), None)
+        elif semantic_context.canvas_image is not None:
+            originals = [image for image in images if image.reference.message_id is not None]
+            if semantic_context.canvas_image <= len(originals):
+                canvas = originals[semantic_context.canvas_image - 1].reference
+        if (semantic_context.canvas_resource or semantic_context.canvas_image is not None) and canvas is None:
+            from .contracts import TaskError
+            raise TaskError('CONTENT_SOURCE_IMAGE_UNAVAILABLE')
 
     # A single explicitly referenced product for image prompts has an unambiguous origin.
     # For a collection, or an explicit analysis-only request, keep the existing selection protocol.
@@ -204,7 +221,9 @@ def bind_group(document, images, request_text, selected=None, *, infer_materials
                 r'(?:以|使用|沿用).{0,28}(?:上传的|原图|参考图).{0,12}(?:作为|保持|保留)', item.body):
             indices = (1,)
         materials = item.materials or tuple(image_materials(images, indices or ()))
-        if unique and not item.materials and selected is None and (analysis_only or shared):
+        if selected_materials is not None and not item.materials:
+            materials = tuple(selected_materials)
+        elif unique and not item.materials and selected is None and (analysis_only or shared):
             # Legacy text without explicit materials can retain its inferred group role.
             usage = 'analysis' if analysis_only else 'input'
             if not materials:
@@ -217,7 +236,7 @@ def bind_group(document, images, request_text, selected=None, *, infer_materials
             materials = tuple(material.model_copy(update={'usage': 'analysis'})
                               for material in image_materials(images, range(1, len(images) + 1)))
         try:
-            specs = selected_source_size(item.body)
+            specs = selected_source_size(item.body) if semantic_context is None else {}
         except ImageSizeError as error:
             if str(error) != 'IMAGE_SIZE_AMBIGUOUS':
                 raise
@@ -228,5 +247,18 @@ def bind_group(document, images, request_text, selected=None, *, infer_materials
         # The authenticated author's explicit request outranks model-authored
         # suggestions, including structured item options. Execution may still
         # apply a newer user request through the existing size resolver.
-        items.append(item.model_copy(update={'materials': materials, 'options': {**options, **item.options, **shared_options}}))
+        options = {**options, **item.options, **shared_options}
+        if semantic_context is not None and (images or semantic_context.reference_usage is not None
+                or selected_materials is not None or semantic_context.media.tool == 'generate_image'):
+            if canvas is not None and not any(key in shared_size for key in ('aspect_ratio','width','orientation')) and shared_size.get('mode') != 'auto':
+                inputs = [material.reference for material in materials if material.usage == 'input']
+                if canvas not in inputs:
+                    from .contracts import TaskError
+                    raise TaskError('CONTENT_ARGUMENT_CONFLICT')
+                options.pop('aspect_ratio', None)
+                options['size_requirement'] = {'mode':'inherit_reference', 'reference_index':inputs.index(canvas)}
+            elif not any(key in shared_size for key in ('width','height','orientation')) and shared_size.get('mode') not in {'explicit','inherit_reference'}:
+                if 'size_requirement' not in options:
+                    options.setdefault('aspect_ratio', 'auto')
+        items.append(item.model_copy(update={'materials': materials, 'options': options}))
     return document.model_copy(update={'items': tuple(items)})

@@ -1029,11 +1029,11 @@ async def test_isolated_tool_to_http_completion_and_snapshot_replay(facts,lifecy
     app.dependency_overrides[get_org_context]=lambda:SimpleNamespace(user_id=facts["user"],org_id=None)
     app.dependency_overrides[get_scoped_db]=lambda:runtime_db
     with psycopg.connect(facts["dsn"]) as db:
-        db.execute("INSERT INTO messages(id,conversation_id,role,content,status,context_revision) VALUES (%s,%s,'user','[{\"type\":\"text\",\"text\":\"生成图片\"}]','completed',0)",
+        db.execute("INSERT INTO messages(id,conversation_id,role,content,status,context_revision) VALUES (%s,%s,'user','[{\"type\":\"text\",\"text\":\"生成1:1图片\"}]','completed',0)",
                    (facts["snapshot"]["origin"]["input_message_id"],conversation))
     token=_dispatch_call_id.set("end-to-end-single-call")
     try:
-        receipt=(await executor._generate_image({"mode":"text_to_image","prompt":"  exact end-to-end prompt  "})).metadata
+        receipt=(await executor._generate_image({"mode":"text_to_image","prompt":"  exact end-to-end prompt  ","aspect_ratio":"1:1"})).metadata
         assert receipt["completed"] is False and not requests
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),base_url="http://isolated-app") as browser:
             task_id=receipt["task_id"]

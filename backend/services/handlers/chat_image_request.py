@@ -441,7 +441,7 @@ class ChatImageInputResolver:
             intent['canvas_reference'] = locator
             if not any(key in intent for key in ('aspect_ratio', 'width', 'orientation', 'mode')):
                 intent['mode'] = 'inherit_reference'
-        if (infer_attachment_canvas
+        if (infer_attachment_canvas and semantic_context is None
                 and any(isinstance(part, dict) and part.get("type") == "image" for part in content_parts(current.get("content")))
                 and not any(key in intent for key in ("aspect_ratio", "mode", "width", "orientation"))):
             intent["mode"] = "inherit_reference"
@@ -520,6 +520,10 @@ class ChatImageInputResolver:
         target = params.get("size_requirement") or {}
         resolution = target.get("resolution") or params.get("resolution")
         previous = {"source_task_id": str(task_id), "source_message_id": str(message_id)}
+        from services.handlers.image_size_requirements import nearest_reference_ratio
+        from services.adapters.kie.configs import IMAGE_MODEL_CONFIGS
+        previous.update(mode='explicit', aspect_ratio=nearest_reference_ratio(reference,
+            IMAGE_MODEL_CONFIGS[default_chat_image_model('image_to_image')]['supported_sizes']))
         if resolution:
             previous["resolution"] = resolution
         return previous

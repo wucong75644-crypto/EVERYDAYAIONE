@@ -211,7 +211,7 @@ async def test_workflow_wire_normalization_keeps_backend_owned_identity(monkeypa
     result={'kind':'ordinary_image','mode':'new','reuse_through_stage':0,'intent':'write',
         'image_count':3,'request_context':frame}
     async def transport(self,**kwargs):
-        assert kwargs['max_tokens']==768
+        assert kwargs['max_tokens']==2048
         return {'choices':[{'message':{'tool_calls':[{'function':{'name':'select_image_workflow',
             'arguments':json.dumps(result)}}]}}]}
     monkeypatch.setattr(IntentRouter,'call_tool_model',transport)

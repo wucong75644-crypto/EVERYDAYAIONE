@@ -893,7 +893,8 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
         assert snapshot['prompt_sha256'] == hashlib.sha256(execution_body.encode()).hexdigest()
         assert [(x['workspace_path'],x['content_sha256']) for x in snapshot['references']] == (
             [(file_path, input_sha)] if with_original else [])
-        assert (snapshot['aspect_ratio'],snapshot['resolution'],snapshot['output_format']) == (ratio,resolution,'png')
+        expected_ratio = 'auto' if inline and not with_original else ratio
+        assert (snapshot['aspect_ratio'],snapshot['resolution'],snapshot['output_format']) == (expected_ratio,resolution,'png')
         assert snapshot['origin']['input_message_id'] == f['message']
         if regeneration:
             assert snapshot['variant_id'] == f"regenerate:{f['message']}"
@@ -911,7 +912,7 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
             assert request.url.path == '/api/v1/jobs/createTask'
             serialized = json.loads(request.content)['input']
             assert serialized['prompt'] == execution_body
-            assert serialized.get('aspect_ratio', serialized.get('image_size')) == ratio
+            assert serialized.get('aspect_ratio', serialized.get('image_size')) == expected_ratio
             assert serialized['resolution'] == resolution
             assert (['https://local.invalid/'+file_path] in serialized.values()) == with_original
             requests.append(serialized)

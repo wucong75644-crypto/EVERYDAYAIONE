@@ -308,7 +308,8 @@ class EcommerceImagePlanner(PositionDelivery, PageDelivery):
         try:
             semantic_context = getattr(self.workflow, 'request_context', None)
             intent, previous = await asyncio.to_thread(resolver.size_context,
-                **({'semantic_context': semantic_context} if semantic_context is not None else {}))
+                **({'semantic_context': semantic_context, 'use_previous': bool(previous_plan)}
+                   if semantic_context is not None else {}))
             if previous_plan:
                 previous = {**(previous or {}), **previous_plan["target_size"]}
             from services.agent.image.reference_roles import is_product
@@ -321,14 +322,13 @@ class EcommerceImagePlanner(PositionDelivery, PageDelivery):
                         or intent.get("resolution") and intent["resolution"] != fixed.resolution):
                     raise ImageSizeError("IMAGE_SIZE_CONFLICT", "用户文字与页面选择的画布或清晰度冲突，请统一要求。")
                 intent = {**intent, "aspect_ratio": fixed.aspect_ratio, "resolution": fixed.resolution}
-            normalized, target_size = resolve_size_requirement({}, size_refs, intent=intent, previous=previous)
+            normalized, target_size = resolve_size_requirement({}, size_refs, intent=intent, previous=previous,
+                action='write' if semantic_context is not None else None)
         except ImageSizeError as error:
             questions = [error.guidance]
             return AgentResult(json.dumps({"status":"needs_input","questions":questions,
                 "reason":error.code,"message":"补充规格后重新发起策划；本次尚未调用策划模型。"},ensure_ascii=False),
                 status="success",metadata={"status":"needs_input","questions":questions,"plan_id":None})
-        if target_size.get("aspect_ratio") == "auto":
-            return AgentResult("当前生图入口没有确定画布比例，请先明确支持的比例。", status="error", error_message="ECOM_PLAN_CANVAS_UNRESOLVED")
         from services.handlers.chat_image_request import default_chat_image_model
         from services.adapters.kie.configs import IMAGE_MODEL_CONFIGS
         image_config = IMAGE_MODEL_CONFIGS[default_chat_image_model("image_to_image")]

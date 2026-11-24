@@ -92,15 +92,17 @@ def test_unsupported_precise_pixels_cannot_hide_in_structured_mode():
         resolve(size_requirement={"mode":"explicit","width":1920,"height":1080})
 
 
-def test_inherit_requires_explicit_canvas_choice_when_ratios_differ():
+def test_mixed_references_allow_auto_or_an_explicit_canvas_choice():
     refs = [reference(), reference(600,800)]
-    with pytest.raises(ValueError,match="CANVAS_REFERENCE_REQUIRED"): resolve(refs=refs)
+    automatic, target = resolve(refs=refs)
+    assert automatic["aspect_ratio"] == "auto" and target["source"] == "default"
+    assert len(refs) == 2
     args, target = resolve(refs=refs,size_requirement={"mode":"inherit_reference","reference_index":1})
     assert args["aspect_ratio"] == "3:4" and target["reference_index"] == 1
 
 
-def test_auto_requires_user_permission_with_reference_and_records_source():
-    with pytest.raises(ValueError,match="INTENT_REQUIRED"): resolve(size_requirement={"mode":"auto"})
+def test_auto_is_available_without_extra_permission_and_preserves_explicit_user_source():
+    assert resolve(size_requirement={"mode":"auto"})[0]["aspect_ratio"] == "auto"
     args,target = resolve("比例你决定",previous={"aspect_ratio":"1:1","resolution":"2K"})
     assert args["aspect_ratio"] == "auto" and target["source"] == "user"
 
@@ -240,10 +242,9 @@ def test_original_canvas_maps_to_closest_supported_ratio_with_default_tier(width
     assert (target['original_width'], target['original_height']) == (width, height)
 
 
-def test_auto_is_opt_in_even_without_a_reference():
-    assert resolve(refs=[])[0]['aspect_ratio'] == '1:1'
-    with pytest.raises(ValueError, match='INTENT_REQUIRED'):
-        resolve('自动生成一张图片', refs=[], aspect_ratio='auto')
+def test_new_creation_without_a_reference_defaults_to_auto():
+    assert resolve(refs=[])[0]['aspect_ratio'] == 'auto'
+    assert resolve('自动生成一张图片', refs=[], aspect_ratio='auto')[0]['aspect_ratio'] == 'auto'
     assert resolve('比例你定')[0]['aspect_ratio'] == 'auto'
 
 

@@ -158,6 +158,21 @@ async def test_formal_entry_real_model_and_supplier_chain(content_db,monkeypatch
         monkeypatch.setattr('services.model_gateway._MODEL_GATEWAY',gateway)
         from services.agent.image.ecommerce_planner import workflow as workflow_module
         classify=workflow_module.classify_workflow
+        from services.intent_router import IntentRouter
+        route_transport=IntentRouter.call_tool_model
+        async def capture_route_transport(self,**kwargs):
+            row={'kind':'formal_router_transport','input':kwargs['text']}
+            wire.append(row)
+            try:
+                value=await route_transport(self,**kwargs)
+                row['response']=value
+                return value
+            except Exception as error:
+                row['error_type']=type(error).__name__
+                raise
+            finally:
+                env['persist']()
+        monkeypatch.setattr(IntentRouter,'call_tool_model',capture_route_transport)
         async def capture_route(*args,**kwargs):
             nonlocal recovery_injected
             result=await classify(*args,**kwargs)
@@ -313,12 +328,19 @@ async def test_formal_entry_real_model_and_supplier_chain(content_db,monkeypatch
             source=next((Path(os.environ['SKILL_FAILURE_CAPTURE_ROOT'])/'workspace').rglob(Path(ref['workspace_path']).name))
             assert hashlib.sha256(source.read_bytes()).hexdigest()==ref['content_sha256']
             photo=await env['upload'](f,source,'正式入口/原产品图.png')
-            style=await env['upload'](f,source,'正式入口/追加参考图.png')
+            canvas_handoff=os.environ.get('SKILL_FORMAL_CANVAS_HANDOFF')=='1'
+            style_source=source
+            if canvas_handoff:
+                target=sorted(prior['native'][0]['recipes'][0]['resolved'],key=lambda x:x['content_index'])[1]
+                style_source=next((Path(os.environ['SKILL_FAILURE_CAPTURE_ROOT'])/'workspace').rglob(Path(target['workspace_path']).name))
+                assert hashlib.sha256(style_source.read_bytes()).hexdigest()==target['content_sha256']
+                assert (target['width'],target['height'])!=(ref['width'],ref['height'])
+            style=await env['upload'](f,style_source,'正式入口/追加参考图'+style_source.suffix)
             cap=next(c for c in captures if c['package']['skill_key']=='ecommerce-main-images')
             selection={'skill_id':'ecommerce-main-images','revision':cap['revision']['revision']} if os.environ.get('SKILL_FORMAL_MANUAL')=='1' else None
             customer_language=os.environ.get('SKILL_FORMAL_CUSTOMER_LANGUAGE')=='1'
             waiting_scenario=os.environ.get('SKILL_FORMAL_WAITING')=='1'
-            expected_canvas=('1:1','1K') if customer_language else ('16:9','2K')
+            expected_canvas=('auto','1K') if customer_language else ('16:9','2K')
             text='参考这张真实产品图，帮我策划3套京东电商主图方案和可以生图的可复制提示词，先只写文字，不生成图片。保留商品结构和原有文字，只调整背景和波点疏密。每套包含完整正向及负面提示词，编号。每套16:9、2K。'
             if os.environ.get('SKILL_FORMAL_PLAIN')=='1':
                 text='参考这张真实产品图，帮我写3套可以生图的可复制提示词，先只写文字，不生成图片。保留商品结构和原有文字，只调整背景和波点疏密。每套包含完整正向及负面提示词，编号。每套16:9、2K。'
@@ -334,7 +356,8 @@ async def test_formal_entry_real_model_and_supplier_chain(content_db,monkeypatch
                 assert customer_language and os.environ.get('SKILL_FORMAL_CUSTOMER_MAIN')!='1'
                 text='我接下来补产品图，帮我想3个新款，把提示词写出来，我先看看。'
             authored=await run(f,[TextPart(text=text),*([] if append_only else [photo])],selection,append={
-                'message':('这个也给你参考，背景用浅米灰色。' if customer_language else
+                'message':('三套都用后补这个本子做主体，上一张参考波点，背景用浅米灰色。' if canvas_handoff else
+                    '这个也给你参考，背景用浅米灰色。' if customer_language else
                     '补充这张图片供观察，全部方案背景使用浅米灰色，仍然只写文字，不要生成图片。'),
                 'attachments':[{'kind':'image','workspace_path':style.workspace_path}]})
             with psycopg.connect(content_db) as c:
@@ -367,12 +390,16 @@ async def test_formal_entry_real_model_and_supplier_chain(content_db,monkeypatch
                 assert not plans, 'Product design must not enter the inapplicable ecommerce workflow'
                 state=TaskState.model_validate(authored['checkpoint']['_task_execution'])
                 saved=co.catalog(state)[0];assert len(saved['items'])==3
-                if append_only:
+                if append_only or canvas_handoff:
                     _,source_record,_=co._load_record(state,{'artifact_id':saved['artifact_id'],'item_index':1})
                     delivered=authored['checkpoint']['_task_user_changes']['items']
                     resource=next(item['attachments'][0]['resource_ref'] for item in delivered if item.get('attachments'))
-                    assert len(source_record.source_images)==1
-                    assert source_record.source_images[0].reference.resource_ref==resource
+                    assert len(source_record.source_images)==(2 if canvas_handoff else 1)
+                    assert source_record.source_images[-1].reference.resource_ref==resource
+                    if canvas_handoff:
+                        for item in source_record.document.items:
+                            assert [m.reference for m in item.materials if m.usage=='input']==[i.reference for i in source_record.source_images]
+                            assert item.options.get('aspect_ratio')=='auto'
                 if waiting_scenario:
                     artifact,saved_record,_=co._load_record(state,{'artifact_id':saved['artifact_id'],'item_index':1})
                     assert saved_record.confirmation_items==(1,2,3) and saved_record.confirmation_tool=='generate_image'
@@ -421,10 +448,18 @@ async def test_formal_entry_real_model_and_supplier_chain(content_db,monkeypatch
                 for snapshot in snapshots:
                     assert (snapshot['aspect_ratio'],snapshot['resolution'])==expected_canvas
                     assert snapshot['references'][0]['content_sha256']==previous_sha
+                    if canvas_handoff and label=='ordinal':
+                        assert [r['content_sha256'] for r in snapshot['references']]==[ref['content_sha256'],target['content_sha256']]
+                        assert snapshot['plan_item_id'] in {saved['artifact_id']+':1',saved['artifact_id']+':3'}
                 if label=='ordinal':assert {snapshot['prompt'] for snapshot in snapshots}==expected_prompts
                 completed=await env['generate_all'](f,[{'receipt':{'task_id':str(child[0]),'message_id':str(child[1])},'native':snapshot}
                     for child,snapshot in zip(children,snapshots)],label,parent_terminal=True)
                 previous_sha=completed[-1]['sha256']
+                from services.handlers.image_size_requirements import nearest_reference_ratio
+                from services.adapters.kie.configs import IMAGE_MODEL_CONFIGS
+                width,height=completed[-1]['actual_dimensions']
+                expected_canvas=(nearest_reference_ratio({'width':width,'height':height},
+                    IMAGE_MODEL_CONFIGS[completed[-1]['snapshot']['model']]['supported_sizes']),expected_canvas[1])
             # Replay the exact two-image failure in a fresh conversation, with
             # the same user and original files, through the same HTTP/Actor path.
             if selection:

@@ -827,6 +827,12 @@ def compile_input(state, name, arguments, reference, *, allow_old=False):
             if len({(image.message_id, image.content_index) for image in selection.image_override}) != len(selection.image_override):
                 raise TaskError('CONTENT_IMAGE_SELECTION_CONFLICT')
             inputs = [{**image.model_dump(mode='json'), 'role': '原图参考'} for image in selection.image_override]
+            if result.get('size_requirement', {}).get('mode') == 'inherit_reference':
+                # The old index belongs to the original material array. A new
+                # image selection keeps its own canvas/receipt authoritative.
+                result.pop('size_requirement')
+            if result.get('aspect_ratio') == 'auto':
+                result.pop('aspect_ratio')
             receipts = content_image_receipts(state)
             previous = receipts.get((artifact.id, selection.item_index))
             if previous:

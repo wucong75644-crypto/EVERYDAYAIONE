@@ -307,7 +307,9 @@ def test_verified_generated_quote_retains_the_original_resolution(cross_conversa
     reference,=native.resolve([{'message_id':current['id'],'content_index':0,'role':'编辑底图'}])
     assert reference['source']=='quoted' and reference['quoted_message_id']==row['id']
     inherited=native.selected_image_size(reference)
-    assert inherited=={'resolution':resolution,'source_task_id':'origin-image-task','source_message_id':row['id']}
+    assert inherited=={'mode':'explicit','aspect_ratio':'1:1','resolution':resolution,
+                       'source_task_id':'origin-image-task','source_message_id':row['id']}
+    assert inherited['aspect_ratio']!=row['generation_params']['size_requirement']['aspect_ratio']  # Real bytes outrank stale requested metadata.
     args,_=resolve_size_requirement({'mode':'image_to_image','prompt':'仅修改背景。'},[reference],previous=inherited)
     assert args['resolution']==resolution
     args,_=resolve_size_requirement({'mode':'image_to_image','prompt':'仅修改背景。'},[reference],
