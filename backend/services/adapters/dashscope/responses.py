@@ -20,6 +20,15 @@ BUILTIN_TOOLS = {
 CACHE_MODELS = frozenset({"qwen3.8-max", "qwen3.8-max-0902", "qwen3.8-flash"})
 
 
+class ResponseProviderError(ValueError):
+    """A failed SSE envelope, not evidence of pre-inference rejection."""
+
+    def __init__(self, detail=None, request_id=None):
+        self.detail = detail if isinstance(detail, dict) else {}
+        self.request_id = request_id
+        super().__init__("DashScope Responses request failed")
+
+
 def stable_tools(tools: list[dict]) -> list[dict]:
     normalized = json.loads(json.dumps(tools, sort_keys=True, ensure_ascii=False))
     return sorted(normalized, key=lambda t: (t.get("type", ""), t.get("name", t.get("function", {}).get("name", ""))))
@@ -215,7 +224,9 @@ class ResponseStream:
         kind = event.get("type", "")
         index = event.get("output_index", 0)
         if kind in {"error", "response.failed"}:
-            raise ValueError("DashScope Responses request failed")
+            response = event.get("response") or {}
+            detail = response.get("error") if kind == "response.failed" else event.get("error", event)
+            raise ResponseProviderError(detail, event.get("request_id") or response.get("request_id"))
         if kind in {"response.output_item.added", "response.output_item.done"}:
             return self.item_chunks(event["item"], index, done=kind.endswith("done")) or [StreamChunk()]
         if kind == "response.output_text.delta":
@@ -237,7 +248,7 @@ class ResponseStream:
         if kind in {"response.completed", "response.incomplete"}:
             response = event["response"]
             if response.get("error") or response.get("status") in {"failed", "cancelled"}:
-                raise ValueError("DashScope Responses request failed")
+                raise ResponseProviderError(response.get("error"), response.get("request_id"))
             chunks = []
             for idx, item in enumerate(response.get("output") or []):
                 chunks.extend(self.item_chunks(item, idx, done=True))

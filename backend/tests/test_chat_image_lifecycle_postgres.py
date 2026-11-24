@@ -1125,7 +1125,7 @@ def test_size_budget_migration_rollback_and_forward_restore(facts):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("user_text,expected", [("参考原图生成图片","1:1"),("改成3:4、2K","3:4"),("生成1920×1080",None)])
+@pytest.mark.parametrize("user_text,expected", [("参考原图生成图片","1:1"),("改成3:4、2K","3:4"),("生成1920×1080",None),("约1920×1080，接近即可","16:9"),("生成790×790左右","1:1")])
 async def test_actual_acceptance_uses_square_bytes_or_user_override_before_debit(facts,monkeypatch,tmp_path,user_text,expected):
     from types import SimpleNamespace
     from PIL import Image
@@ -1137,6 +1137,10 @@ async def test_actual_acceptance_uses_square_bytes_or_user_override_before_debit
     from services.handlers.image_handler import ImageHandler
     from services.handlers.chat_image_request import ChatImageNotAcceptedError,verify_frozen_request
     from services.tools.dispatcher import _dispatch_call_id
+    from unittest.mock import AsyncMock
+    def unexpected_review():
+        raise AssertionError('Native image acceptance must not call a second language model')
+    monkeypatch.setattr('services.model_gateway.get_model_gateway',unexpected_review)
     settings=Settings(_env_file=None,database_url="postgresql://invalid/test",jwt_secret_key="isolated-test-key",file_workspace_root=str(tmp_path),chat_image_async_enabled=True)
     monkeypatch.setattr("core.config.get_settings",lambda:settings)
     raw=LocalDBClient(psycopg.conninfo.make_conninfo(facts["dsn"],user="everydayai"),min_size=1,max_size=3)
@@ -1164,7 +1168,24 @@ async def test_actual_acceptance_uses_square_bytes_or_user_override_before_debit
                 verify_frozen_request(snapshot)
                 assert snapshot["aspect_ratio"]==expected
                 assert snapshot["references"][0]["width"]==snapshot["references"][0]["height"]==1080
-                assert snapshot["resolution"]==("2K" if expected=="3:4" else "1K")
+                assert snapshot["resolution"]==("2K" if expected in {"3:4","16:9"} else "1K")
+                # Historical experimental metadata stays opaque and immutable
+                # on an accepted-call replay; it cannot trigger another model.
+                from services.handlers.chat_image_request import canonical_hash
+                from psycopg.types.json import Jsonb
+                snapshot['origin']['product_fidelity']={'version':'retired-local-prototype','review':{'status':'uncertain'}}
+                snapshot.pop('request_hash')
+                snapshot['request_hash']=canonical_hash(snapshot)
+                db.execute("UPDATE tasks SET request_params=jsonb_set(request_params,'{_media_request_v1}',%s) WHERE id=%s",
+                    (Jsonb(snapshot),receipt['task_id']))
+            replay=await ImageHandler(scoped).accept_chat_image(owner,args)
+            assert replay['task_id']==receipt['task_id']
+            with psycopg.connect(facts['dsn']) as db:
+                restored=db.execute("SELECT request_params->'_media_request_v1' FROM tasks WHERE id=%s",(receipt['task_id'],)).fetchone()[0]
+                assert restored==snapshot
+                assert db.execute("SELECT count(*) FROM tasks WHERE user_id=%s AND type='image'",(facts['user'],)).fetchone()[0]==1
+            with pytest.raises(psycopg.errors.InvalidParameterValue,match='CHAT_IMAGE_CALL_CONFLICT'):
+                await ImageHandler(scoped).accept_chat_image(owner,{**args,'prompt':'changed request must not replay'})
         with psycopg.connect(facts["dsn"]) as db:
             assert db.execute("SELECT credits FROM users WHERE id=%s",(facts["user"],)).fetchone()[0]==100
             assert db.execute("SELECT count(*) FROM credit_transactions WHERE user_id=%s",(facts["user"],)).fetchone()[0]==0

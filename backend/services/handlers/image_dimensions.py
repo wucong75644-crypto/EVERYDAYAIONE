@@ -45,7 +45,7 @@ def read_image_dimensions(path: Path, *, max_bytes=64 * 1024 * 1024) -> dict:
     return {key: facts[key] for key in ("width", "height", "aspect_ratio", "content_sha256")} | {"file_version": list(before)}
 
 
-def output_size_check(facts: dict, target: dict) -> dict:
+def output_size_check(facts: dict, target: dict, *, pixel_alignment: int = 1) -> dict:
     ratio = target.get("aspect_ratio")
     matches = True
     if ratio and ratio != "auto":
@@ -54,6 +54,13 @@ def output_size_check(facts: dict, target: dict) -> dict:
         difference = abs(facts["width"] * height - facts["height"] * width)
         scale = max(facts["width"] * height, facts["height"] * width)
         matches = difference <= max(width, height) and difference / scale <= 0.001
+        # GPT Image's preset ratios are quantized to a 16px lattice. Accept
+        # nearest-grid rounding only for a registered model with that contract;
+        # never infer it from user/model arguments or resample delivered bytes.
+        if not matches and pixel_alignment == 16:
+            matches = (facts["width"] % pixel_alignment == 0
+                       and facts["height"] % pixel_alignment == 0
+                       and min(difference / width, difference / height) <= pixel_alignment / 2)
     if target.get("width") and target.get("height"):
         matches = matches and (facts["width"], facts["height"]) == (target["width"], target["height"])
     return {"target": target, "actual": {key: facts[key] for key in ("width", "height", "aspect_ratio")},

@@ -7,10 +7,11 @@ from typing import Annotated, Any, Literal
 from uuid import UUID
 from pydantic import Field, field_validator, model_serializer, model_validator
 from .contracts import Artifact, Fact, Key, TaskError
+from .item_confirmation import MediaDirective
 from .reducer import digest, register_artifacts, complete_step
 
 SAVE = 'save_task_text'
-MIXED_TEXT_GUIDANCE = '若同轮先输出开场说明，必须与document.display_prefix逐字一致；说明不能代替条目正文。'
+MIXED_TEXT_GUIDANCE = '聊天说明与保存正文分别展示；开场与document.display_prefix完全相同时后台只展示一次。说明不能代替条目正文，执行只使用所登记条目的body。'
 DRAFT_CONFLICT = 'CONTENT_SAVE_DRAFT_CONFLICT'
 INVALID_OBJECT = 'CONTENT_OBJECT_INVALID'
 ATTACHMENT_USAGE_REQUIRED = 'CONTENT_ATTACHMENT_USAGE_REQUIRED'
@@ -90,7 +91,9 @@ MATERIAL_REFERENCE_GUIDANCE = (
     '或成对填写 message_id 和 content_index。'
 )
 MATERIAL_ROLE_GUIDANCE = '用简短自然语言描述素材在任务中的角色，例如“原图配色与构图参考”。'
-MATERIAL_USAGE_GUIDANCE = '只填 input（实际传给执行工具）或 analysis（仅用于理解素材）。'
+MATERIAL_USAGE_GUIDANCE = ('只填 input（实际传给执行工具）或 analysis（仅供分析，不传给执行工具）。'
+    '图片任务中目标底图和需要借用其视觉特征的参考图都用input，包括风格、颜色、纹理参考；'
+    '不能因为某张图不是修改目标就标成analysis。只有不需让执行模型看到、仅用于理解资料的素材才用analysis。')
 MATERIAL_GUIDANCE = (
     f'每项素材须填写 reference、role、usage。填写 reference 时，{MATERIAL_REFERENCE_GUIDANCE}'
     f'填写 role 时，{MATERIAL_ROLE_GUIDANCE}usage {MATERIAL_USAGE_GUIDANCE}'
@@ -254,6 +257,8 @@ class SaveContent(Fact):
     message_source: MessageContentSource | None = None
     updates: tuple[ItemUpdate, ...] = Field(default=(), max_length=100)
     continue_execution: bool = Field(default=False, description='仅在本轮还要求实际执行时设为 true。保存成功后仍需调用目标工具。')
+    confirmation: MediaDirective | None = Field(
+        default=None, description='仅当用户设置了后续确认条件时填写tool、wait_for或wait_all。不是审批开关，不能填approved来批准刚写出的稿件。普通方案不新增确认。')
     new_content: Literal[True] | None = Field(
         default=None, description='仅当本轮已明确要求实际执行且 continue_execution=true 时，随 document 标记新的执行正文。仅撰写文字、方案或新系列设计必须省略本字段，不能因内容是新作就填写。可在 materials 指定已选成图或原图。修订已有文字用 base 和 updates。')
     show_content: bool | None = Field(default=None, description=(
@@ -268,6 +273,8 @@ class SaveContent(Fact):
 
     @model_validator(mode='after')
     def choice(self):
+        if self.confirmation is not None and (self.confirmation.approved or self.confirmation.confirmation_only):
+            raise ValueError('CONTENT_CONFIRMATION_EXISTING_ITEM_REQUIRED')
         if (sum(value is not None for value in (self.document, self.base, self.message_source)) != 1
                 or self.base is None and self.updates or self.base is not None and not self.updates):
             raise ValueError('CONTENT_SAVE_FORM_INVALID')
@@ -312,7 +319,11 @@ def selection_parameters(model=ContentReference):
 
 
 SCHEMA = {'type': 'function', 'function': {'name': SAVE,
-    'description': MIXED_TEXT_GUIDANCE + '交付可供后续选择的方案、提示词或脚本：只提交一次document，每条写title和body，页面直接展示这份原文。普通问答直接回复。'
+    'description': '保存或修订结构化稿件。新写分条方案、提示词或脚本可直接回复编号标题与完整正文，后台自动登记，无需重复保存。'
+        '明确结构化保存时提交一次document，每条写title和body，页面展示原文。'
+        '用户要求部分或全部条目等后续确认再执行时，必须结构化保存整组，用confirmation指定tool及wait_for或wait_all，保留编号。'
+        '同轮要求立即执行其他项时continue_execution=true；不把等待条件变成已批准，不给普通写作新增确认。'
+        + MIXED_TEXT_GUIDANCE + '普通问答直接回复。'
         '只执行已有成果时，直接将目录条目的content_source交给目标工具。未登记的分条正文用message_source指定原回复消息，后台定位整组原文；continue_execution=true。'
         '仅后台无法识别边界时才按已核实的完整行范围指定条目。'
         '用户明确修改一张成图时，可用document和new_content=true编写新的编辑指令，在materials绑定这张图。只修订历史文字用base和updates。'
@@ -515,32 +526,31 @@ def retry_pending(messages):
 
 
 def save_repair_exhausted(messages):
-    """Count closed, consecutive validation failures since the current input."""
-    repair_codes = {INVALID_OBJECT, ATTACHMENT_USAGE_REQUIRED, DRAFT_CONFLICT, PRESENTATION_INCOMPLETE}
-    count = 0
-    result = None
-    for message in reversed(messages):
-        if message.get('role') == 'system':
-            continue
-        if result is None and message.get('role') == 'tool':
+    """Bound failed saves for one user input, including mixed errors and reads."""
+    calls, failed, exhausted = set(), set(), False
+    for message in messages:
+        if message.get('role') == 'user':
+            calls.clear()
+            failed.clear()
+            exhausted = False
+        elif message.get('role') == 'assistant':
+            calls.update(call['id'] for call in message.get('tool_calls', ())
+                         if call.get('function', {}).get('name') == SAVE)
+        elif message.get('role') == 'tool' and message.get('tool_call_id') in calls:
             try:
                 payload = json.loads(message.get('content', ''))
             except (ValueError, TypeError):
-                return False
-            if not isinstance(payload, dict) or payload.get('code') not in repair_codes:
-                return False
-            result = message.get('tool_call_id')
-            continue
-        if message.get('role') != 'assistant' or result is None:
-            return False
-        calls = message.get('tool_calls') or ()
-        if len(calls) != 1 or calls[0].get('id') != result or calls[0].get('function', {}).get('name') != SAVE:
-            return False
-        count += 1
-        if count >= (2 if payload.get('code') == DRAFT_CONFLICT else 3):
-            return True
-        result = None
-    return False
+                continue
+            if not isinstance(payload, dict):
+                continue
+            if payload.get('ok') is True:
+                failed.clear()
+                exhausted = False
+            elif payload.get('ok') is False:
+                failed.add(message['tool_call_id'])
+                if len(failed) >= (2 if payload.get('code') == DRAFT_CONFLICT else 3):
+                    exhausted = True
+    return exhausted
 
 
 def source_images_from_message(row):
@@ -549,22 +559,36 @@ def source_images_from_message(row):
                  for image in image_sources(row) if image['available'])
 
 
-def current_source_images(request):
+def current_source_images(request, runtime=None):
     message_id = getattr(request.context_anchor, 'input_message_id', None)
     if not message_id:
         return ()
     row = {'id': message_id, 'role': 'user', 'content': [part.model_dump(mode='json') for part in request.content]}
-    return source_images_from_message(row)
+    images=list(source_images_from_message(row))
+    for change in getattr(getattr(runtime,'task_user_changes',None),'items',()):
+        if change.delivered and str(change.owner_task_id)==str(request.task_id):
+            images.extend(SourceImage(name=attachment.workspace_path.rsplit('/',1)[-1],
+                reference=MaterialReference(resource_ref=attachment.resource_ref))
+                for attachment in change.attachments if attachment.kind=='image')
+    return tuple(images)
 
 
 def save(runtime, call, registry, *, has_image_attachments=False, source_images=(), checked_message=None,
          display_gaps=(), author_request=None, allow_implicit_execution_materials=False, confirmation_items=(),
-         confirmation_tool=None):
+         confirmation_tool=None, request_context=None):
     from services.tools import ToolCall
     from .model_directed import record_calls, call_binding
     from .direct_loop import active_image_methods
     from .methods import REFERENCE_PROMPTS_PROFILE, valid_reference_prompts_presentation
     value = SaveContent.model_validate_json(call['arguments'])
+    if request_context is None and '_media_decisions_v1' in getattr(runtime,'checkpoint_base',{}):
+        from services.agent.image.ecommerce_planner.workflow import ImageRequestContext
+        request_context = ImageRequestContext()
+    if value.confirmation is not None:
+        conditions = value.confirmation
+        selected = tuple(range(1, len(value.document.items) + 1)) if conditions.wait_all and value.document else tuple(conditions.wait_for)
+        confirmation_items = tuple(sorted(set(confirmation_items) | set(selected)))
+        confirmation_tool = conditions.tool if selected else confirmation_tool
     state = runtime.task_execution_state
     base_record = None
     if value.base is not None:
@@ -585,6 +609,8 @@ def save(runtime, call, registry, *, has_image_attachments=False, source_images=
                 arguments['message_source'].pop(key, None)
     if value.new_content is None:
         arguments.pop('new_content')
+    if value.confirmation is None:
+        arguments.pop('confirmation')
     bound = next((b for b in state.call_bindings if b.call_id == call['id']),None) if state else None
     if bound:
         if bound.tool_name != SAVE or bound.arguments_sha256 != digest(arguments):
@@ -599,7 +625,8 @@ def save(runtime, call, registry, *, has_image_attachments=False, source_images=
     explicit_execution = value.continue_execution and not allow_implicit_execution_materials
     if document is not None and source_images and (author_request is not None or explicit_execution):
         from .content_groups import bind_group
-        document = bind_group(document, source_images, author_request or '', infer_materials=not explicit_execution)
+        document = bind_group(document, source_images, author_request or '', infer_materials=not explicit_execution,
+            semantic_context=request_context)
     message_proof = None
     if value.message_source is not None:
         if checked_message is None:
@@ -635,6 +662,9 @@ def save(runtime, call, registry, *, has_image_attachments=False, source_images=
             if update.item_index in indices or update.item_index > len(items): raise TaskError('CONTENT_UPDATE_INVALID')
             items[update.item_index-1] = ContentItem.model_validate({**items[update.item_index-1].model_dump(mode='json'),**update.item.model_dump(mode='json',exclude_unset=True)}); indices.add(update.item_index)
         document = previous.model_copy(update={'items':tuple(items)})
+    if value.confirmation is not None and value.confirmation.wait_all:
+        confirmation_items = tuple(range(1,len(document.items)+1))
+        confirmation_tool = value.confirmation.tool
     if (presentation_profile == REFERENCE_PROMPTS_PROFILE
             and not valid_reference_prompts_presentation(document)):
         raise TaskError(PRESENTATION_INCOMPLETE)

@@ -140,6 +140,7 @@ class ChatToolMixin(ChatToolResultMixin):
         executor.knowledge_candidates = knowledge_candidates
         executor._task_image_operations = task_image_operations
         executor._task_execution_state = getattr(getattr(self,'_actor_runtime',None),'task_execution_state',None)
+        executor._task_user_changes = getattr(getattr(self,'_actor_runtime',None),'task_user_changes',None)
         executor._task_recovery_only = recovery_only
         executor._chat_source_bindings = chat_source_bindings or {}
         executor.tool_runtime.context()  # clear any previous execution identity before restore

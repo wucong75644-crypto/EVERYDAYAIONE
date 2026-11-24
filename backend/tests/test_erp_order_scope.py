@@ -28,11 +28,12 @@ BASE = [{'field': 'doc_created_at', 'op': 'gte', 'value': '2026-10-15T00:00:00+0
     ('只排除刷单、保留关闭和作废订单', 'exclude_scalping'), ('不包含刷单', 'exclude_scalping'),
     ('不排除刷单', 'all'), ('包含全部订单', 'all'), ('仅查刷单', 'only_scalping'), ('查询有效订单', 'valid'),
 ])
-def test_text_scope(text, expected):
-    p = {'doc_type': 'order', 'is_scalping': True, 'order_scope': 'all', 'exclude_filters': [{'field': 'is_scalping', 'value': 1}]}
+def test_compiles_model_scope_without_reinterpreting_text(text, expected):
+    p = {'doc_type': 'order', 'is_scalping': True, 'order_scope': expected, 'exclude_filters': [{'field': 'is_scalping', 'value': 1}]}
     normalize_order_scope(p, text)
     assert p['order_scope'] == expected
-    assert 'is_scalping' not in p and not p['exclude_filters']
+    assert 'is_scalping' not in p
+    assert p['exclude_filters']==[{'field':'is_scalping','value':1}]
 
 
 def test_direct_filters_survive_cleaning():
@@ -41,9 +42,10 @@ def test_direct_filters_survive_cleaning():
 
 
 def test_followup_scope_and_explicit_override():
-    p = {'doc_type': 'order', 'order_scope': 'valid'}
+    p = {'doc_type': 'order', 'order_scope': 'exclude_scalping'}
     normalize_order_scope(p, '同一家店、同样口径，查前一天。（背景：只排除刷单、保留关闭和作废订单）')
     assert p['order_scope'] == 'exclude_scalping'
+    p['order_scope']='all'  # A new model extraction interprets the current override once.
     normalize_order_scope(p, '这次包含刷单。（背景：只排除刷单）')
     assert p['order_scope'] == 'all'
 
@@ -54,7 +56,7 @@ def test_default_is_unchanged_and_keep_statuses():
     assert p == {'doc_type': 'order'}
     p.update(order_status=['CLOSED'], filters=[{'field': 'order_status', 'op': 'eq', 'value': 'CLOSED'}])
     normalize_order_scope(p, '只排除刷单、保留关闭和作废订单')
-    assert 'order_status' not in p and not p['filters']
+    assert p['order_status']==['CLOSED'] and p['filters']==[{'field':'order_status','op':'eq','value':'CLOSED'}]
 
 
 def db_with_rows(rows):
@@ -124,12 +126,12 @@ async def test_engine_export_and_small_detail_apply_scope():
         assert engine._export.call_args.kwargs['order_scope'] == 'exclude_scalping'
 
 @pytest.mark.asyncio
-async def test_extract_plan_recovers_missing_scope_and_keeps_other_filters():
+async def test_extract_plan_compiles_scope_and_keeps_other_filters():
     from unittest.mock import AsyncMock
     from services.agent.erp_agent import ERPAgent
     agent = ERPAgent(MagicMock(), 'user', '', 'org')
     agent._llm_extract = AsyncMock(return_value=([('trade', {
-        'doc_type': 'order', 'filters': [{'field': 'amount', 'op': 'gt', 'value': 5}],
+        'doc_type': 'order', 'order_scope':'exclude_scalping','filters': [{'field': 'amount', 'op': 'gt', 'value': 5}],
     })], None, 'parallel'))
     plan = await agent._extract_plan('只排除刷单，保留关闭和作废订单')
     p = plan.steps[0].params
@@ -199,13 +201,13 @@ def test_normal_rule_is_not_misidentified_as_scalping():
 
 
 def test_current_explicit_status_survives_old_all_state_background():
-    p = {'doc_type': 'order', 'order_status': 'CLOSED'}
+    p = {'doc_type': 'order', 'order_scope':'all','order_status': 'CLOSED'}
     normalize_order_scope(p, '这次查询已关闭订单，包含刷单。（背景：只排除刷单，保留关闭和作废订单）')
     assert p['order_scope'] == 'all'
     assert p['order_status'] == 'CLOSED'
 
 
 def test_explicit_include_all_overrides_same_scope_background():
-    p = {'doc_type': 'order'}
+    p = {'doc_type': 'order','order_scope':'all'}
     normalize_order_scope(p, '同一家店，这次包含全部。（背景：只排除刷单）')
     assert p['order_scope'] == 'all'

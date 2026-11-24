@@ -81,6 +81,24 @@ const formFieldSchema = z.object({
   visible_when: z.object({ field: z.string(), value: z.union([z.string(), z.array(z.string())]), not: z.boolean().optional() }).optional(),
 }).passthrough();
 
+const legacyEcomPlanImageSchema = z.object({
+      role: z.string(),
+      purpose: z.string(),
+      title: z.string(),
+      subtitle: z.string(),
+      prompt: z.string(),
+      aspect_ratio: z.string(),
+      has_text: z.boolean(),
+      image_type: z.string(),
+    }).passthrough();
+
+const nativeEcomPlanImageSchema = z.object({
+  item_id: z.string().min(1),
+  position: z.number().int().positive(),
+  name: z.string(),
+  purpose: z.string(),
+}).passthrough();
+
 const contentPartSchema = z.preprocess(normalizeNullEquivalentFields, z.discriminatedUnion('type', [
   z.object({ type: z.literal('text'), text: z.string(), content_artifact_id: optionalString, content_replaces_text: optionalString, content_incomplete: z.boolean().optional() }).passthrough(),
   z.object({
@@ -97,7 +115,20 @@ const contentPartSchema = z.preprocess(normalizeNullEquivalentFields, z.discrimi
     source_content_index: z.number().int().nonnegative().optional(),
     has_transparency: z.boolean().optional(),
     quality_checks: z.object({ file_integrity: z.boolean().optional(),
-      alpha_min: z.number().int().min(0).max(255).optional(), alpha_max: z.number().int().min(0).max(255).optional() }).optional(),
+      alpha_min: z.number().int().min(0).max(255).optional(), alpha_max: z.number().int().min(0).max(255).optional(),
+      size_matches: z.boolean().optional(),
+      product_fidelity: z.object({ status: z.enum(['checking','approved','rejected','uncertain']),
+        issues: z.array(z.string()).optional(), model: optionalString, version: optionalString,
+        input_sha256: optionalString }).optional(),
+      actual: z.object({ width: z.number().int().positive(), height: z.number().int().positive(),
+        aspect_ratio: z.string() }).optional(),
+      target: z.object({ mode: optionalString, aspect_ratio: z.string(), resolution: z.string().nullable().optional(),
+        source: optionalString, resolution_source: optionalString,
+        approximate: z.boolean().optional(), requested_width: optionalNumber, requested_height: optionalNumber,
+        width: optionalNumber, height: optionalNumber, original_width: optionalNumber, original_height: optionalNumber,
+        reference_index: z.number().int().nonnegative().optional(), reference_sha256: optionalString,
+        source_task_id: optionalString, source_message_id: optionalString }).optional(),
+      error: optionalString }).optional(),
     width: optionalNumber,
     height: optionalNumber,
     alt: optionalString,
@@ -216,18 +247,12 @@ const contentPartSchema = z.preprocess(normalizeNullEquivalentFields, z.discrimi
   }).passthrough(),
   z.object({
     type: z.literal('ecom_plan'),
+    plan_id: z.string().min(1).optional(),
+    revision: z.number().int().positive().optional(),
+    status: z.string().optional(),
     product_insight: z.string(),
     visual_strategy: z.string(),
-    images: z.array(z.object({
-      role: z.string(),
-      purpose: z.string(),
-      title: z.string(),
-      subtitle: z.string(),
-      prompt: z.string(),
-      aspect_ratio: z.string(),
-      has_text: z.boolean(),
-      image_type: z.string(),
-    }).passthrough()),
+    images: z.array(z.union([legacyEcomPlanImageSchema, nativeEcomPlanImageSchema])),
     cost_estimate: z.object({
       estimated_credits: z.number(),
       image_count: z.number(),
@@ -238,7 +263,12 @@ const contentPartSchema = z.preprocess(normalizeNullEquivalentFields, z.discrimi
     interrupted_at: z.string(),
     reason: z.enum(['user_cancel', 'user_pause', 'system_timeout', 'network_error']),
   }).passthrough(),
-]));
+])).superRefine((part, ctx) => {
+  if (part.type === 'ecom_plan' && part.images.some(image => !legacyEcomPlanImageSchema.safeParse(image).success)
+      && (!part.plan_id || !part.revision)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Native plans require their saved ID and revision' });
+  }
+});
 
 export interface MessageProtocolContext {
   messageId?: string;

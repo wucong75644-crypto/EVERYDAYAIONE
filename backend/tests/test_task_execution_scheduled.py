@@ -191,7 +191,8 @@ async def test_original_manager_receives_stable_identity_without_changing_form_o
          patch('services.scheduler.chat_task_manager.ChatTaskManager',return_value=manager) as factory:
         result=await executor._manage_scheduled_task(args)
     assert result.form['fields']==original_form['fields']
-    assert manager.handle.call_args.args[1]['description']=='真正的用户要求'
+    assert manager.handle.call_args.args[1]['description']==args['description']
+    assert manager.handle.call_args.args[1]['definition']==args['definition']
     if managed:
         assert result.form['form_id']=='task_effect_'+'a'*64
         assert factory.call_args.kwargs['idempotency_key']==expected

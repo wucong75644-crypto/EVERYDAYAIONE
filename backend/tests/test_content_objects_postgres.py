@@ -19,13 +19,13 @@ from tests.test_task_execution_followup_reuse_postgres import (followup_db,new_t
 def content_db(dispatch_db):
     root=__import__('pathlib').Path(__file__).parents[1]
     with psycopg.connect(dispatch_db) as c:
-        for migration in ('347_agent_task_image_reconciliation','376_agent_task_image_method_handoff','377_agent_task_content_objects','378_agent_content_followup_groups','381_agent_media_confirmation_slots'):
+        for migration in ('347_agent_task_image_reconciliation','376_agent_task_image_method_handoff','377_agent_task_content_objects','378_agent_content_followup_groups','381_agent_media_confirmation_slots','382_agent_semantic_media_confirmations'):
             c.execute((root/f'migrations/{migration}.sql').read_text())
     yield dispatch_db
     with psycopg.connect(dispatch_db) as c:
         c.execute("DELETE FROM conversation_turn_checkpoints WHERE state ? '_task_execution'")
         c.execute('DELETE FROM agent_task_events');c.execute('DELETE FROM agent_task_states');c.execute('SET CONSTRAINTS ALL IMMEDIATE')
-        for migration in ('381_agent_media_confirmation_slots','378_agent_content_followup_groups','377_agent_task_content_objects','376_agent_task_image_method_handoff','347_agent_task_image_reconciliation'):
+        for migration in ('382_agent_semantic_media_confirmations','381_agent_media_confirmation_slots','378_agent_content_followup_groups','377_agent_task_content_objects','376_agent_task_image_method_handoff','347_agent_task_image_reconciliation'):
             c.execute((root/f'migrations/rollback/{migration}_rollback.sql').read_text())
 
 @pytest.mark.asyncio
@@ -183,12 +183,15 @@ async def test_direct_content_selection_adopts_saved_task_before_business_dispat
     'text-to-image', 'image-to-image', 'inline-text-to-image', 'inline-image-to-image', 'inline-first-turn-upload',
     'inline-edit-selected-output', 'inline-edit-latest-output', 'inline-edit-selected-legacy', 'inline-edit-reload-source',
     'inline-edit-resume-before-reserve', 'inline-edit-resume-after-acceptance',
+    'inline-edit-previous-output', 'inline-edit-previous-resume-before-reserve', 'inline-edit-previous-resume-after-acceptance',
     'inline-repair-then-image', 'inline-resume-before-reserve', 'inline-resume-after-acceptance',
     'recorded-first', 'recorded-fifth', 'recorded-sixth-size', 'recorded-write-once', 'recorded-retired',
     'recorded-third-output', 'new-third-output', 'new-regeneration-output', 'recorded-quoted-output',
     'recorded-third-history', 'new-third-history',
 ])
 async def test_chat_executes_from_registration_to_page_receipt(content_db, monkeypatch, tmp_path, scenario):
+    from unittest.mock import AsyncMock
+
     import asyncio
     import base64
     import hashlib
@@ -246,9 +249,10 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
     interrupted = before_reserve or after_acceptance
     crashed = False
     edit_selected = scenario.startswith('inline-edit-')
-    edit_latest = scenario == 'inline-edit-latest-output'
+    previous_edit = scenario.startswith('inline-edit-previous')
+    edit_latest = scenario == 'inline-edit-latest-output' or previous_edit
     bad_edit_source = scenario == 'inline-edit-reload-source'
-    flat_edit = edit_selected and scenario != 'inline-edit-selected-legacy'
+    flat_edit = edit_selected and scenario != 'inline-edit-selected-legacy' and not previous_edit
     if not flat_edit:
         monkeypatch.setattr(settings, 'chat_single_image_edit_enabled', False)
     with_original = edit_selected or (scenario not in {'text-to-image', 'inline-text-to-image'} and not interrupted)
@@ -263,14 +267,14 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
     followup = recorded or automatic_output
     sixth = scenario == 'recorded-sixth-size'
     first_upload = scenario == 'inline-first-turn-upload'
-    repairs_arguments = image_repair or (edit_selected and not flat_edit) or bad_edit_source
+    repairs_arguments = image_repair or (edit_selected and not flat_edit and not previous_edit) or bad_edit_source
     fifth = scenario == 'recorded-fifth'
     write_once = scenario == 'recorded-write-once'
     retired = scenario == 'recorded-retired'
     item_index = 3 if recorded_output or new_output else 2 if write_once else 6 if sixth else 5 if fifth else 1
     body = '  纸品封面，保留细纹理。\n避免改变装订孔及商标。  '
     synthetic_original = scenario in {'image-to-image', 'inline-image-to-image', 'inline-first-turn-upload'} or image_repair or sixth or edit_selected
-    ratio = 'auto' if edit_selected else '3:4' if synthetic_original or new_output else '1:1'
+    ratio = 'auto' if edit_selected and not previous_edit else '3:4' if synthetic_original or new_output else '1:1'
     resolution = '4K' if edit_latest else '2K' if new_output or edit_selected else '1K'
     question = '参考这张原图修改封面，只生成一张' if with_original else '帮我直接生成一张纸品封面图'
     if scenario == 'inline-image-to-image' or image_repair:
@@ -280,6 +284,8 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
     if edit_selected:
         target = '刚生成的那张图' if edit_latest or not flat_edit else '生成过的第一张图'
         question = f'把你{target}的桌面颜色再调浅一点，福字主体不动，比例你定。直接生成一张。'
+    if previous_edit:
+        question = '再换成浅灰色。'
     first_document = None
     first_arguments = None
     if quoted:
@@ -331,7 +337,10 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
         output_items = [{'title': f'封面方向{i}', 'body': body if i == 3 else f'第{i}套独立正文。'} for i in range(1, 6)]
         first_output = model_content_output('五套封面', output_items)
         if history_import:
-            first_output = '\n\n'.join(f"### {item['title']}\n\n{item['body']}" for item in output_items)
+            # Keep exercising legacy manual-range import. Numbered prose is
+            # now registered automatically; the real-failure test covers it.
+            first_output = '\n\n'.join(f"### 封面方向{'甲乙丙丁戊'[i]}\n\n{item['body']}"
+                                       for i, item in enumerate(output_items))
             start = first_output.index(body)
             first_line = first_output.count('\n', 0, start) + 1
             last_line = first_output.count('\n', 0, start + len(body)) + 1
@@ -492,6 +501,12 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
         return r, p, h, q
 
     r, p, h, q = runtime_case(parts)
+    if previous_edit:
+        from tests.test_model_directed_records import operation_state
+        _, previous_state = operation_state('accepted')
+        previous_state = previous_state.model_copy(update={'operations': (
+            previous_state.operations[0].model_copy(update={'receipt_ref': 'task:' + image_task}),)})
+        r.task_followup_candidate = {'state': previous_state.model_dump(mode='json')}
     def tool_chunk(name, *, arguments):
         return StreamChunk(tool_calls=[ToolCallDelta(index=0,id=name,name=name,arguments_delta=arguments)])
 
@@ -733,6 +748,8 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
             'source_content_index': materials[0]['reference']['content_index'],
             'edit_instruction': body,
         }
+    if previous_edit:
+        model_arguments = {'previous_result_edit': body}
     seen = 0
     if not followup:
         row = selection = None
@@ -806,7 +823,9 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
                     assert set(offered['properties']) == set(model_arguments)
                 else:
                     assert 'draft' in offered['properties']
-                    if edit_selected:
+                    if previous_edit:
+                        assert 'previous_result_edit' in offered['properties']
+                    elif edit_selected:
                         assert list(offered['properties']) == ['draft']
                     assert offered['$defs']
                 yield tool_chunk('generate_image', arguments=json.dumps(model_arguments, ensure_ascii=False))
@@ -1448,7 +1467,8 @@ async def test_tool_argument_failure_checkpoint_survives_actor_replacement(conte
     handler._execute_tool_calls.assert_not_awaited()
 
 
-async def test_confirmed_sibling_has_an_independent_slot_and_preserves_previous_dispatch_fence(content_db):
+@pytest.mark.parametrize('protocol',['legacy','semantic'])
+async def test_confirmed_sibling_has_an_independent_slot_and_preserves_previous_dispatch_fence(content_db, protocol):
     from dataclasses import replace
     from types import SimpleNamespace
     from uuid import uuid4
@@ -1493,6 +1513,20 @@ async def test_confirmed_sibling_has_an_independent_slot_and_preserves_previous_
         '_task_direct_seen': [approved_id],
         '_task_user_changes': {'items': [{'event_id': approved_id, 'message': '确认第2条', 'delivered': True}]},
     }
+    if protocol=='semantic':
+        import hashlib
+        message='第2条我确认了，可以开始做了'
+        checksum=hashlib.sha256(message.encode()).hexdigest()
+        checkpoint['_task_user_changes']['items'][0].update(message=message,
+            owner_task_id=str(runtime.task_id),message_sha256=checksum)
+        artifact,record,_=co._load_record(state,ref(row,1))
+        def binding(index):
+            return {'artifact_id':artifact.id,'object_key':record.object_key,'revision':record.revision,
+                    'tool':'generate_video','item_index':index}
+        checkpoint['_media_decisions_v1']={'version':1,'items':[{
+            'event_id':approved_id,'owner_task_id':str(runtime.task_id),'message_sha256':checksum,
+            'artifact_id':artifact.id,'object_key':record.object_key,'revision':record.revision,
+            'tool':'generate_video','approved_items':[2]}], 'bindings':{'first':binding(1),'second':binding(2)}}
     with psycopg.connect(content_db) as db:
         def current(checkpoint):
             return db.execute('SELECT agent_task_direct_operation_current(%s,%s,%s)',
@@ -1502,6 +1536,27 @@ async def test_confirmed_sibling_has_an_independent_slot_and_preserves_previous_
         assert db.execute("SELECT agent_media_confirmed_index('确认第2条')").fetchone()[0] == 2
         assert db.execute('SELECT agent_task_direct_input_hash(%s)', (Jsonb(checkpoint),)).fetchone()[0] == digest([approved_id])
         assert current(checkpoint)
+        if protocol=='semantic':
+            assert db.execute('SELECT agent_media_decision_items(%s,%s,%s)',
+                (Jsonb(persisted),Jsonb(checkpoint),approved_id)).fetchone()[0]==[2]
+            for field in ('tool','approved_items','artifact_id','revision','object_key','event_id','owner_task_id','message_sha256'):
+                changed=copy.deepcopy(checkpoint)
+                del changed['_media_decisions_v1']['items'][0][field]
+                assert db.execute('SELECT agent_media_decision_items(%s,%s,%s)',
+                    (Jsonb(persisted),Jsonb(changed),approved_id)).fetchone()[0]==[],field
+                assert not current(changed),field
+            for field,value in [('artifact_id','unknown'),('revision',record.revision+1),
+                                ('tool','generate_image'),('owner_task_id',str(uuid4())),('message_sha256','0'*64)]:
+                changed=copy.deepcopy(checkpoint)
+                changed['_media_decisions_v1']['items'][0][field]=value
+                assert not current(changed),field
+            for field,value in [('artifact_id','unknown'),('revision',record.revision+1),('item_index',2)]:
+                changed=copy.deepcopy(checkpoint)
+                changed['_media_decisions_v1']['bindings']['first'][field]=value
+                assert not current(changed),field
+            changed=copy.deepcopy(checkpoint)
+            changed['_media_decisions_v1']['version']=99
+            assert not current(changed)
         changed = copy.deepcopy(checkpoint)
         changed['_task_user_changes']['items'][0]['message'] = '取消上一条，改用新图'
         assert not current(changed)
@@ -1514,3 +1569,168 @@ async def test_confirmed_sibling_has_an_independent_slot_and_preserves_previous_
         tampered = copy.deepcopy(persisted)
         tampered['call_bindings'][-1]['media_slot'] = 'object-' + '0' * 32 + ':2'
         assert not db.execute('SELECT agent_task_direct_records_valid(%s)', (Jsonb(tampered),)).fetchone()[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('writing_method', [False, True], ids=['ordinary', 'reference-method'])
+async def test_real_failed_plain_reply_is_committed_and_selected_by_number_in_a_new_turn(content_db, monkeypatch, tmp_path, writing_method):
+    import json
+    from pathlib import Path
+    from types import SimpleNamespace
+    from services.adapters.types import StreamChunk
+    from services.handlers.chat.outcome_builder import build_content_parts
+    from services.task_execution.content_delivery import KEY
+    from schemas.message import TextPart, ImagePart
+    from psycopg.types.json import Jsonb
+    from PIL import Image
+    from core.config import get_settings
+    from services.file_executor import FileExecutor
+    from tests.test_content_objects import run_content_loop
+    data = json.loads(Path(__file__).with_name('fixtures').joinpath('chat_skill_failures_20261122.json').read_text())
+    if writing_method:
+        from tests.test_skill_delivery_reliability import reference_markdown
+        from services.task_execution.content_groups import index_document
+        data['plan']['response'] = reference_markdown(5)
+        data['plan']['expected_items'] = [{'body': item.body} for item in index_document(data['plan']['response']).document.items]
+    first = seed(content_db)
+    async def checkpoint(point, payload):
+        with connect(first) as c:
+            if '_task_execution' in payload:
+                return save(c, first, payload, expected=payload.get('_task_execution_expected_revision', 0))
+            return c.execute('SELECT save_generation_checkpoint(%s,%s,%s,%s)',
+                (first['task'], first['token'], point.value, Jsonb({**payload, 'safe_point': point.value}))).fetchone()[0]
+    r, p, h, q = case(checkpoint)
+    r.task_bootstrap = replace(r.task_bootstrap, task_id=UUID(first['task']), conversation_id=UUID(first['conv']),
+        actor_user_id=UUID(first['user']), input_message_id=UUID(first['message']), original_goal=data['plan']['user_text'],
+        execution_identity=r.task_bootstrap.execution_identity.model_copy(update={'workspace_owner_id': first['user']}))
+    r.task_id, r.turn_id, r.conversation_id = first['task'], first['turn'], first['conv']
+    if writing_method:
+        from tests.test_skill_delivery_reliability import attach_writing_method
+        await attach_writing_method(r)
+    p.execution_context = replace(p.execution_context, actor_user_id=first['user'], workspace_owner_id=first['user'],
+        task_id=first['task'], conversation_id=first['conv'])
+    q = replace(q, task_id=first['task'], conversation_id=first['conv'], user_id=first['user'],
+        content=[TextPart(text=data['plan']['user_text']), ImagePart(name='product.png', workspace_path='product.png')],
+        context_anchor=SimpleNamespace(input_message_id=first['message'], base_revision=0))
+    monkeypatch.setattr(get_settings(), 'file_workspace_root', str(tmp_path))
+    monkeypatch.setattr(get_settings(), 'chat_image_async_enabled', True)
+    files = FileExecutor(str(tmp_path), first['user'], None)
+    Image.new('RGB', (360, 360), 'white').save(files.resolve_safe_path('product.png'))
+    with psycopg.connect(content_db) as c:
+        c.execute("UPDATE messages SET status='completed',context_revision=0,turn_id=%s,content=%s WHERE id=%s",
+                  (first['turn'], Jsonb([value.model_dump(mode='json') for value in q.content]), first['message']))
+    q.params['_ecom_workflow'] = {'intent':'write'}  # Frozen coordinator output; this test enters below execute_chat.
+    async def model(**kwargs):
+        yield StreamChunk(content=data['plan']['response'])
+        yield StreamChunk(finish_reason='stop')
+    _, blocks, totals = await run_content_loop(r, p, h, q, model)
+    part, = build_content_parts(blocks, fallback_text=totals.text)
+    assert part.text == data['plan']['response']
+    before = r.task_execution_state
+    closed = end_candidate(before)
+    payload = copy.deepcopy(r.checkpoint_base)
+    payload.update(_task_execution=closed.model_dump(mode='json'), _task_execution_expected_revision=before.revision)
+    with connect(first) as c:
+        assert save(c, first, payload, expected=before.revision)['outcome'] == 'saved'
+        stored = c.execute('SELECT state FROM conversation_turn_checkpoints WHERE task_id=%s', (first['task'],)).fetchone()[0]
+        assert stored[KEY]['phase'] == 'committed' and stored[KEY]['projection_source'] == 'visible_text'
+    _, second, source, _, _ = new_turn(content_db, old=first, text=data['plan']['selection'])
+    original = TaskState.model_validate(source['state'])
+    row, = co.catalog(original)
+    assert row['artifact_id'] == part.content_artifact_id
+    assert len(row['items']) == 5
+    for index in (1, 3):
+        arguments, _ = co.compile_input(original, 'generate_image', {}, ref(row, index))
+        assert arguments['prompt'] == data['plan']['expected_items'][index - 1]['body']
+        assert arguments['references'][0]['message_id'] == first['message']
+    # Reading the next-turn catalog must not transfer ownership or spend credits.
+    with connect(second) as c:
+        assert str(c.execute('SELECT owner_task_id FROM agent_task_states WHERE root_task_id=%s',
+                             (first['task'],)).fetchone()[0]) == first['task']
+        assert c.execute('SELECT count(*) FROM credit_transactions WHERE task_id=%s', (second['task'],)).fetchone()[0] == 0
+    h._execute_tool_calls.assert_not_awaited()
+    # The real transfer must capture the initiating user input. Its original
+    # two-item selection then resumes before *any* new model sample.
+    from services.task_execution.followup import FollowupRestart
+    from services.task_execution.user_changes import restore
+    from services.task_execution.image_resources import create_resolver
+    from services.tools.catalog import build_capability_catalog
+    from core.local_db import LocalDBClient
+    from core.db_scope import DatabaseScope, DatabaseAccessKind, ScopedDatabaseClient
+    from unittest.mock import AsyncMock
+    async def next_checkpoint(point, payload):
+        with connect(second) as c:
+            if '_task_execution' in payload:
+                return save(c, second, payload, expected=payload['_task_execution_expected_revision'])
+            return c.execute('SELECT save_generation_checkpoint(%s,%s,%s,%s)',
+                (second['task'], second['token'], point.value, Jsonb({**payload, 'safe_point': point.value}))).fetchone()[0]
+    r2, p2, h2, q2 = case(next_checkpoint)
+    r2.task_bootstrap = replace(r.task_bootstrap, task_id=UUID(second['task']), input_message_id=UUID(second['message']))
+    r2.task_id, r2.turn_id, r2.conversation_id = second['task'], second['turn'], second['conv']
+    p2.execution_context = replace(p.execution_context, task_id=second['task'])
+    p2.content_controls_available = True
+    from services.tools.catalog import build_tool_catalog
+    p2.core_tools.append(build_tool_catalog().require('generate_image').to_schema())
+    p2.messages = [{'role': 'user', 'content': data['plan']['selection']}]
+    with connect(second) as c:
+        base_revision = c.execute('SELECT base_context_revision FROM tasks WHERE id=%s', (second['task'],)).fetchone()[0]
+    q2 = replace(q, task_id=second['task'], content=[TextPart(text=data['plan']['selection'])],
+                 context_anchor=SimpleNamespace(input_message_id=second['message'], base_revision=base_revision))
+    q2 = replace(q2, params={**q.params, '_ecom_workflow':{'intent':'execute_saved'}})
+    r2.task_followup_candidate = source
+    async def transfer(candidate, observation, payload):
+        with connect(second) as c:
+            return adopt(c, second, candidate, observation, payload)
+    r2.task_followup_adopt = transfer
+    async def no_selection_rewrite(**kwargs):
+        from services.adapters.types import ToolCallDelta
+        offered = next(t['function']['parameters'] for t in kwargs['tools'] if t['function']['name']=='generate_image')
+        assert 'content_source' in offered['properties']
+        assert 'draft' not in offered['properties']
+        yield StreamChunk(tool_calls=[ToolCallDelta(index=i,id=f'select-{index}',name='generate_image',
+            arguments_delta=json.dumps({'content_source':ref(row,index)})) for i,index in enumerate((1,3))])
+        yield StreamChunk(finish_reason='tool_calls')
+    with pytest.raises(FollowupRestart):
+        await run_content_loop(r2, p2, h2, q2, no_selection_rewrite)
+    with connect(second) as c:
+        checkpoint = c.execute('SELECT state FROM conversation_turn_checkpoints WHERE task_id=%s', (second['task'],)).fetchone()[0]
+    r2.task_execution_state = TaskState.model_validate(checkpoint['_task_execution'])
+    if writing_method:
+        from tests.test_skill_runtime import state as skill_state
+        restored_skills = skill_state(r.skill_runtime.source, turn_id=r2.turn_id,
+            task_execution_state=r2.task_execution_state,
+            platform_tool_names={'generate_image', 'file_search'}, authorized_tool_names={'generate_image', 'file_search'})
+        await restored_skills.initialize(checkpoint['skill_runtime'])
+        r2.skill_runtime = restored_skills
+    r2.committed_task_execution_revision = r2.task_execution_state.revision
+    r2.checkpoint_base = checkpoint
+    r2.task_followup_candidate = None
+    r2.task_user_changes = restore(checkpoint, root_task_id=first['task'], owner_task_id=second['task'])
+    r2._steer_messages.extend(item.message for item in r2.task_user_changes.items if not item.delivered)
+    p2.messages = copy.deepcopy(checkpoint['messages'])
+    database = LocalDBClient(psycopg.conninfo.make_conninfo(content_db, user='everydayai'), min_size=1, max_size=4)
+    h2.db = ScopedDatabaseClient(database, DatabaseScope(second['user'], None, DatabaseAccessKind.RUNTIME))
+    h2._actor_runtime = r2
+    r2.task_image_resource_resolver = create_resolver(h2, q2, p2.execution_context)
+    r2.task_operation_store = SimpleNamespace(registry=build_capability_catalog())
+    selected = []
+    class DispatchBoundary(BaseException):
+        pass
+    async def submit(batch, *args, **kwargs):
+        for raw in batch:
+            native = json.loads(raw['arguments'])
+            index = native['source_prompt']['content_object']['source']['item_index']
+            assert native['prompt'] == data['plan']['expected_items'][index - 1]['body']
+            assert native['references'][0]['message_id'] == first['message']
+            selected.append(index)
+        raise DispatchBoundary()
+    h2._execute_tool_calls.side_effect = submit
+    async def no_rewrite(**kwargs):
+        raise AssertionError('The numbered selection was already made before the transfer')
+        yield
+    try:
+        with pytest.raises(DispatchBoundary):
+            await run_content_loop(r2, p2, h2, q2, no_rewrite)
+        assert sorted(selected) == [1, 3]
+    finally:
+        database.close()

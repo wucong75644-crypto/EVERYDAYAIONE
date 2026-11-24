@@ -48,3 +48,17 @@ def decode_delivery(text: str):
     return value, {"delivery_version": DELIVERY_VERSION, "response_sha256": text_hash(text),
         "json_sha256": text_hash(body[:end]), "trailing_characters": len(tail),
         "normalization": "advisory_tail" if tail else "none"}
+
+
+def render_ready_plan(row):
+    """Render persisted native items verbatim; never ask the model to resave them."""
+    items=sorted(row.get('items') or [],key=lambda item:item['position'])
+    if row.get('status')!='ready' or not items or [item['position'] for item in items]!=list(range(1,len(items)+1)):
+        raise ValueError('PLANNER_DELIVERY_NOT_READY')
+    sections=[]
+    for item in items:
+        text=item['request_text']
+        if not isinstance(text,str) or text_hash(text)!=item['request_text_sha256']:
+            raise ValueError('PLANNER_DELIVERY_CONTENT_CHANGED')
+        sections.append(f"## {item['position']}. {item['name']}\n\n"+text)
+    return '\n\n'.join(sections)

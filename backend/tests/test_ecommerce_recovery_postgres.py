@@ -497,7 +497,8 @@ async def test_real_bound_image_entry_activates_before_model_and_blocks_diy_text
         return skills
     monkeypatch.setattr('services.skills.runtime.create_skill_runtime',create)
     monkeypatch.setattr('services.handlers.chat.execution_engine.prepare_chat_stream',AsyncMock(return_value=p))
-    route=AsyncMock(return_value={'kind':kind,'mode':'new','reuse_through_stage':0})
+    route=AsyncMock(return_value={'kind':kind,'mode':'new','reuse_through_stage':0,
+        'intent':'write_then_submit_images' if kind=='main_images' else 'generate'})
     monkeypatch.setattr('services.agent.image.ecommerce_planner.workflow.classify_workflow',route)
     seen=[]
     async def stream_chat(**kwargs):
@@ -519,10 +520,12 @@ async def test_real_bound_image_entry_activates_before_model_and_blocks_diy_text
             result=await execute_chat(handler=h,request=request,runtime=runtime,sink=sink)
             serialized=json.dumps([part.model_dump(mode='json') for part in result.parts],ensure_ascii=False)
             if kind=='main_images':
-                assert '主模型没有调用策划子 Agent' in serialized
-                assert '我自行编写' not in serialized and '我自己拆卖点' not in serialized
+                assert '尚未登记为可按编号执行的方案' in serialized
+                assert '我自行编写五张主图方案' in serialized and '我自己拆卖点' not in serialized
                 assert sink.text==sink.thinking==''
-                assert '我自行编写' not in json.dumps(sink.blocks,ensure_ascii=False)
+                assert '_planner_handoff_v1' not in runtime.checkpoint_base
+                assert any(b.get('content_incomplete') is True for b in result.content_blocks)
+                assert not any(b.get('content_artifact_id') for b in result.content_blocks)
                 assert result.content_blocks[0]['type']=='skill_step'
                 saved=[payload['_ecom_workflow'] for _,payload in checkpoints if '_ecom_workflow' in payload]
                 assert saved and saved[-1]['kind']=='main_images'
@@ -532,7 +535,8 @@ async def test_real_bound_image_entry_activates_before_model_and_blocks_diy_text
             elif kind in {'ordinary_image','needs_input'}:
                 assert 'ecommerce-main-images' not in skills.active
                 assert '本轮没有提交图片任务' in serialized
-                assert '我自行编写' not in serialized
+                assert '我自行编写五张主图方案' in serialized
+                assert not any(b.get('content_artifact_id') for b in result.content_blocks)
             else:
                 assert '图片用途尚未确认' in serialized and '我自行编写' not in serialized
         assert len(seen)==model_calls and source.load.await_count==skill_loads

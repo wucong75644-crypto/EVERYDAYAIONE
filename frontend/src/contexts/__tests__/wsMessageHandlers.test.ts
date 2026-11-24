@@ -23,6 +23,9 @@ import { createWSMessageHandlers, flushChunkBuffer, type HandlerDeps, type Messa
 import type { Message } from '../../types/message';
 import type { WSIncomingMessage } from '../wsMessageHandlerShared';
 import { scheduledTaskForm } from '../../test/fixtures/scheduledTaskForm';
+import realSupplier from '../../../../backend/tests/fixtures/chat_skill_real_supplier_delivery_20261122.json';
+import { create } from 'zustand';
+import { createMessageSlice, type MessageSlice, type MessageSliceDeps } from '../../stores/slices/messageSlice';
 
 const scheduledStore = vi.hoisted(() => ({ optimisticUpdate: vi.fn(), fetchRuns: vi.fn(), fetchTasks: vi.fn() }));
 vi.mock('../../stores/useScheduledTaskStore', () => ({ useScheduledTaskStore: { getState: () => scheduledStore } }));
@@ -718,6 +721,18 @@ describe('wsMessageHandlers', () => {
   // ========================================
 
   describe('message_error', () => {
+    it('shows provider input rejection as a failed task without reporting an image submission', () => {
+      const reason = '模型供应商未通过本次输入的内容检查，本次未完成。请核实或更换输入后重试。';
+      handlers.message_start({ message_id: 'msg_1', conversation_id: 'conv_1', task_id: 'task_1' });
+      handlers.message_error({
+        message_id: 'msg_1', conversation_id: 'conv_1', task_id: 'task_1',
+        error: { code: 'MODEL_INPUT_REJECTED', message: reason },
+      });
+      expect(store.failTask).toHaveBeenCalledWith('task_1', reason);
+      expect(store.completeStreaming).toHaveBeenCalledWith('conv_1');
+      expect(store.setStatus).not.toHaveBeenCalledWith('msg_1', 'completed');
+      expect(store.appendContentBlock).not.toHaveBeenCalled();
+    });
     it('handles Skill preparation failure after start without projecting a completed answer', () => {
       handlers.message_start({ message_id: 'msg_1', conversation_id: 'conv_1', task_id: 'task_1' });
       handlers.message_error({
@@ -1588,5 +1603,41 @@ describe('chat image retry delivery fencing', () => {
       generation_params: { origin: 'chat_image', task_id: 'retry' },
     } });
     expect(store.updateMessage).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('actual paid supplier delivery vectors', () => {
+  beforeEach(() => vi.clearAllMocks());
+  it.each(realSupplier.cases)('publishes $label into its own slot without closing parent chat', sample => {
+    const actual = create<MessageSlice & MessageSliceDeps>()((set, get, api) => ({
+      optimisticMessages: new Map(), ...createMessageSlice(set, get, api),
+    }));
+    const store = createMockStore();
+    store.getMessage = vi.fn(id => actual.getState().getMessage(id));
+    store.addMessage = vi.fn((conversationId, message) => actual.getState().addMessage(conversationId, message));
+    store.updateMessage = vi.fn((id, updates) => actual.getState().updateMessage(id, updates));
+    const deps = createMockDeps(store);
+    deps.chunkBufferRef.current.set('parent-stream', { chunk: '尚未结束的聊天正文', conversationId: 'parent-conversation' });
+    const handlers = createWSMessageHandlers(deps);
+    handlers.message_pending(sample.pending as unknown as WSIncomingMessage);
+    const placeholder = vi.mocked(store.addMessage).mock.calls[0][1];
+    expect(placeholder.content[0]).toMatchObject({ type: 'image', url: null });
+    expect(placeholder.status).toBe('pending');
+    handlers.message_done(sample.done as unknown as WSIncomingMessage);
+    const [id, published] = vi.mocked(store.updateMessage).mock.calls.at(-1)!;
+    expect(id).toBe(placeholder.id);
+    expect(published).toMatchObject({ status: 'completed', content: [{
+      type: 'image', url: sample.expected_url, width: sample.actual_width, height: sample.actual_height,
+      asset_id: expect.any(String), quality_checks: { size_matches: true },
+    }] });
+    handlers.message_pending(sample.pending as unknown as WSIncomingMessage);
+    const displayed = actual.getState().messages[placeholder.conversation_id];
+    expect(displayed).toHaveLength(1);
+    expect(displayed[0]).toMatchObject({ id: placeholder.id, status: 'completed' });
+    expect(displayed[0].content).toEqual(published.content);
+    expect(store.completeStreaming).not.toHaveBeenCalled();
+    expect(store.markConversationCompleted).not.toHaveBeenCalled();
+    expect(deps.chunkBufferRef.current.get('parent-stream')?.chunk).toBe('尚未结束的聊天正文');
   });
 });

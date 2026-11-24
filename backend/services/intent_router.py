@@ -399,6 +399,7 @@ class IntentRouter:
         text: str,
         tools: List[Dict[str, Any]],
         timeout: float,
+        max_tokens: int = 200,
     ) -> Dict[str, Any]:
         """Call the shared DashScope Function Calling transport.
 
@@ -418,7 +419,7 @@ class IntentRouter:
                 "tools": tools,
                 "tool_choice": "auto",
                 "temperature": 0.1,
-                "max_tokens": 200,
+                "max_tokens": max_tokens,
                 "enable_thinking": False,
             },
         )
@@ -497,7 +498,7 @@ class IntentRouter:
         return filtered
 
     def _keyword_fallback(self, content: List[ContentPart]) -> RoutingDecision:
-        """关键词兜底"""
+        """Compatibility name: explicit commands only; unknown free text stays in chat."""
         from schemas.message import infer_generation_type
 
         gen_type = infer_generation_type(content)

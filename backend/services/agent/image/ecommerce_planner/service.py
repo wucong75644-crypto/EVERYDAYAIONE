@@ -23,9 +23,9 @@ from .delivery import DELIVERY_VERSION, decode_delivery
 from .recovery import attach_receipt, error_facts, failure_summary, PlannerRecoveryError
 from .workflow import binding, store_binding, WorkflowBinding, KEY
 from .prompt_resources import HASHES, INTEGRATION_RULES_SHA256, SCHEMA_SHA256, resources, wrapper
-from .assembly import ASSEMBLY_VERSION, assemble_designs, fixed_canvas_conflict
+from .assembly import ASSEMBLY_VERSION, CLEAN_ASSEMBLY_VERSION, assemble_designs, fixed_canvas_conflict
 from .designs import DesignsOutput, DesignRepair, DesignValidationError, apply_repair, repair_context
-from .inputs import FixedSettings, model_input, source_bindings, user_content
+from .inputs import FixedSettings, explicit_chat_platform, model_input, source_bindings, user_content
 from .page_delivery import PageDelivery
 from .format_delivery import PROMPTS_VERSION, FORMAT_VERSION, normalize_visual, validate_questions
 from .position_delivery import POSITION_VERSION, PositionDelivery, validate_outline
@@ -63,11 +63,23 @@ class PlannerStreamBudget:
         return min(remaining, self._parent.remaining) if self._parent is not None else remaining
 
 
+def _empty_json_draft(value):
+    """An empty completed reply has no authored content to preserve or patch."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (ValueError, TypeError):
+            return False  # Retain nonempty prose/truncated JSON for syntax repair.
+    return value is None or value == [] or value == {}
+
+
 class EcommerceImagePlanner(PositionDelivery, PageDelivery):
     def __init__(self, owner, *, execution_profile=None):
         self.owner = owner
         self.settings = execution_profile or __import__("core.config", fromlist=["get_settings"]).get_settings()
         self.page_execution = execution_profile is not None
+        self.chat_thinking_mode = None
+        self.selected_model = None
         self.delivery_version = DELIVERY_VERSION
         self.scope = ScopedDatabaseClient(owner.db, DatabaseScope(
             owner.user_id, owner.org_id, DatabaseAccessKind.RUNTIME,
@@ -75,15 +87,28 @@ class EcommerceImagePlanner(PositionDelivery, PageDelivery):
 
     def _model_config(self):
         from services.adapters.factory import MODEL_REGISTRY
-        model = self.settings.ecom_image_planning_model
+        model = self.selected_model or self.settings.ecom_image_planning_model
         config = MODEL_REGISTRY.get(model)
-        expected_provider = {"gpt-5-6-luna": "kie", "openai/gpt-6.1-sol": "openrouter",
+        expected_provider = {"gpt-5-6-luna": "kie", "openai/gpt-6.1-sol": "openrouter", "qwen3.8-max": "dashscope",
+            "qwen3.8-flash": "dashscope",
             **({"kimi-k3": "dashscope", "gemini-3.8-flash": "kie", "gpt-6-luna": "kie"}
                if self.page_execution else {})}.get(model)
         if (not expected_provider or not config or config.provider.value != expected_provider
                 or config.provider_model != model or not config.supports_vision):
             raise PlannerRecoveryError("ECOM_IMAGE_PLANNING_MODEL_MISMATCH")
         return config
+
+    def _select_chat_model(self, parent):
+        self.chat_thinking_mode = ('disabled' if not self.page_execution and
+            (parent.get('request_params') or {}).get('thinking_mode') == 'disabled' else None)
+        self.selected_model = ((getattr(self.settings,'ecom_image_planning_non_thinking_model',None)
+            or self.settings.ecom_image_planning_model) if self.chat_thinking_mode=='disabled' else None)
+        registered=self._model_config()
+        model=self.selected_model or self.settings.ecom_image_planning_model
+        if self.chat_thinking_mode=='disabled':
+            from services.model_reasoning import validate_reasoning
+            validate_reasoning(model,registered.provider,'disabled')
+        return model,registered
 
     async def run(self, args, *, fixed_settings=None):
         try:
@@ -126,13 +151,11 @@ class EcommerceImagePlanner(PositionDelivery, PageDelivery):
         try:
             registered = self._model_config()
         except PlannerRecoveryError:
-            return AgentResult("策划模型配置与已注册的支持模型不匹配。", status="error",
-                error_message="ECOM_IMAGE_PLANNING_MODEL_MISMATCH")
-        rates = (self.settings.ecom_image_planning_input_credits_per_million,
-                 self.settings.ecom_image_planning_output_credits_per_million)
-        if registered.provider.value == "kie" and not all(rate and rate > 0 for rate in rates):
-            return AgentResult("主图策划计费尚未配置，当前无法调用策划模型。", status="error",
-                error_message="ECOM_IMAGE_PLANNING_BILLING_UNCONFIGURED")
+            # A valid explicit off profile must not depend on the unused on
+            # model. Read the authenticated parent before choosing its profile.
+            if self.page_execution or not getattr(self.settings,'ecom_image_planning_non_thinking_model',None):
+                return AgentResult("策划模型配置与已注册的支持模型不匹配。", status="error",
+                    error_message="ECOM_IMAGE_PLANNING_MODEL_MISMATCH")
         model = self.settings.ecom_image_planning_model
         if (set(args) - {"references", "source_message_ids", "image_count", "task_type", "continue_plan_id"}
                 or args.get("task_type", "main_images") not in {"main_images", "detail_page"}):
@@ -170,7 +193,23 @@ class EcommerceImagePlanner(PositionDelivery, PageDelivery):
         if self.owner.execution_mode != "interactive":
             return AgentResult("主图策划仅可从当前交互聊天发起。", status="error", error_message="ECOM_PLAN_MODE_DENIED")
 
+        # The immutable parent request is the authority for an explicit Chat
+        # off switch. Page jobs retain their separately saved model profile.
+        model,registered=self._select_chat_model(parent)
+        rates = (self.settings.ecom_image_planning_input_credits_per_million,
+                 self.settings.ecom_image_planning_output_credits_per_million)
+        if registered.provider.value == "kie" and not all(rate and rate > 0 for rate in rates):
+            return AgentResult("主图策划计费尚未配置，当前无法调用策划模型。", status="error",
+                error_message="ECOM_IMAGE_PLANNING_BILLING_UNCONFIGURED")
+
         self.workflow = binding((parent.get("request_params") or {}).get(KEY))
+        if not fixed and self.workflow and self.workflow.image_count is not None:
+            if count is not None and count != self.workflow.image_count:
+                return AgentResult("数量与本轮已确定要求不一致，尚未开始策划。", status="error",
+                    error_message="ECOM_IMAGE_COUNT_CONFLICT")
+            count = self.workflow.image_count
+            if not 1 <= count <= 15:
+                return AgentResult("主图数量需为 1 至 15 张。", status="error", error_message="ECOM_IMAGE_COUNT_INVALID")
         if raw_composition is not None and raw_composition != (parent.get('request_params') or {}).get('_skill_composition'):
             return AgentResult('当前方法状态已变化，未开始策划，请核对原任务。',status='error',
                                error_message='SKILL_COMPOSITION_STALE')
@@ -235,19 +274,21 @@ class EcommerceImagePlanner(PositionDelivery, PageDelivery):
                 for ref in previous_plan.get("input_snapshot", {}).get("references", [])]
         else:
             source_ids = args.get("source_message_ids", [])
-            if (not isinstance(source_ids, list) or len(source_ids) > 8
-                    or any(not isinstance(item, str) for item in source_ids)
-                    or len(set(source_ids)) != len(source_ids)
-                    or current_message_id in source_ids):
+            from .inputs import text_message_ids
+            try:
+                message_ids=text_message_ids(source_ids,current_message_id)
+            except ValueError:
                 return AgentResult("历史文字消息引用无效。", status="error", error_message="ECOM_PLAN_HISTORY_INVALID")
             messages = []
-            for message_id in [*source_ids, current_message_id]:
+            for message_id in message_ids:
                 row = input_row if message_id == current_message_id else await asyncio.to_thread(resolver._message, message_id)
                 if row.get("role") != "user":
                     raise PermissionError("ECOM_PLAN_USER_TEXT_ONLY")
                 messages.append({"message_id": message_id, "context_revision": row.get("context_revision"), "parts": [
                     {"content_index": i, "text": value} for i, value in _raw_parts(row)]})
             references_in = args.get("references", [])
+        from .inputs import with_user_changes
+        messages=with_user_changes(messages,getattr(self.owner,'_task_user_changes',None),self.owner.task_id)
         if not isinstance(references_in, list) or not 1 <= len(references_in) <= 16:
             return AgentResult("请先选择至少一张真实商品参考图。", status="error", error_message="ECOM_PLAN_REFERENCES_REQUIRED")
         refs = await asyncio.to_thread(resolver.resolve, references_in)
@@ -265,7 +306,9 @@ class EcommerceImagePlanner(PositionDelivery, PageDelivery):
                     error_message="ECOM_PLAN_REFERENCE_CHANGED")
         from services.handlers.image_size_requirements import ImageSizeError, resolve_size_requirement
         try:
-            intent, previous = await asyncio.to_thread(resolver.size_context)
+            semantic_context = getattr(self.workflow, 'request_context', None)
+            intent, previous = await asyncio.to_thread(resolver.size_context,
+                **({'semantic_context': semantic_context} if semantic_context is not None else {}))
             if previous_plan:
                 previous = {**(previous or {}), **previous_plan["target_size"]}
             from services.agent.image.reference_roles import is_product
@@ -303,15 +346,23 @@ class EcommerceImagePlanner(PositionDelivery, PageDelivery):
             "resolved_references": [{"source_id": r["source_id"], "content_sha256": r["content_sha256"],
                 "file_version": r["file_version"], "workspace_path": r["workspace_path"]} for r in refs],
             "image_count": count, "task_type": task_type, "target_size": target_size,
-            "platform": fixed.platform if fixed else (previous_plan or {}).get("input_snapshot", {}).get("platform"),
+            "platform": (fixed.platform if fixed else (self.workflow.request_context.platform
+                if self.workflow.request_context.platform is not None or self.workflow.request_context.platform_changed
+                else (previous_plan or {}).get('input_snapshot',{}).get('platform'))
+                if self.workflow and self.workflow.request_context is not None else None
+                if '_media_decisions_v1' in getattr(getattr(self.owner,'_actor_runtime',None),'checkpoint_base',{}) else explicit_chat_platform(messages,
+                    fallback=(previous_plan or {}).get("input_snapshot", {}).get("platform"))),
             "language": fixed.language if fixed else (previous_plan or {}).get("input_snapshot", {}).get("language"),
             **({"supersedes_plan_id": previous_plan["id"]} if previous_plan else {})}
         input_snapshot["source_bindings"] = source_bindings(input_snapshot)
         prompt_bodies, schema = resources(task_type)
         resource_versions = {"resources_sha256": list(HASHES), "schema_sha256": SCHEMA_SHA256,
             "integration_reference_sha256": INTEGRATION_RULES_SHA256}
-        versions = {**resource_versions, "stage_three_delivery_version": DELIVERY_VERSION, "assembly_version": ASSEMBLY_VERSION}
+        versions = {**resource_versions, "stage_three_delivery_version": DELIVERY_VERSION, "assembly_version": ((previous_plan.get("prompt_versions") or {}).get("assembly_version", ASSEMBLY_VERSION)
+                if previous_plan else CLEAN_ASSEMBLY_VERSION)}
         model_settings = {"provider": registered.provider.value, "model": model, "reasoning_effort": self.settings.ecom_image_planning_reasoning}
+        if self.chat_thinking_mode == 'disabled':
+            model_settings.update(reasoning_effort=None, thinking_mode='disabled')
         reusable = (previous_plan and all((previous_plan.get("prompt_versions") or {}).get(key) == value
             for key, value in versions.items())
             and previous_plan.get("model_settings") == model_settings)
@@ -390,6 +441,7 @@ class EcommerceImagePlanner(PositionDelivery, PageDelivery):
         task_type = input_snapshot.get("task_type", "main_images")
         self.delivery_version = (row.get('prompt_versions') or {}).get('stage_three_delivery_version', DELIVERY_VERSION)
         minimal = self.delivery_version in {PROMPTS_VERSION, POSITION_VERSION}
+        assembly_version = (row.get("prompt_versions") or {}).get("assembly_version", ASSEMBLY_VERSION)
         positional = self.delivery_version == POSITION_VERSION
         product_schema = self._page_schema(1, {'product_schema': schema}) if minimal else schema
         active_stage = int(row.get("current_stage", 1))
@@ -443,8 +495,9 @@ class EcommerceImagePlanner(PositionDelivery, PageDelivery):
             final = stage_outputs.get("3")
             if final is None:
                 from .assembly import assemble_prompts
-                final, usage = await self._stage_images(row, lease, prompt_bodies[2], wrapper(3, task_type, self.delivery_version), evidence, messages, refs, image_urls,
-                    validator=lambda value: (assemble_prompts if minimal else assemble_designs)(value, input_snapshot, first, second))
+                final, usage = await self._stage_images(row, lease, prompt_bodies[2], wrapper(3, task_type, self.delivery_version, execution_only=assembly_version == CLEAN_ASSEMBLY_VERSION), evidence, messages, refs, image_urls,
+                    validator=lambda value: (assemble_prompts(value, input_snapshot, first, second) if minimal else
+                        assemble_designs(value, input_snapshot, first, second, assembly_version=assembly_version)))
             else:
                 # Stage output and ready/needs_input state commit together. A
                 # planning row with a final output is inconsistent, not a new
@@ -479,11 +532,15 @@ class EcommerceImagePlanner(PositionDelivery, PageDelivery):
             return await self._page_stage(row, lease, stage, original, integration, evidence, messages, refs, image_urls, validator)
         saved = (evidence.get("stage_drafts") or {}).get(str(stage)) or {}
         previous = saved.get("output")
+        if _empty_json_draft(previous):
+            previous = None
         last_error = saved.get("validation_error")
         for repair in range(3):
             prompt = original + "\n\n【最终平台交付协议】\n" + integration
             if last_error:
-                prompt += f"\n\n原稿未通过校验（{last_error}），只修复具体问题并保留有效内容，返回本阶段完整稿；不要重新策划。"
+                prompt += (f"\n\n上次返回没有本阶段有效正文（{last_error}）。依据原始输入和本阶段Schema生成完整对象；前序有效阶段保持不变。"
+                    if previous is None else
+                    f"\n\n原稿未通过校验（{last_error}），只修复具体问题并保留有效内容，返回本阶段完整稿；不要重新策划。")
             body = {"stage": stage, **model_input(evidence["input_snapshot"], messages, refs),
                 **{key: evidence[key] for key in (("product_schema",) if stage == 1 else ("product_selling_points",)) if key in evidence}}
             if previous is not None:
@@ -500,6 +557,8 @@ class EcommerceImagePlanner(PositionDelivery, PageDelivery):
             except (ValueError, json.JSONDecodeError) as error:
                 last_error = str(error)
                 previous = parsed if parsed is not None else result if result.strip() else previous
+                if _empty_json_draft(previous):
+                    previous = None
                 await self._save_attempt(row, lease, stage, {**usage, "validation_error": last_error}, "schema_repair", repair,
                     charge=True, draft={"output": previous, "validation_error": last_error, "delivery_version": DELIVERY_VERSION})
         raise ValueError("PLANNER_JSON_VALIDATION_FAILED")
@@ -512,14 +571,19 @@ class EcommerceImagePlanner(PositionDelivery, PageDelivery):
         saved = (evidence.get("stage_drafts") or {}).get("3") or {}
         previous = saved.get("output")
         issues = saved.get("issues") or []
+        if _empty_json_draft(previous):
+            previous, issues = None, []
         last_error = saved.get("validation_error")
         for repair in range(3):
             prompt = original + "\n\n【最终平台交付协议】\n" + integration
             patch_mode = bool(issues) and isinstance(previous, dict)
             if last_error:
-                prompt += f"\n\n原稿未通过校验（{last_error}），保留有效设计，仅修复明确问题。"
-                prompt += ("只返回指定路径的patches与复查review_records，不返回整组或整张替换。" if patch_mode else
-                    "修复所提供原稿的JSON交付包装，不重新策划有效内容，返回完整对象。")
+                if previous is None:
+                    prompt += f"\n\n上次返回没有逐图设计正文（{last_error}）。依据已完成的商品分析和视觉方案，按本阶段Schema生成完整设计对象；不重做前序阶段。"
+                else:
+                    prompt += f"\n\n原稿未通过校验（{last_error}），保留有效设计，仅修复明确问题。"
+                    prompt += ("只返回指定路径的patches与复查review_records，不返回整组或整张替换。" if patch_mode else
+                        "修复所提供原稿的JSON交付包装，不重新策划有效内容，返回完整对象。")
             body = {"stage": 3, **model_input(evidence["input_snapshot"], messages, refs),
                 "product_selling_points": evidence["product_selling_points"], "visual_direction": evidence["visual_direction"],
                 "output_json_schema": (DesignRepair if patch_mode else DesignsOutput).model_json_schema()}
@@ -552,6 +616,8 @@ class EcommerceImagePlanner(PositionDelivery, PageDelivery):
                     issues = []
                 if previous is None and output.strip():
                     previous = output
+                if _empty_json_draft(previous):
+                    previous, issues = None, []
                 await self._save_attempt(row, lease, 3, {**usage, "validation_error": last_error}, "json_repair", repair,
                     charge=True, draft={"output": previous, "issues": issues, "validation_error": last_error,
                         "delivery_version": DELIVERY_VERSION})
@@ -559,6 +625,9 @@ class EcommerceImagePlanner(PositionDelivery, PageDelivery):
 
     async def _call(self, row, lease, stage, prompt, messages, *, position=None):
         provider = self._model_config().provider.value
+        if self.chat_thinking_mode == 'disabled':
+            from services.model_reasoning import validate_reasoning
+            validate_reasoning(self.selected_model or self.settings.ecom_image_planning_model, provider, 'disabled')
         while True:
             remaining = self.owner.execution_budget.remaining if self.owner.execution_budget else 600
             timeout = min(self.settings.ecom_image_planning_stage_timeout, remaining)
@@ -591,15 +660,20 @@ class EcommerceImagePlanner(PositionDelivery, PageDelivery):
                     "output_characters": len(content)}
             try:
                 session = get_model_gateway().open_chat(ModelCallRequest(
-                    model_id=self.settings.ecom_image_planning_model, org_id=None,
+                    model_id=self.selected_model or self.settings.ecom_image_planning_model, org_id=None,
                     task_id=self.owner.task_id, timeout=None,
                     idle_timeout=self.settings.ecom_image_planning_stage_timeout,
                     cancel_token=self.owner.cancellation_event, budget=stream_budget))
                 completion_options = {"require_completed": True} if provider == "openrouter" else {}
-                if (provider == "dashscope" and getattr(self.settings, "ecom_analysis_json_output", False)
+                structured_output=(getattr(self.settings,"ecom_analysis_json_output",False)
+                    or not self.page_execution and self.chat_thinking_mode=='disabled')
+                if (provider == "dashscope" and structured_output
                         and (stage in {1, 3} if self.delivery_version != POSITION_VERSION else stage in {1, 2})):
                     completion_options["response_format"] = {"type": "json_object"}
                 reasoning = self.settings.ecom_image_planning_reasoning
+                if self.chat_thinking_mode == 'disabled':
+                    reasoning = None
+                    completion_options['thinking_mode'] = 'disabled'
                 if (self.page_execution and self.settings.ecom_image_planning_model == "kimi-k3"
                         and not hasattr(self.settings, "ecom_analysis_transport") and reasoning == "medium"):
                     # Legacy snapshots omitted medium at the provider boundary, selecting its default max.
@@ -633,9 +707,15 @@ class EcommerceImagePlanner(PositionDelivery, PageDelivery):
                         raise PlannerRecoveryError("ECOM_PLAN_EXECUTION_UNCERTAIN")
                     credits = tokens["provider_credits"]
                 else:
-                    credits = max(1, math.ceil(tokens["input_tokens"] * float(self.settings.ecom_image_planning_input_credits_per_million) / 1_000_000
-                        + tokens["output_tokens"] * float(self.settings.ecom_image_planning_output_credits_per_million) / 1_000_000))
-                return content, {**tokens, "user_credits": credits, "provider": provider, "model": self.settings.ecom_image_planning_model,
+                    config=self._model_config()
+                    input_rate=self.settings.ecom_image_planning_input_credits_per_million
+                    output_rate=self.settings.ecom_image_planning_output_credits_per_million
+                    if provider=='dashscope':
+                        input_rate=input_rate or config.credits_per_1k_input*1000
+                        output_rate=output_rate or config.credits_per_1k_output*1000
+                    credits = max(1, math.ceil(tokens["input_tokens"] * float(input_rate) / 1_000_000
+                        + tokens["output_tokens"] * float(output_rate) / 1_000_000))
+                return content, {**tokens, "user_credits": credits, "provider": provider, "model": self.selected_model or self.settings.ecom_image_planning_model,
                     "attempt_id": attempt_id, **timing()}
             except asyncio.CancelledError:
                 await self._finish(row, lease, stage, attempt_id, {**tokens, **timing()}, "uncertain")
@@ -734,7 +814,7 @@ class EcommerceImagePlanner(PositionDelivery, PageDelivery):
             logger.warning("ecom_failure_record_uncertain | plan_id={} stage={}", plan_id, stage)
 
     async def _result(self,plan_id,revision,status):
-        row=await asyncio.to_thread(lambda:self.scope.table("ecom_image_plans").select("id,plan_revision,status,current_stage,items,stage_outputs,input_snapshot")
+        row=await asyncio.to_thread(lambda:self.scope.table("ecom_image_plans").select("id,plan_revision,status,current_stage,items,stage_outputs,input_snapshot,model_settings")
             .eq("id",plan_id).single().execute().data)
         if row["status"] == "ready":
             images=[{"item_id":i["item_id"],"position":i["position"],"name":i["name"],"purpose":i["purpose"]} for i in row["items"]]
@@ -750,11 +830,14 @@ class EcommerceImagePlanner(PositionDelivery, PageDelivery):
                     "message_id": submitted[image["item_id"]]["message_id"]} if image["item_id"] in submitted else
                     {"submission_state": "not_submitted"})} for image in images]
             tool_result={"status":"ready","plan_id":plan_id,"revision":row["plan_revision"],
+                "model_execution":row.get('model_settings') or {},
                 "image_count":len(images),"images":images,"task_type":(row.get("input_snapshot") or {}).get("task_type","main_images"),
-                "instruction":"按position顺序，仅为尚未submitted的项调用generate_image，只传对应plan_source；已有项使用原任务回执，不重发。"}
+                "instruction":"方案已在后台保存；只要策划或查看时交付原文，不再手动保存。只有用户明确要求实际生图时，才按position顺序，仅为尚未submitted的项调用generate_image，只传对应plan_source；已有项使用原任务回执，不重发。"}
+            from .delivery import render_ready_plan
             return AgentResult(json.dumps(tool_result,ensure_ascii=False),
                 status="success",emit_payloads=[payload],metadata={"plan_id":plan_id,"revision":row["plan_revision"],
-                    "status":"ready","images":images})
+                    "status":"ready","images":images,
+                    "server_plan_text":render_ready_plan(row),"server_plan_owner_task_id":str(self.owner.task_id)})
         stage1=row["stage_outputs"].get("1",{})
         current=row["stage_outputs"].get(str(row.get("current_stage",1)),{})
         questions=stage1.get("questions",[]) if status=="needs_input" and row.get("current_stage",1)==1 else current.get("questions",[]) if isinstance(current, dict) else []

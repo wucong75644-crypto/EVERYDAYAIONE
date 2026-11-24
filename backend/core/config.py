@@ -385,6 +385,7 @@ class Settings(BaseSettings):
     detail_gpt_input_credits_per_million: float | None = Field(default=6, gt=0)
     detail_gpt_output_credits_per_million: float | None = Field(default=30, gt=0)
     ecom_image_planning_model: str = "openai/gpt-6.1-sol"
+    ecom_image_planning_non_thinking_model: str = "qwen3.8-flash"
     ecom_image_planning_reasoning: str = "medium"
     ecom_image_planning_stage_timeout: float = Field(default=180, ge=10, le=600)
     ecom_image_planning_input_credits_per_million: float | None = Field(default=None, gt=0)

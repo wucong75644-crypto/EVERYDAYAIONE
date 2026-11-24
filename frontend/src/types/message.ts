@@ -68,8 +68,14 @@ export interface ImagePart {
   source_content_index?: number;
   has_transparency?: boolean;
   quality_checks?: { file_integrity?: boolean; alpha_min?: number; alpha_max?: number;
+    product_fidelity?: { status: 'checking' | 'approved' | 'rejected' | 'uncertain';
+      issues?: string[]; model?: string; version?: string; input_sha256?: string };
     size_matches?: boolean; actual?: { width: number; height: number; aspect_ratio: string };
-    target?: { mode?: string; aspect_ratio: string; resolution?: string | null }; error?: string };
+    target?: { mode?: string; aspect_ratio: string; resolution?: string | null;
+      source?: string; resolution_source?: string; width?: number; height?: number;
+      approximate?: boolean; requested_width?: number; requested_height?: number;
+      original_width?: number; original_height?: number; reference_index?: number; reference_sha256?: string;
+      source_task_id?: string; source_message_id?: string }; error?: string };
   width?: number;
   height?: number;
   alt?: string;

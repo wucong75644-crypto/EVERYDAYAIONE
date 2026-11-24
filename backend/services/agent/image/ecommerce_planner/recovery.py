@@ -114,6 +114,12 @@ def failure_summary(code, category, stage=None, preserved=()):
     }.get(category, "主图策划服务调用失败，请检查服务配置或稍后重试。")
     if code == "ECOM_PLAN_INSUFFICIENT_CREDITS":
         reason = "主图策划积分不足，请充值后重试。"
+    if code == 'NETWORK_ERROR' and category == 'uncertain':
+        reason = ('与策划供应商的连接中断，未收到完整结果。'
+                  '本次调用结果尚未确定，已停止自动重发，请核验已有执行记录。')
+    if code == 'MODEL_REASONING_OFF_UNSUPPORTED':
+        reason = ('当前策划模型接口强制思考，已按关闭设置停止，未调用策划模型。'
+                  '请调整为支持关闭的策划模型配置，或明确开启思考后重试。')
     if code.startswith("ANALYSIS_IMAGE_"):
         reason = "分析图片准备未完成，请检查图片文件、尺寸或上传状态后重试。"
     if code == "ANALYSIS_UPLOAD_CONFIG":

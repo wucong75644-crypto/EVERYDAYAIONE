@@ -262,6 +262,25 @@ def _build_fallback_params(
 # ── 参数定义文本（单域/多域 prompt 共用，拆分到 plan_builder_prompts.py）──
 from services.agent.plan_builder_prompts import PARAM_DEFINITIONS as _PARAM_DEFINITIONS
 
+# One extraction call owns the complete plan. Extra domain parameters keep the
+# existing extensible contract; order scope remains a bounded business enum.
+QUERY_PLAN_TOOL={'type':'function','function':{'name':'submit_query_plan',
+    'description':'提交完整查询计划。订单总体口径与类别限定按用户完整含义选择；仅排除刷单会保留关闭/作废等其他状态，不能代替有效订单。',
+    'parameters':{'type':'object','additionalProperties':False,'required':['steps'],
+        'properties':{'steps':{'type':'array','minItems':1,'maxItems':4,'items':{
+            'type':'object','additionalProperties':False,'required':['domain','params'],
+            'properties':{'domain':{'type':'string','enum':['warehouse','purchase','trade','aftersale']},
+                'params':{'type':'object','required':['doc_type'],'properties':{
+                    'doc_type':{'type':'string'},
+                    'order_scope':{'description':'订单整体查询口径；未指定时valid。',
+                        'oneOf':[{'const':'valid','description':'有效订单：按租户有效性规则筛除无效订单。'},
+                            {'const':'all','description':'所有订单，包括刷单与其他无效状态。'},
+                            {'const':'exclude_scalping','description':'总体为所有订单，仅排除刷单，其他无效状态仍保留。'},
+                            {'const':'only_scalping','description':'仅查询刷单类别。'}]}},
+                    'allOf':[{'if':{'required':['doc_type'],'properties':{'doc_type':{'enum':['order','daily_stats']}}},
+                        'then':{'required':['order_scope']}}]}}}},
+            'compute_hint':{'type':['string','null']},'dependency':{'type':'string','enum':['parallel','serial']}}}}}
+
 
 # ── LLM Prompt（单域扁平结构）──
 
@@ -303,7 +322,7 @@ def build_extract_prompt(query: str, now_str: str = "") -> str:
         '"time_range":"2026-04-01 ~ 2026-04-17","supplier_name":"XX供应商"}}\n\n'
         "示例6（刷单统计）：\n"
         '{"domain": "trade", "params": {"doc_type":"order","mode":"summary",'
-        '"time_range":"2026-04-01 ~ 2026-04-17","is_scalping":true,"include_invalid":true}}\n\n'
+        '"time_range":"2026-04-01 ~ 2026-04-17","order_scope":"only_scalping"}}\n\n'
         "示例7（买家张三的订单）：\n"
         '{"domain": "trade", "params": {"doc_type":"order","mode":"export",'
         '"time_range":"2026-01-21 ~ 2026-04-21","buyer_nick":"张三"}}\n\n'
@@ -434,7 +453,7 @@ def build_multi_extract_prompt(query: str, now_str: str = "") -> str:
         "示例5（单域：刷单统计）：\n"
         '{"steps":[{"domain":"trade","params":{"doc_type":"order",'
         '"mode":"summary","time_range":"2026-04-01 ~ 2026-04-17",'
-        '"is_scalping":true,"include_invalid":true}}]}\n\n'
+        '"order_scope":"only_scalping"}}]}\n\n'
         "示例6（跨域 serial：查供应商采购商品→用编码查订单）：\n"
         '{"steps":['
         '{"domain":"purchase","params":{"doc_type":"purchase","mode":"summary",'

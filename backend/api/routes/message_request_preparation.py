@@ -33,7 +33,15 @@ async def resolve_generation_context(request: Any, body: Any) -> GenerationType:
     elif body.generation_type:
         gen_type = body.generation_type
     else:
-        gen_type = infer_generation_type(body.content)
+        from services.adapters.factory import IMAGE_MODEL_REGISTRY, VIDEO_MODEL_REGISTRY
+        # An explicitly selected media model is protocol data, not an inferred
+        # action in the user's prose. Keep older clients without generation_type.
+        if body.model in IMAGE_MODEL_REGISTRY:
+            gen_type = GenerationType.IMAGE
+        elif body.model in VIDEO_MODEL_REGISTRY:
+            gen_type = GenerationType.VIDEO
+        else:
+            gen_type = infer_generation_type(body.content)
 
     try:
         user_location = await location_task

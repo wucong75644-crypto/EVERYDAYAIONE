@@ -2,6 +2,19 @@ import { describe, expect, it, vi } from 'vitest';
 import { parseContentPart, parseContentParts } from '../messageProtocol';
 import { scheduledTaskForm } from '../../test/fixtures/scheduledTaskForm';
 
+it('keeps product review outcome and reasons after refresh without publishing internal observations', () => {
+  const quality = { product_fidelity: { status: 'rejected', issues: ['没有80页的依据'],
+    model: 'qwen3.8-flash', version: 'product-fidelity.v1', input_sha256: 'hash',
+    observation: { private_user_sources: ['not public'] } } };
+  const image = parseContentPart({ type: 'image', url: 'saved.png', failed: true,
+    error: '请核验后使用', quality_checks: quality });
+  expect(image).toEqual({ type: 'image', url: 'saved.png', failed: true, error: '请核验后使用',
+    quality_checks: { product_fidelity: { status: 'rejected', issues: ['没有80页的依据'],
+      model: 'qwen3.8-flash', version: 'product-fidelity.v1', input_sha256: 'hash' } } });
+  expect(parseContentPart({ type: 'image', url: 'saved.png', quality_checks: {
+    product_fidelity: { status: 'passed' } } })).toBeNull();
+});
+
 vi.mock('../../utils/logger', () => ({
   logger: { warn: vi.fn() },
 }));
@@ -172,4 +185,42 @@ it('preserves delivery failure facts and accepts old nullable metadata', () => {
   expect(parseContentPart({ type: 'text', text: '旧消息', content_incomplete: null })).toEqual({
     type: 'text', text: '旧消息',
   });
+});
+
+
+it('validates image canvas evidence instead of dropping it or coercing values', () => {
+  const evidence = { size_matches: false, actual: { width: 1086, height: 1448, aspect_ratio: '3:4' },
+    target: { mode: 'inherit_reference', aspect_ratio: '1:1', resolution: '1K', source: 'reference',
+      original_width: 360, original_height: 360, reference_index: 0, reference_sha256: 'a'.repeat(64),
+      resolution_source: 'task', source_message_id: 'previous-image', source_task_id: 'previous-task' },
+    error: 'IMAGE_SIZE_MISMATCH' };
+  const image = { type: 'image', url: 'saved.png', quality_checks: evidence };
+  expect(parseContentPart(image)).toEqual(image);
+  expect(parseContentPart({ ...image, quality_checks: { ...evidence, size_matches: 'false' } })).toBeNull();
+  expect(parseContentPart({ ...image, quality_checks: { ...evidence, actual: { width: -1, height: 1, aspect_ratio: '1:1' } } })).toBeNull();
+});
+
+it('preserves native ready plan identities without requiring legacy image prompts', () => {
+  const native = { type: 'ecom_plan', plan_id: 'saved-plan', revision: 2, status: 'ready',
+    product_insight: 'A5卡册', visual_strategy: '保留实物结构',
+    images: [{ item_id: 'first-item', position: 1, name: '封面方案', purpose: '展示封面' }] };
+  expect(parseContentPart(native)).toEqual(native);
+  expect(parseContentPart({ ...native, plan_id: undefined })).toBeNull();
+  expect(parseContentPart({ ...native, revision: undefined })).toBeNull();
+  expect(parseContentPart({ type: 'ecom_plan', product_insight: '', visual_strategy: '',
+    images: [{ role: '主图', purpose: '展示' }] })).toBeNull();
+});
+
+it('does not let a partial native image bypass saved-plan identity checks by adding a prompt', () => {
+  expect(parseContentPart({ type: 'ecom_plan', product_insight: '', visual_strategy: '', images: [
+    { item_id: 'first', position: 1, name: '封面', purpose: '展示', prompt: '不能代替原生编号' },
+  ] })).toBeNull();
+});
+
+
+it('keeps approximate requested pixels separate from matched and actual output dimensions', () => {
+  const image = { type: 'image', url: 'approx.png', quality_checks: { size_matches: true,
+    target: { mode: 'explicit', aspect_ratio: '16:9', resolution: '2K', approximate: true, requested_width: 1920, requested_height: 1080 },
+    actual: { width: 2048, height: 1152, aspect_ratio: '16:9' } } };
+  expect(parseContentPart(image)).toEqual(image);
 });

@@ -396,16 +396,51 @@ class ChatImageInputResolver:
                 **{key: dimensions[key] for key in ("width", "height", "aspect_ratio")}})
         return resolved
 
-    def size_context(self, *, use_previous=True, infer_attachment_canvas=True):
+    def size_context(self, *, use_previous=True, infer_attachment_canvas=True, semantic_context=None):
         from services.handlers.chat_context.image_sources import content_parts
-        from services.handlers.image_size_requirements import user_size_intent
+        from services.handlers.image_size_requirements import user_size_intent, canvas_reference_intent
         def text(row):
             return "\n".join(part.get("text", "") for part in content_parts(row.get("content"))
                               if isinstance(part, dict) and part.get("type") == "text")
         current = self._message(self.input_message_id)
         if current.get("role") != "user":
             raise PermissionError("IMAGE_SOURCE_MESSAGE_DENIED")
-        intent = user_size_intent(text(current))
+        actor = getattr(getattr(self, 'owner', None), '_actor_runtime', None)
+        if semantic_context is None and '_media_decisions_v1' in getattr(actor, 'checkpoint_base', {}):
+            from services.agent.image.ecommerce_planner.workflow import ImageRequestContext
+            raw = (getattr(actor, 'workflow_projection', None) or {}).get('request_context')
+            semantic_context = ImageRequestContext.model_validate(raw or {})
+        intent = (semantic_context.size.model_dump(exclude_none=True) if semantic_context is not None
+                  else user_size_intent(text(current)))
+        locator = None
+        if semantic_context is not None:
+            resource=getattr(semantic_context,'canvas_resource',None)
+            if resource is not None:
+                changes=getattr(getattr(actor,'task_user_changes',None),'items',())
+                available={a.resource_ref for change in changes
+                    if change.delivered and str(change.owner_task_id)==str(getattr(actor,'task_id',None))
+                    for a in change.attachments if a.kind=='image'}
+                if resource not in available or semantic_context.canvas_image is not None:
+                    from services.handlers.image_size_requirements import ImageSizeError
+                    raise ImageSizeError('IMAGE_CANVAS_BINDING_INVALID','画布投影与实际已送达素材不一致，尚未派发。')
+                resolved=self.resolve([{'resource_ref':resource,'role':'画布来源'}])[0]
+                locator={key:resolved[key] for key in ('workspace_path','content_sha256')}
+            ordinal = semantic_context.canvas_image
+            images = [i for i, part in enumerate(content_parts(current.get('content')))
+                      if isinstance(part, dict) and part.get('type') == 'image']
+            # A current-attachment ordinal cannot identify a historical result.
+            # Its authenticated receipt/reference is resolved by the caller.
+            if ordinal is not None and images:
+                if ordinal > len(images):
+                    from services.handlers.image_size_requirements import ImageSizeError
+                    raise ImageSizeError('IMAGE_CANVAS_BINDING_INVALID', '画布投影指向不存在的当前附件，尚未派发。')
+                locator = {'message_id': str(current['id']), 'content_index': images[ordinal - 1]}
+        else:
+            locator = canvas_reference_intent(current)
+        if locator:
+            intent['canvas_reference'] = locator
+            if not any(key in intent for key in ('aspect_ratio', 'width', 'orientation', 'mode')):
+                intent['mode'] = 'inherit_reference'
         if (infer_attachment_canvas
                 and any(isinstance(part, dict) and part.get("type") == "image" for part in content_parts(current.get("content")))
                 and not any(key in intent for key in ("aspect_ratio", "mode", "width", "orientation"))):
@@ -435,6 +470,8 @@ class ChatImageInputResolver:
                     or row.get("context_revision") is None or row["context_revision"] > self.base_revision):
                 continue
             if row.get("role") == "user":
+                if semantic_context is not None:
+                    continue  # Current semantics and verified receipts own specs; old prose is not a contract.
                 from services.handlers.image_size_requirements import is_size_instruction
                 if not is_size_instruction(text(row)):
                     continue
@@ -461,11 +498,22 @@ class ChatImageInputResolver:
 
     def selected_image_size(self, reference):
         """Read the verified, explicitly selected generated image's settings."""
-        task_id = reference.get("task_id")
-        message_id = reference.get("message_id") or reference.get("source_message_id")
+        quoted = reference.get('source') == 'quoted'
+        task_id = reference.get('quoted_task_id') if quoted else reference.get("task_id")
+        message_id = reference.get('quoted_message_id') if quoted else reference.get("message_id") or reference.get("source_message_id")
         if not task_id or not message_id:
             return {}
-        row = self._message(str(message_id))
+        if quoted:
+            # These origin IDs come only from resolve()'s existing quote/task/
+            # file-scope checks, never from model arguments. The authorized
+            # origin may be another owned conversation, outside this anchor.
+            row = self.owner.db.table('messages').select(
+                'id,org_id,role,status,generation_params').eq('id',str(message_id)).maybe_single().execute().data
+            if (not row or row.get('org_id') != self.owner.org_id or row.get('role') != 'assistant'
+                    or row.get('status') != 'completed'):
+                return {}
+        else:
+            row = self._message(str(message_id))
         params = row.get("generation_params") or {}
         if str(params.get("task_id")) != str(task_id):
             return {}

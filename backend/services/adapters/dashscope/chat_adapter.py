@@ -14,7 +14,7 @@ from typing import Any, AsyncIterator, Dict, List, Optional
 import httpx
 from loguru import logger
 
-from .responses import BUILTIN_TOOLS, CACHE_MODELS, ResponseStream, chat_messages, response_input, response_tools, stable_tools, usage_fields
+from .responses import BUILTIN_TOOLS, CACHE_MODELS, ResponseProviderError, ResponseStream, chat_messages, response_input, response_tools, stable_tools, usage_fields
 
 from ..base import (
     BaseChatAdapter,
@@ -139,6 +139,9 @@ class DashScopeChatAdapter(BaseChatAdapter):
             request["temperature"] = kwargs["temperature"]
         if kwargs.get("max_tokens") is not None:
             request["max_output_tokens"] = kwargs["max_tokens"]
+        if choice:=kwargs.get('tool_choice'):
+            request['tool_choice']=(choice if isinstance(choice,str) else
+                {'type':'function','name':choice['function']['name']})
         headers = {"x-dashscope-session-cache": "enable" if self._session_cache_enabled else "disable"}
         from services.agent.observability.model_request import record_request
         record_request(request, 'dashscope.responses')
@@ -167,6 +170,12 @@ class DashScopeChatAdapter(BaseChatAdapter):
                         yield chunk
                 if not parser.finished:
                     raise DashScopeAPIError("Responses stream ended without a terminal response")
+        except ResponseProviderError as error:
+            detail = error.detail or {"message": str(error)}
+            raise DashScopeAPIError.from_http(
+                json.dumps({"error": detail, "request_id": error.request_id}).encode(),
+                response.status_code, response.headers.get("x-request-id"),
+            ) from error
         except DashScopeAPIError:
             raise
         except httpx.TimeoutException as error:
@@ -187,10 +196,18 @@ class DashScopeChatAdapter(BaseChatAdapter):
             body["stream_options"] = {"include_usage": True}
         if kwargs.get("tools"):
             body["tools"] = stable_tools(kwargs["tools"]) if self._model_id in CACHE_MODELS else kwargs["tools"]
+            if kwargs.get('tool_choice') is not None:
+                body['tool_choice']=kwargs['tool_choice']
         if kwargs.get("temperature") is not None:
             body["temperature"] = kwargs["temperature"]
         if self._model_id in {"qwen3.8-max", "qwen3.8-flash"} and kwargs.get("max_tokens") is not None:
             body["max_tokens"] = kwargs["max_tokens"]
+        if self._model_id in {"qwen3.8-max", "qwen3.8-flash"}:
+            response_format=kwargs.get("response_format")
+            if response_format is not None:
+                if response_format!={"type":"json_object"}:
+                    raise ValueError("QWEN_RESPONSE_FORMAT_UNSUPPORTED")
+                body["response_format"]=response_format
         if self._model_id == "kimi-k3":
             if reasoning_effort is not None:
                 if reasoning_effort not in {"low", "high", "max"}:
@@ -480,6 +497,16 @@ class DashScopeAPIError(Exception):
         self.request_rejected = request_rejected
         self.provider_message = provider_message
         self.quota_rejection = self.error_code in self._QUOTA_CODES
+        # This signature is from the captured HTTP-200 Responses failure. Its
+        # outer server_error must not turn a deterministic rejection into retry.
+        self.content_rejection = (self.error_code == "DataInspectionFailed" or (
+            self.error_code == "server_error" and bool(re.fullmatch(
+                r"<400>\s+InternalError\.Algo\.DataInspectionFailed:\s*"
+                r"Input (?:image )?data may contain inappropriate content\.?\s*",
+                provider_message,
+            ))))
+        if self.content_rejection:
+            self.args = ("模型供应商未通过本次输入的内容检查，本次未完成。请核实或更换输入后重试。",)
 
     @staticmethod
     def _identifier(value):
@@ -510,7 +537,7 @@ class DashScopeAPIError(Exception):
         # Official error-code table: URL/media download failures and admission
         # throttling can be replayed. Bad parameters, safety rejection and opaque
         # inference timeouts cannot be turned into free, definite rejections.
-        return self.request_rejected and (
+        return not self.content_rejection and self.request_rejected and (
             self.status_code == 429 and self.error_code not in self._QUOTA_CODES
             or self.error_code in self._DOWNLOAD_CODES
             or self.status_code == 503 and self.error_code in self._UNAVAILABLE_CODES

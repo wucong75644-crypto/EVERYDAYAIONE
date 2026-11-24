@@ -16,6 +16,7 @@ LIMIT = 3
 INVALID = 'MODEL_TOOL_ARGUMENTS_INVALID'
 EXHAUSTED = 'MODEL_TOOL_ARGUMENT_REPAIR_EXHAUSTED'
 STOP = '本轮工具参数多次校验失败，相关调用均未发出。请补充或调整要求后再试。'
+CANVAS_STOP = '本轮画布来源与已送达素材的绑定不一致，图片任务尚未提交。请重试本次操作。'
 
 
 class Checkpoint(BaseModel):
@@ -26,6 +27,7 @@ class Checkpoint(BaseModel):
     input_version: str = Field(min_length=64, max_length=64)
     counts: dict[str, StrictInt]
     stopped: bool
+    reason: Literal['canvas_binding'] | None = None
 
 
 def _input_id(runtime, request, previous):
@@ -55,6 +57,11 @@ def stopped(runtime, request):
                 and state.input_version == _input_version(runtime, _input_id(runtime, request, state)))
 
 
+def stop_message(runtime):
+    state=read(runtime)
+    return CANVAS_STOP if state and state.reason=='canvas_binding' else STOP
+
+
 def _operation(args, parameters):
     # Only a declared enum can select a different operation. Unknown fields,
     # cursors, and arbitrary prose never create another correction budget.
@@ -65,6 +72,13 @@ def _operation(args, parameters):
 
 # These errors come from the host's pre-dispatch source projection.
 _SOURCE_RECOVERY = {
+    'IMAGE_CANVAS_BINDING_INVALID': ('stop', CANVAS_STOP),
+    'CONTENT_IMAGE_REGENERATION_UNCONFIRMED': ('repair_arguments',
+        'regenerate只用于按原稿再生成。修改图片时使用当前工具的编辑形式；继续上一轮结果时用previous_result_edit，不重新执行旧提示词。'),
+    'IMAGE_CANVAS_REFERENCE_REQUIRED': (
+        'repair_arguments', '绑定用户已指定的编辑底图，保留风格输入；在 size_requirement.reference_index 填写执行参考图的零基索引。不要改写方案或随意改比例。'),
+    'IMAGE_DIMENSIONS_UNAVAILABLE': (
+        'reload_source', '重新读取已选原图的真实尺寸；仍不可用时请用户补充底图或指定比例，不凭目测猜测。'),
     'CHAT_INLINE_IMAGE_GENERATED_SOURCE_REQUIRED': (
         'reload_source', '重新读取当前会话中用户指定的成图并核对引用。仍无法确认时请用户选择底图。'),
     'CONTENT_SOURCE_REQUIRED': ('reload_source', '从当前成果目录选取来源。需要时先用会话读取工具读取原稿。'),
@@ -108,7 +122,7 @@ class Batch:
                 continue
             chat_image = (repair_chat_images and name == 'generate_image'
                           and not {'content_source', 'draft', 'edit_instruction'}.isdisjoint(parameters.get('properties', {})))
-            if not chat_image and name not in REVIEWED_MODEL_TOOLS:
+            if not chat_image and name not in REVIEWED_MODEL_TOOLS and name != 'plan_ecommerce_images':
                 continue
             args = {}
             try:
@@ -119,7 +133,7 @@ class Batch:
                 if chat_image:
                     from services.task_execution.content_objects import ImageContentReference
                     input_type = (ImageContentReference if 'content_source' in args
-                                  else inline_image_action.request_type(parameters['properties']))
+                                  else inline_image_action.request_type(parameters['properties'], args))
                     reference = args.get('content_source')
                     if (isinstance(reference, dict) and 'sha256' in reference
                             and 'content_source' in parameters['properties']):
@@ -175,6 +189,7 @@ class Batch:
         return batch
 
     def finish(self, calls):
+        terminal={key for key,raw in self.rejections.items() if json.loads(raw).get('recovery',{}).get('action')=='stop'}
         # Charge once per target per sampling round, regardless of call IDs.
         counts = self.state.counts
         for target in set(self.targets.values()):
@@ -188,7 +203,9 @@ class Batch:
                 message='此操作的参数纠错次数已用完。本次没有发出调用。请等待用户补充要求。',
             )
             self.rejections[call_id] = json.dumps(detail, ensure_ascii=False)
-        self.state.stopped = len(exhausted) == len(calls)
+        self.state.stopped = len(exhausted | terminal) == len(calls)
+        if terminal:
+            self.state.reason='canvas_binding'
 
     def record(self, runtime, messages, blocks):
         # Preserve tool-call/result pairing in the old transcript format. A
@@ -200,4 +217,4 @@ class Batch:
         for block in blocks:
             if block.get('tool_call_id') in self.rejections:
                 block.update(status='error', output='工具参数未通过校验。')
-        runtime.checkpoint_base[KEY] = self.state.model_dump(mode='json')
+        runtime.checkpoint_base[KEY] = self.state.model_dump(mode='json',exclude_none=True)

@@ -215,7 +215,8 @@ async def prepare(handler,prepared,request,skills=None):
     from .chat import KnowledgeRun
     run=getattr(handler,'_knowledge_run',None)
     if not isinstance(run,KnowledgeRun):return
-    if getattr(getattr(prepared,'ecom_workflow',None),'value',None):return
+    workflow=getattr(getattr(prepared,'ecom_workflow',None),'value',None)
+    if workflow and getattr(workflow,'intent',None) not in {'explain','other'}:return
     authorized=getattr(prepared.execution_context,'authorized_tool_names',None)
     if authorized is not None and not {'knowledge_search','knowledge_read'}<=set(authorized):return
     if request.selected_skill is not None or (skills and skills.active) or request.needs_google_search:return

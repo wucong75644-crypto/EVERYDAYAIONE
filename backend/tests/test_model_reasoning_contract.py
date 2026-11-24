@@ -37,7 +37,8 @@ async def test_disabled_wins_on_both_dashscope_protocols_and_removes_extractor(e
 
 
 @pytest.mark.parametrize(('model', 'provider'), [('kimi-k3', 'dashscope'), ('gemini-3-flash', 'kie'),
-                                                ('gpt-6-luna', 'kie'), ('gemini-2.5-pro', 'google')])
+                                                ('gpt-6-luna', 'kie'), ('gemini-2.5-pro', 'google'),
+                                                ('openai/gpt-6.1-sol', 'openrouter')])
 def test_unsupported_off_is_a_local_business_refusal_not_a_hidden_low_setting(model, provider):
     from core.error_classifier import classify_error
     with pytest.raises(ReasoningUnsupportedError) as exc:

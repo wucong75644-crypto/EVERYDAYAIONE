@@ -14,7 +14,7 @@ import type {
   AttachmentSubmissionSnapshot,
 } from '../attachments/ChatAttachment.types';
 
-import type { SteerAttachment } from './useInputTaskControls';
+import type { SteerAttachment, SteerReceipt } from './useInputTaskControls';
 
 export interface UseInputSubmissionOptions {
   knowledgeRefs?: KnowledgeReference[];
@@ -65,7 +65,7 @@ export interface UseInputSubmissionOptions {
   effectiveModelType: ModelType;
   smartSubMode: string;
   isStreaming: boolean;
-  sendSteer: (message: string, attachments?: SteerAttachment[]) => Promise<boolean> | null;
+  sendSteer: (message: string, attachments?: SteerAttachment[]) => Promise<SteerReceipt> | null;
   hasPendingSteer?: (message: string, attachments?: SteerAttachment[]) => boolean;
   clearConfirmedSteer: (message: string, conversationId: string | null) => void;
   isUploading: boolean;
@@ -165,23 +165,28 @@ export function useInputSubmission(options: UseInputSubmissionOptions) {
         ? options.sendSteer(steerMessage, steerAttachments) : options.sendSteer(steerMessage);
       if (receipt) {
         const transaction = hasAttachments ? options.detachAttachmentsForSubmission() : null;
+        let windowClosed = false;
         options.setIsSubmitting(true);
         try {
           const accepted = await receipt;
-          if (!accepted) transaction?.restore();
+          windowClosed = accepted === 'window_closed';
+          if (accepted !== true) transaction?.restore();
           if (currentConversation.current !== options.conversationId) return;
-          if (accepted) {
+          if (accepted === true) {
             options.clearConfirmedSteer(message, options.conversationId);
             options.setSendError(null);
-          } else {
+          } else if (!windowClosed) {
             options.setSendError('补充要求的送达状态未确认，输入已保留。可重试发送这条补充。');
+          } else {
+            options.setSendError(null);
           }
         } finally {
           if (currentConversation.current === options.conversationId) options.setIsSubmitting(false);
         }
-        return;
-      }
-      if (hasAttachments) {
+        // A scoped server receipt proves this input was never enqueued. Use
+        // the normal new-message path; unknown receipts keep the original ID.
+        if (!windowClosed) return;
+      } else if (hasAttachments) {
         options.setSendError('尚未找到可接收素材的当前任务，输入已保留。');
         return;
       }

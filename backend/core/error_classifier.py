@@ -361,6 +361,10 @@ def _classify_chat_provider_error(
     if isinstance(error, KieAuthenticationError):
         return classified(ErrorCategory.BUSINESS, False, False, True, False, "BUSINESS_ERROR")
 
+    if isinstance(error, DashScopeAPIError) and error.content_rejection:
+        return classified(ErrorCategory.BUSINESS, False, False, error.request_rejected,
+                          False, "MODEL_INPUT_REJECTED")
+
     status = (
         error.response.status_code if isinstance(error, httpx.HTTPStatusError)
         else getattr(error, "status_code", None)

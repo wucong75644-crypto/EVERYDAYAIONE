@@ -494,7 +494,7 @@ async def run_content_loop(r, p, h, q, stream, blocks=None, *, sink=None):
     ('用上面的第2条提示词出图。', {'content_source'}),
     ('这个是图片。你用你写的提示词帮我生成新的图片', {'content_source'}),
     ('不用你写的提示词，重新写一份再生成一张图片。', {'content_source', 'draft'}),
-    ('先只改你写的提示词，不要生成图片。', {'content_source', 'draft'}),
+    ('先只改你写的提示词，不要生成图片。', None),
 ])
 async def test_model_request_assembles_one_current_contract_per_tool(monkeypatch, request_text, image_fields):
     from dataclasses import replace
@@ -530,7 +530,10 @@ async def test_model_request_assembles_one_current_contract_per_tool(monkeypatch
     sent = requests[0]
     offered = {tool['function']['name']: tool['function'] for tool in sent['tools']}
     assert len(offered) == len(sent['tools'])
-    assert set(offered['generate_image']['parameters']['properties']) == image_fields
+    if image_fields is None:
+        assert 'generate_image' not in offered  # Writing is not purchase authorization.
+    else:
+        assert set(offered['generate_image']['parameters']['properties']) == image_fields
     assert set(offered['generate_video']['parameters']['properties']) == {'content_source'}
     assert '仅接受文字脚本' in offered['generate_video']['description']
     assert '保留用户给出的来源、时间' in offered['web_search']['parameters']['properties']['query']['description']
@@ -540,7 +543,7 @@ async def test_model_request_assembles_one_current_contract_per_tool(monkeypatch
     assert set(save_material['required']) == {'reference', 'role', 'usage'}
     assert save_material['properties']['role']['description'] == co.MATERIAL_ROLE_GUIDANCE
     assert save_material['properties']['usage']['enum'] == ['input', 'analysis']
-    if 'draft' in image_fields:
+    if image_fields is not None and 'draft' in image_fields:
         assert offered['generate_image']['parameters']['$defs']['Material'] == save_material
     system = ' '.join(message['content'] for message in sent['messages'] if message['role'] == 'system')
     assert '目录匹配不等于必须使用' in system
@@ -660,7 +663,8 @@ async def test_reusing_previous_prompt_rejects_a_fresh_draft_even_after_model_co
 
     _, _, totals = await run_content_loop(runtime, prepared, handler, request, stream)
 
-    assert rounds == 2 and totals.text == question
+    assert rounds == 2 and totals.text.startswith(question)
+    assert totals.text.endswith('本轮没有提交图片任务。你可以重新发送生成要求。')
     assert co.objects(runtime.task_execution_state) == co.objects(original)
     assert runtime.task_execution_state.operations == original.operations
     handler._execute_tool_calls.assert_not_awaited()
@@ -815,7 +819,8 @@ async def test_image_submission_narration_requires_receipt():
 
     sink, blocks, totals = await run_content_loop(r, p, h, q, promise)
     shown, = [block['text'] for block in blocks if block['type'] == 'text']
-    assert shown == totals.text == sink.text == '本轮没有提交图片任务。你可以重新发送生成要求。'
+    assert shown == totals.text == sink.text == '我来登记第四条，然后提交生图。图片任务已提交。\n\n本轮没有提交图片任务。你可以重新发送生成要求。'
+    assert r.task_execution_state is None
     h._execute_tool_calls.assert_not_awaited()
 
 
@@ -845,9 +850,10 @@ async def test_saved_image_repeat_only_repairs_missing_call_once():
         yield StreamChunk(content='图片任务已提交。', finish_reason='stop')
 
     sink, blocks, _ = await run_content_loop(r, p, h, q, promise)
-    assert rounds == 2 and sink.text == content_tools.IMAGE_NOT_SUBMITTED
+    assert rounds == 2 and sink.text == '图片任务已提交。\n\n'+content_tools.IMAGE_NOT_SUBMITTED
     assert content_tools.checkpoint_state(r)['image_call_repair_input'] == str(message)
-    assert [b['text'] for b in blocks if b['type'] == 'text'] == [content_tools.IMAGE_NOT_SUBMITTED]
+    assert [b['text'] for b in blocks if b['type'] == 'text'] == ['图片任务已提交。\n\n'+content_tools.IMAGE_NOT_SUBMITTED]
+    assert not r.task_execution_state.operations
     h._execute_tool_calls.assert_not_awaited()
 
 
@@ -875,8 +881,9 @@ async def test_unconfirmed_delivery_uses_one_repair_and_never_claims_submission(
     sink, blocks, _ = await run_content_loop(r, p, h, q, promise)
     assert len(rounds) == 2
     expected = '本轮未提交视频任务。' if tool_name == 'generate_video' else '本轮未交付文件。'
-    assert [b['text'] for b in blocks if b['type'] == 'text'] == [expected]
-    assert '已提交' not in sink.text
+    assert [b['text'] for b in blocks if b['type'] == 'text'] == [f'{label}已提交，正在排队。\n\n'+expected]
+    assert sink.text.endswith(expected)
+    assert not r.task_execution_state.operations
     h._execute_tool_calls.assert_not_awaited()
 
 
@@ -1160,13 +1167,14 @@ async def test_author_contract_keeps_user_format_and_original_when_model_omits_o
     doc = {'title': '设计', 'items': [{'title': '甲', 'body': '第一份原文。'}, {'title': '乙', 'body': original}]}
 
     async def model(**kwargs):
-        offered = next(t['function'] for t in kwargs['tools'] if t['function']['name'] == co.SAVE)
-        assert offered['parameters']['required'] == ['document']
-        assert 'message_source' not in offered['parameters']['properties']
-        yield model_save_chunk(doc)
-        yield StreamChunk(finish_reason='tool_calls')
+        save = next(t for t in kwargs['tools'] if t['function']['name'] == co.SAVE)
+        assert 'confirmation' in save['function']['parameters']['properties']
+        # The host registers the visible original, including mixed CRLF/LF.
+        yield StreamChunk(content='## 1. 甲\n\n```text\n第一份原文。\n```\n\n## 2. 乙\n\n```text\n'+original+'\n```')
+        yield StreamChunk(finish_reason='stop')
 
     _, blocks, _ = await run_content_loop(runtime, prepared, handler, request, model)
+    handler._execute_tool_calls.assert_not_awaited()
     part, = [b for b in blocks if b['type'] == 'text']
     assert part['text'].count(original) == 1
     row, = co.catalog(runtime.task_execution_state)
@@ -1470,7 +1478,7 @@ async def test_inline_image_failures_leave_no_original_or_native_operation(mixed
     await execute(r, p, h, q, calls)
     outputs = [json.dumps(m['content'], ensure_ascii=False) for m in p.messages if m['role'] == 'tool']
     assert len(outputs) == len(calls)
-    assert all(('CHAT_INLINE_IMAGE_BATCH_REQUIRED' if mixed else 'CHAT_INLINE_IMAGE_INPUT_INVALID') in entry
+    assert all(('CHAT_INLINE_IMAGE_BATCH_REQUIRED' if mixed else 'IMAGE_ORIGINAL_UNAVAILABLE') in entry
                for entry in outputs)
     assert KEY not in r.checkpoint_base
     assert not co.objects(r.task_execution_state)

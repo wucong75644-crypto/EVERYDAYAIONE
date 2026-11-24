@@ -82,7 +82,7 @@ def get_conversation_service(db: ScopedDB) -> ConversationService:
 
 
     # _resolve_generation_type / _legacy_resolve 已移除
-    # Web 端路由简化为: infer_generation_type (关键词) + ChatHandler 工具循环
+    # Web 端保留显式类型/媒体模型/命令；其余自由文本由 ChatHandler 工具循环处理。
     # 企微端仍通过 wecom_ai_mixin 调用 AgentLoop
 
 

@@ -34,6 +34,9 @@ def pending_response(runtime, request):
         runtime.checkpoint_base[KEY] = {**value, 'phase': 'superseded'}
         return None
     calls = value.get('calls') or []
+    if (value.get('projection_source') == 'visible_text' and not calls
+            and isinstance(value.get('text'), str) and value.get('finish_reason') != 'length'):
+        return copy.deepcopy(value)
     if (isinstance(calls, list) and len(calls) == 1 and isinstance(calls[0], dict)
             and calls[0].get('name') == co.SAVE and isinstance(calls[0].get('arguments'), str)
             and isinstance(calls[0].get('id'), str) and isinstance(value.get('text'), str)):
@@ -41,9 +44,12 @@ def pending_response(runtime, request):
     return None
 
 
-async def stage_response(runtime, request, prepared, blocks, turn, model_round, text, calls, finish, build_checkpoint):
+async def stage_response(runtime, request, prepared, blocks, turn, model_round, text, calls, finish, build_checkpoint, *, source='tool', control_pending=False):
     value = {'version': 1, 'phase': 'proposed', 'input_revision': input_revision(runtime, request),
-             'model_round': model_round, 'text': text, 'calls': copy.deepcopy(calls), 'finish_reason': finish}
+             'model_round': model_round, 'text': text, 'calls': copy.deepcopy(calls), 'finish_reason': finish,
+             'projection_source': source}
+    if control_pending:
+        value['control_pending']=True
     previous = runtime.checkpoint_base.get(KEY) or {}
     if (previous.get('phase') == 'rejected' and previous.get('error_code') == co.DRAFT_CONFLICT
             and previous.get('input_revision') == value['input_revision']):

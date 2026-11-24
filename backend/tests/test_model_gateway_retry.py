@@ -225,6 +225,24 @@ async def test_retry_context_default_is_two_total_attempts():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('partial', [False, True])
+async def test_content_inspection_refusal_cannot_switch_model_or_replay_partial_output(partial):
+    error = DashScopeAPIError.from_http(json.dumps({'error': {
+        'code': 'server_error',
+        'message': '<400> InternalError.Algo.DataInspectionFailed: Input image data may contain inappropriate content.',
+    }}).encode(), 200)
+    chunks = [StreamChunk(content='已经收到的部分正文。')] if partial else []
+    session, handler, factory, _ = setup(adapter(*chunks, error), adapter(StreamChunk(content='不应重试')))
+    with pytest.raises(ModelGatewayError) as raised:
+        await consume(session)
+    assert factory.call_count == 1
+    handler._route_retry.assert_not_awaited()
+    assert raised.value.result.error_code == ('MODEL_PARTIAL_OUTPUT' if partial else 'MODEL_INPUT_REJECTED')
+    assert '内容检查' in str(raised.value)
+    assert raised.value.original.provider_message == error.provider_message
+
+
+@pytest.mark.asyncio
 async def test_manual_model_keeps_retry_disabled():
     session, handler, factory, _ = setup(adapter(ConnectionError("a")), smart=False)
     with pytest.raises(ModelGatewayError):

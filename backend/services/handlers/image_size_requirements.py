@@ -18,7 +18,9 @@ IMAGE_DRAFT_OPTIONS = (*IMAGE_SIZE_OPTIONS, 'output_format')
 
 SIZE_GUIDANCE = (
     "图片输出尺寸以平台图片工具规格为准。未指定时默认1K，无参考图默认1:1；"
-    "有选定参考图时后台把真实整图画布匹配到最接近的支持比例，省略aspect_ratio或使用inherit_reference。"
+    "有选定参考图时后台把真实整图画布匹配到最接近的支持比例，默认省略options中的尺寸字段。"
+    "明确指定画布时用size_requirement={mode:inherit_reference,reference_index:零基索引}；"
+    "inherit_reference是size_requirement.mode，不是aspect_ratio的取值。"
     "多张参考图画布不同时，按用户意图选择画布来源；reference_index是执行参考图中的零基索引。"
     "只有用户明确把比例交给系统选择时才用auto。只改比例保留已选图的分辨率档，只改分辨率保留比例。"
     "用户给出的比例填aspect_ratio（如1:1），分辨率档填resolution（如1K）。产品比例只描述主体造型。"
@@ -60,11 +62,103 @@ def nearest_reference_ratio(reference, supported):
     return min(same_direction or candidates, key=lambda item: abs(log(width / height) - log(item[1] / item[2])))[0]
 
 
+def normalize_approximate_pixels(intent, config):
+    """Map explicitly approximate user pixels to native ratio/K parameters."""
+    if not intent.get('approximate_pixels') or 'width' not in intent:
+        return intent
+    value=dict(intent)
+    width,height=value.pop('width'),value.pop('height')
+    value.update(requested_width=width,requested_height=height,
+        aspect_ratio=value.get('aspect_ratio') or nearest_reference_ratio(
+            {'width':width,'height':height},config['supported_sizes']))
+    if not value.get('resolution') and config.get('supports_resolution'):
+        value['resolution']=min(config['supported_resolutions'],
+            key=lambda tier:abs(log(max(width,height))-log(int(tier[:-1])*1024)))
+    return value
+
+
 
 class ImageSizeError(ValueError):
     def __init__(self, code, guidance):
         super().__init__(code)
         self.guidance = guidance
+
+
+def directed_image_transfers(text):
+    """Literal source -> destination phrases, with their spans for target parsing."""
+    number = r'(?:[1-9]\d?|[一二三四五六七八九十])'
+    image = rf'(?:第\s*({number})\s*张(?:图|图片)?|图\s*({number}))(?!\d)'
+    another = rf'(?:第\s*{number}\s*张|图\s*{number})'
+    middle = rf'(?:(?!{another})[^。！？!?；;\n]){{0,40}}?'
+    pattern = rf'(?:把|将|用)?\s*{image}{middle}(?:替换|换|放|移|添加|加)(?:到|入|进|至)\s*{image}'
+    chinese = dict(zip('一二三四五六七八九十', range(1, 11)))
+    def ordinal(values):
+        value = next(value for value in values if value)
+        return int(value) if value.isdecimal() else chinese[value]
+    result = []
+    for match in re.finditer(pattern, text):
+        if re.search(r'(?:不|不要|别|禁止|勿)\s*$', text[:match.start()]):
+            continue
+        source, target = ordinal(match.groups()[:2]), ordinal(match.groups()[2:])
+        if source != target:
+            result.append((match.start(), match.end(), source, target))
+    return result
+
+
+def edit_target_number(text):
+    """Read an explicit target, not the first style reference or model prose."""
+    text = re.sub(r'```[\s\S]*?```|[“「][\s\S]*?[”」]', '', text or '')
+    text = re.sub(r'(?:不要|禁止|勿|别|不)\s*(?:把|将|用|给|在|以|使用|沿用)\s*(?:图|第)[^。！？!?；;，,\n]*', '', text)
+    number = r'(?:[1-9]\d?|[一二三四五六七八九十])'
+    image = rf'(?:第\s*({number})\s*张(?:图|图片)?|图\s*({number}))(?!\d)'
+    patterns = (rf'(?:给|把|将|在)\s*{image}[^。！？!?；;，,\n]{{0,35}}?(?:加|添加|改|修改|替换|保留|去掉)',
+                rf'(?:以|用|使用|沿用)\s*{image}[^。！？!?；;，,\n]{{0,8}}?(?:作为|为|做)?(?:底图|画布|编辑目标)')
+    transfers = directed_image_transfers(text)
+    found = {target for _, _, _, target in transfers}
+    # A source in "把图二的元素换到图一" must not also be read as the target
+    # by the older "把图N...替换" form.
+    for start, end, _, _ in reversed(transfers):
+        text = text[:start] + ' ' * (end - start) + text[end:]
+    chinese = dict(zip('一二三四五六七八九十', range(1, 11)))
+    for pattern in patterns:
+        for match in re.finditer(pattern, text):
+            value = next(value for value in match.groups() if value)
+            found.add(int(value) if value.isdecimal() else chinese[value])
+    return next(iter(found)) if len(found) == 1 else None
+
+
+def canvas_reference_intent(row):
+    """Bind an explicit attachment ordinal to an authenticated message locator."""
+    from services.handlers.chat_context.image_sources import content_parts
+    parts = content_parts(row.get('content'))
+    text = '\n'.join(part.get('text', '') for part in parts if part.get('type') == 'text')
+    ordinal = edit_target_number(text)
+    images = [index for index, part in enumerate(parts) if part.get('type') == 'image']
+    # With no new attachments, ordinals may refer to historical/generated
+    # images. Their existing authenticated resolver owns that selection.
+    if ordinal is None or not images:
+        return None
+    if not 1 <= ordinal <= len(images):
+        raise ImageSizeError('IMAGE_CANVAS_REFERENCE_REQUIRED', '用户指定的编辑底图不在本轮附件中，请核对来源后再执行。')
+    return {'message_id': str(row['id']), 'content_index': images[ordinal - 1]}
+
+
+def explicit_transfer_images(text):
+    """Only literal current-image style transfers, never arbitrary attachments."""
+    target = edit_target_number(text)
+    if target is None or re.search(r'不使用|不用|不要使用|不作为|只分析|仅作分析|仅供分析', text):
+        return ()
+    clean = re.sub(r'```[\s\S]*?```|[“「][\s\S]*?[”」]', '', text)
+    number = r'(?:[1-9]\d?|[一二三四五六七八九十])'
+    pattern = rf'(?:参考|借鉴)\s*(?:图\s*({number})|第\s*({number})\s*张(?:图|图片)?)(?!\d)'
+    chinese = dict(zip('一二三四五六七八九十', range(1, 11)))
+    sources = [source for _, _, source, destination in directed_image_transfers(clean) if destination == target]
+    for match in re.finditer(pattern, clean):
+        value = next(value for value in match.groups() if value)
+        ordinal = int(value) if value.isdecimal() else chinese[value]
+        if ordinal != target and ordinal not in sources:
+            sources.append(ordinal)
+    return tuple([*sources, target]) if sources else ()
 
 
 def user_size_intent(text: str) -> dict:
@@ -107,6 +201,13 @@ def user_size_intent(text: str) -> dict:
         if width < 1 or height < 1:
             raise ImageSizeError("IMAGE_SIZE_INVALID", "像素宽高必须是正整数。")
         intent.update(width=width, height=height)
+        # Size qualifiers stay local to dimensions; "background roughly blue"
+        # must not turn a fixed pixel requirement into an approximate one.
+        approximate=(re.search(r'(?:约|大概|接近|近似)\s*\d+\s*[xX×＊*]\s*\d+|\d+\s*[xX×＊*]\s*\d+\s*(?:像素|px)?\s*左右',text,re.I)
+            or re.search(r'(?:允许|可以|接受)(?:近似|接近)|(?:接近|近似|差不多)(?:即可|就行|就好)|就近匹配|无需精确|不(?:必|用|要求)精确',text))
+        exact=re.search(r'(?<!不)(?:必须|务必|严格)?精确\s*(?:到|为|像素|\d)|(?:不(?:允许|接受|要)|不能)(?:近似|接近)',text)
+        if approximate and not exact:
+            intent['approximate_pixels']=True
         if ratios and next(iter(ratios)) != ratio_for(width, height):
             raise ImageSizeError("IMAGE_SIZE_CONFLICT", "精确像素与宽高比冲突，请明确目标规格。")
     if ratios:
@@ -175,6 +276,9 @@ def resolve_size_requirement(args: dict, references: list[dict], *, intent=None,
     config = IMAGE_MODEL_CONFIGS.get(model)
     if not config:
         raise ValueError("IMAGE_MODEL_UNAVAILABLE")
+    intent=normalize_approximate_pixels(intent,config)
+    if intent.get('approximate_pixels'):
+        request.pop('width',None);request.pop('height',None)
     if any(key in request or key in intent for key in ("width", "height")):
         width, height = intent.get("width", request.get("width")), intent.get("height", request.get("height"))
         if type(width) is not int or type(height) is not int or width < 1 or height < 1:
@@ -206,6 +310,8 @@ def resolve_size_requirement(args: dict, references: list[dict], *, intent=None,
         raise ImageSizeError("IMAGE_SIZE_INTENT_REQUIRED", "只有用户明确把比例交给系统选择时才用auto；否则按参考图或默认比例执行。")
     elif previous.get("aspect_ratio") and previous["aspect_ratio"] != "auto" and mode != "inherit_reference":
         mode, ratio, source = previous.get("mode", "explicit"), previous["aspect_ratio"], "task"
+    elif mode == 'explicit' and args.get('aspect_ratio'):
+        mode, ratio, source = 'explicit', args['aspect_ratio'], 'model'
     elif references:
         mode, ratio, source = "inherit_reference", None, "reference"
     else:
@@ -215,6 +321,19 @@ def resolve_size_requirement(args: dict, references: list[dict], *, intent=None,
         if not references:
             raise ImageSizeError("IMAGE_CANVAS_REFERENCE_REQUIRED", "沿用参考图需要先选定真实原图。")
         reference_index = request.get("reference_index")
+        if locator := intent.get('canvas_reference'):
+            def matches(ref):
+                if 'workspace_path' in locator:
+                    return all(ref.get(key)==value for key,value in locator.items())
+                candidates = [ref, {'message_id': ref.get('source_message_id'),
+                                    'content_index': ref.get('source_content_index')},
+                              *ref.get('occurrences', ())]
+                return any(str(value.get('message_id')) == locator['message_id']
+                           and value.get('content_index') == locator['content_index'] for value in candidates)
+            selected = [index for index, ref in enumerate(references) if matches(ref)]
+            if len(selected) != 1:
+                raise ImageSizeError('IMAGE_CANVAS_REFERENCE_REQUIRED', '请在执行素材中绑定用户明确指定的编辑底图；保留其余风格参考。')
+            reference_index = selected[0]
         if reference_index is None:
             ratios = {ref.get("aspect_ratio") for ref in references}
             if None in ratios:
@@ -254,6 +373,9 @@ def resolve_size_requirement(args: dict, references: list[dict], *, intent=None,
         raise ImageSizeError("IMAGE_SIZE_PROMPT_CONFLICT", f"服务器已确定分辨率{effective_resolution}；请在系统内纠正提示词声明，不重复询问已明确的用户要求。")
     target = {"mode": mode, "aspect_ratio": ratio, "source": source,
               "resolution_source": "user" if intent.get("resolution") else "task" if previous.get("resolution") else "model"}
+    if intent.get('approximate_pixels'):
+        target.update(approximate=True,requested_width=intent['requested_width'],
+            requested_height=intent['requested_height'],resolution=resolution)
     if source == "task" or target["resolution_source"] == "task":
         target.update({key: previous[key] for key in ("source_message_id", "source_task_id") if previous.get(key)})
     if reference_index is not None:
@@ -283,7 +405,7 @@ def size_preflight_notice(text: str, sources: list[dict]) -> str:
         else:
             refs = [{**source.get("canvas", {}), "role":"reference"} for source in available]
             _, target = resolve_size_requirement({"mode":"image_to_image","prompt":"size preflight"}, refs, intent=intent)
-        target["resolution"] = intent.get("resolution") or "沿用当前任务分辨率；无既定规格时使用模型默认分辨率"
+        target["resolution"] = target.get('resolution') or intent.get("resolution") or "沿用当前任务分辨率；无既定规格时使用模型默认分辨率"
         return "服务器目标尺寸预检（方案与提示词须一致，正式执行时重新校验选定引用）：" + json.dumps(target, ensure_ascii=False)
     except ImageSizeError as error:
         return "服务器尺寸预检未通过：" + error.guidance + " 未创建图片任务或预扣图片积分。"

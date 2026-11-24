@@ -14,7 +14,8 @@ def validate_reasoning(model_id, provider, mode):
     name = getattr(provider, 'value', provider)
     # These interfaces expose effort levels, but no verified off setting.
     if (name in {'kie', 'google'} or model_id in {'kimi-k3', 'deepseek-r1', 'google/gemini-3.1-pro-preview'}
-            or model_id in {'openai/o3', 'openai/o3-pro', 'openai/o4-mini', 'openai/gpt-5.4-pro'}):
+            or model_id in {'openai/o3', 'openai/o3-pro', 'openai/o4-mini', 'openai/gpt-5.4-pro',
+                            'openai/gpt-6.1-sol'}):
         raise ReasoningUnsupportedError()
 
 

@@ -124,6 +124,7 @@ IMAGE_MODEL_CONFIGS = {
         },
     },
     "gpt-image-2-5-flare-text-to-image": {
+        "output_pixel_alignment": 16,
         "supported_backgrounds": ["opaque", "transparent"],
         "model_id": "gpt-image-2-5-flare-text-to-image",
         "description": "GPT Image 2.5 Flare 文生图（默认图片生成）",
@@ -147,6 +148,7 @@ IMAGE_MODEL_CONFIGS = {
         },
     },
     "gpt-image-2-5-sunburst-text-to-image": {
+        "output_pixel_alignment": 16,
         "supported_backgrounds": ["opaque", "transparent"],
         "model_id": "gpt-image-2-5-sunburst-text-to-image",
         "description": "GPT Image 2.5 Sunburst 文生图（默认图片生成）",
@@ -170,6 +172,7 @@ IMAGE_MODEL_CONFIGS = {
         },
     },
     "gpt-image-2-5-flare-image-to-image": {
+        "output_pixel_alignment": 16,
         "supported_backgrounds": ["opaque", "transparent"],
         "model_id": "gpt-image-2-5-flare-image-to-image",
         "description": "GPT Image 2.5 Flare 图生图（以参考图为基础生成）",
@@ -195,6 +198,7 @@ IMAGE_MODEL_CONFIGS = {
         },
     },
     "gpt-image-2-5-sunburst-image-to-image": {
+        "output_pixel_alignment": 16,
         "supported_backgrounds": ["opaque", "transparent"],
         "model_id": "gpt-image-2-5-sunburst-image-to-image",
         "description": "GPT Image 2.5 Sunburst 图生图（以参考图为基础生成）",
@@ -220,6 +224,7 @@ IMAGE_MODEL_CONFIGS = {
         },
     },
     "gpt-image-2-text-to-image": {
+        "output_pixel_alignment": 16,
         "model_id": "gpt-image-2-text-to-image",
         "description": "GPT Image 2 文生图（OpenAI 最强图片生成）",
         "requires_image_input": False,
@@ -242,6 +247,7 @@ IMAGE_MODEL_CONFIGS = {
         },
     },
     "gpt-image-2-image-to-image": {
+        "output_pixel_alignment": 16,
         "model_id": "gpt-image-2-image-to-image",
         "description": "GPT Image 2 图生图（以参考图为基础生成）",
         "requires_image_input": True,

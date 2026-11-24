@@ -145,6 +145,8 @@ def test_url_only_original_reuses_registered_asset_and_file_id(context,monkeypat
 
 @pytest.mark.asyncio
 async def test_two_single_accepts_freeze_exact_prompt_and_b_reference(context,monkeypatch,tmp_path):
+    from unittest.mock import AsyncMock
+
     from core.config import Settings
     from services.handlers.image_handler import ImageHandler
     from services.tools.dispatcher import _dispatch_call_id
@@ -290,6 +292,29 @@ def test_cross_conversation_generated_quote_checks_origin_task_conversation(cros
     else:
         selected=resolver(cross_conversation_quote).resolve([{'message_id':current['id'],'content_index':0,'role':'product'}])
         assert selected[0]['quoted_task_id']=='origin-image-task'
+
+
+@pytest.mark.parametrize('resolution', ['2K', '4K'])
+def test_verified_generated_quote_retains_the_original_resolution(cross_conversation_quote, resolution):
+    from services.handlers.image_size_requirements import resolve_size_requirement
+    row, owner, files, current = cross_conversation_quote
+    row.update(role='assistant', generation_params={'task_id':'origin-image-task',
+        'size_requirement':{'aspect_ratio':'16:9','resolution':resolution}})
+    current['content'][0]['source_task_id']='origin-image-task'
+    owner.db.set_table_data('tasks',[{'id':'origin-image-task','user_id':owner.user_id,'org_id':owner.org_id,
+        'conversation_id':row['conversation_id'],'type':'image','status':'completed','assistant_message_id':row['id']}])
+    native=resolver(cross_conversation_quote)
+    reference,=native.resolve([{'message_id':current['id'],'content_index':0,'role':'编辑底图'}])
+    assert reference['source']=='quoted' and reference['quoted_message_id']==row['id']
+    inherited=native.selected_image_size(reference)
+    assert inherited=={'resolution':resolution,'source_task_id':'origin-image-task','source_message_id':row['id']}
+    args,_=resolve_size_requirement({'mode':'image_to_image','prompt':'仅修改背景。'},[reference],previous=inherited)
+    assert args['resolution']==resolution
+    args,_=resolve_size_requirement({'mode':'image_to_image','prompt':'仅修改背景。'},[reference],
+        intent={'resolution':'1K'},previous=inherited)
+    assert args['resolution']=='1K'  # A new explicit user requirement still wins.
+    row['generation_params']['task_id']='another-task'
+    assert native.selected_image_size(reference)=={}
 
 
 @pytest.mark.parametrize('selector', ['message', 'file_id'])
@@ -477,3 +502,19 @@ def test_list_image_groups_preserves_positions_without_loading_pixels(context, m
     assert [(img['image_index'], img['content_index']) for img in group['images']] == [(1, 1), (2, 3)]
     assert all(not img['visually_present'] for img in group['images'])
     assert 'messages' not in result
+
+
+@pytest.mark.parametrize('status,failed,expected', [
+    ('completed', False, 'published'), ('running', False, 'queued'),
+    ('failed', True, 'queued'), ('completed', True, 'queued'),
+])
+def test_completed_output_discovery_does_not_repeat_frozen_queued_submission(status, failed, expected):
+    row = {'id': 'generated', 'role': 'assistant', 'status': status,
+        'content': [{'type':'image', 'workspace_path':'result.png', 'failed':failed}],
+        'generation_params': {'origin':'chat_image', 'task_id':'child', 'submission_state':'queued'}}
+    before = deepcopy(row)
+    source, = image_sources(row)
+    assert source['submission_state'] == expected
+    assert source['available'] is not failed
+    assert source['reference'] == {'message_id':'generated','content_index':0} if not failed else 'reference' not in source
+    assert row == before

@@ -25,8 +25,13 @@ def _stream_adapter(response=None, error=None):
     async def stream_chat(**_kwargs):
         if error is not None:
             raise error
+        calls=getattr(response,'tool_calls',None)
+        if not isinstance(calls,list) and _kwargs.get('tool_choice',{}).get('function',{}).get('name')=='submit_query_plan':
+            from services.adapters.types import ToolCallDelta
+            calls=[ToolCallDelta(index=0,id='query-plan',name='submit_query_plan',arguments_delta=response.content)]
         yield SimpleNamespace(
             content=response.content,
+            tool_calls=calls,
             prompt_tokens=response.prompt_tokens,
             completion_tokens=response.completion_tokens,
             finish_reason="stop",
@@ -568,6 +573,7 @@ class TestAnalyzeE2E:
                 }},
                 {"domain": "trade", "params": {
                     "doc_type": "order", "mode": "summary",
+                    "order_scope":"valid",
                     "time_range": "2026-04-01 ~ 2026-04-25",
                     "_expected_output": "订单数据",
                     "_dependencies": [1],
@@ -620,6 +626,7 @@ class TestAnalyzeE2E:
                     "time_range": "2026-04-01 ~ 2026-04-25",
                     "_expected_output": "商品编码"}},
                 {"domain": "trade", "params": {"doc_type": "order", "mode": "summary",
+                    "order_scope":"valid",
                     "time_range": "2026-04-01 ~ 2026-04-25",
                     "_required_input": {"from_step": 1, "field": "product_code"}}},
             ],
@@ -995,14 +1002,28 @@ class TestLlmExtract:
         return ERPAgent(db=MagicMock(), user_id="u1", conversation_id="c1", org_id="org1")
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize('params',[{'doc_type':'order'}, {'doc_type':'order','order_scope':'invented'}, {'order_scope':'valid'}])
+    async def test_incomplete_business_contract_is_not_treated_as_a_query_plan(self,params):
+        import json
+        response=SimpleNamespace(content=json.dumps({'steps':[{'domain':'trade','params':params}]}),prompt_tokens=1,completion_tokens=1)
+        adapter=_stream_adapter(response)
+        agent=self._make_agent()
+        with patch('services.adapters.factory.create_chat_adapter',return_value=adapter):
+            with pytest.raises(ValueError,match='ERP_ORDER_SCOPE_REQUIRED|ERP_DOCUMENT_TYPE_REQUIRED'):
+                await agent._llm_extract('用户的查询要求')
+        adapter.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_llm_returns_valid_json(self):
         """LLM 正常返回 JSON → 解析为 steps + compute_hint"""
         import json
         agent = self._make_agent()
         mock_response = MagicMock()
         mock_response.content = json.dumps({
-            "steps": [{"domain": "trade", "params": {"doc_type": "order"}}],
+            "steps": [{"domain": "trade", "params": {"doc_type": "order","order_scope":"valid"}}],
         })
+        from services.adapters.types import ToolCallDelta
+        mock_response.tool_calls=[ToolCallDelta(index=0,id='plan',name='submit_query_plan',arguments_delta=mock_response.content)]
         mock_response.prompt_tokens = 100
         mock_response.completion_tokens = 50
 

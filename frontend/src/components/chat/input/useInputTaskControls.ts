@@ -8,6 +8,8 @@ export interface SteerAttachment {
   workspace_path: string;
 }
 
+export type SteerReceipt = boolean | 'window_closed';
+
 interface UseInputTaskControlsOptions {
   conversationId: string | null;
   isStreaming: boolean;
@@ -103,7 +105,7 @@ export function useInputTaskControls({
     pendingSteer.current?.conversationId === conversationId && pendingSteer.current?.message === message
     && JSON.stringify(pendingSteer.current?.attachments) === JSON.stringify(attachments), [conversationId]);
 
-  const sendSteer = useCallback((message: string, attachments?: SteerAttachment[]): Promise<boolean> | null => {
+  const sendSteer = useCallback((message: string, attachments?: SteerAttachment[]): Promise<SteerReceipt> | null => {
     if (!conversationId) return null;
     const previous = hasPendingSteer(message, attachments) ? pendingSteer.current : null;
     const streamingMessage = streamingMessageId
@@ -115,17 +117,18 @@ export function useInputTaskControls({
     pendingSteer.current = command;
 
     return new Promise(resolve => {
-      const finish = (accepted: boolean) => {
+      const finish = (accepted: SteerReceipt) => {
         window.clearTimeout(timer);
         window.removeEventListener('chat:steer-result', receive);
-        if (accepted && pendingSteer.current === command) pendingSteer.current = null;
+        if (accepted !== false && pendingSteer.current === command) pendingSteer.current = null;
         resolve(accepted);
       };
       const receive = (event: Event) => {
         const result = (event as CustomEvent).detail;
         if (result.task_id !== taskId || result.conversation_id !== conversationId
             || result.payload?.request_id !== command.requestId) return;
-        finish(result.payload.outcome === 'enqueued' || result.payload.outcome === 'control_applied');
+        finish(result.payload.outcome === 'window_closed' ? 'window_closed'
+          : result.payload.outcome === 'enqueued' || result.payload.outcome === 'control_applied');
       };
       const timer = window.setTimeout(() => finish(false), 8_000);
       window.addEventListener('chat:steer-result', receive);

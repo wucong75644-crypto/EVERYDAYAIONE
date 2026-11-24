@@ -7,6 +7,23 @@ from PIL import Image
 import pytest
 
 from services.handlers.image_dimensions import read_image_dimensions, output_size_check
+
+
+@pytest.mark.parametrize('actual,ratio', [( (768,1360),'9:16'), ((1360,768),'16:9')])
+def test_registered_output_grid_accepts_nearest_preset_without_changing_bytes(actual, ratio):
+    from services.adapters.kie.configs import IMAGE_MODEL_CONFIGS
+    facts = {'width':actual[0], 'height':actual[1], 'aspect_ratio':'48:85' if actual[0]<actual[1] else '85:48'}
+    assert not output_size_check(facts, {'aspect_ratio':ratio})['size_matches']
+    alignment = IMAGE_MODEL_CONFIGS['gpt-image-2-5-sunburst-image-to-image']['output_pixel_alignment']
+    checked = output_size_check(facts, {'aspect_ratio':ratio}, pixel_alignment=alignment)
+    assert checked['size_matches'] and checked['actual'] == facts
+    assert not output_size_check(facts, {'aspect_ratio':ratio, 'width':768,'height':1365}, pixel_alignment=alignment)['size_matches']
+
+
+@pytest.mark.parametrize('actual,ratio', [((768,1344),'9:16'), ((767,1360),'9:16'), ((768,1024),'1:1')])
+def test_output_grid_does_not_accept_a_different_canvas(actual, ratio):
+    facts={'width':actual[0], 'height':actual[1], 'aspect_ratio':'actual'}
+    assert not output_size_check(facts, {'aspect_ratio':ratio}, pixel_alignment=16)['size_matches']
 from services.handlers.image_size_requirements import resolve_size_requirement, user_size_intent
 from services.handlers.chat_image_request import freeze_image_request, verify_frozen_request
 
@@ -228,3 +245,22 @@ def test_auto_is_opt_in_even_without_a_reference():
     with pytest.raises(ValueError, match='INTENT_REQUIRED'):
         resolve('自动生成一张图片', refs=[], aspect_ratio='auto')
     assert resolve('比例你定')[0]['aspect_ratio'] == 'auto'
+
+
+@pytest.mark.parametrize('model', ['gpt-image-2-text-to-image', 'gpt-image-2-image-to-image'])
+def test_real_image2_2k_output_uses_registered_grid_without_weakening_exact_pixels(model):
+    from services.adapters.kie.configs import IMAGE_MODEL_CONFIGS
+    from services.handlers.image_dimensions import ratio_for
+    # Actual Image 2 response from the formal-entry 1920x1080 approximate case.
+    facts = {'width': 2736, 'height': 1536, 'aspect_ratio': ratio_for(2736, 1536)}
+    target = {'aspect_ratio': '16:9', 'resolution': '2K', 'approximate': True,
+        'requested_width': 1920, 'requested_height': 1080}
+    assert not output_size_check(facts, target)['size_matches']
+    grid = IMAGE_MODEL_CONFIGS[model]['output_pixel_alignment']
+    assert grid == 16
+    checked = output_size_check(facts, target, pixel_alignment=grid)
+    assert checked['size_matches'] and checked['actual'] == facts
+    assert not output_size_check(facts, {**target, 'width': 1920, 'height': 1080}, pixel_alignment=grid)['size_matches']
+    for width,height in [(2704,1536), (2735,1536), (2048,1536)]:
+        assert not output_size_check({'width':width,'height':height,'aspect_ratio':ratio_for(width,height)},
+            target, pixel_alignment=grid)['size_matches']
