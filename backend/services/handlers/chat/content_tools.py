@@ -356,7 +356,7 @@ SCHEMAS = (
     READ_SCHEMA,
 )
 
-def model_tools(tools, *, selectable_source_images=False, server_image_plan=False, reuse_source=False, first_delivery=False, current_images=(), inline_image=False, generated_image_edit=False, single_image_edit=False, inline_only=False, previous_result=False, planned_image_count=None):
+def model_tools(tools, *, selectable_source_images=False, saved_text_available=False, server_image_plan=False, reuse_source=False, first_delivery=False, current_images=(), inline_image=False, generated_image_edit=False, single_image_edit=False, inline_only=False, previous_result=False, planned_image_count=None):
     """Project the one entry contract selected by the current workflow."""
     from services.task_execution.content_objects import ContentReference, ImageContentReference, selection_parameters
     from services.handlers.image_size_requirements import SIZE_GUIDANCE
@@ -435,6 +435,8 @@ def model_tools(tools, *, selectable_source_images=False, server_image_plan=Fals
             continue
         if name=='image_agent':continue
         if name not in INPUT_TOOLS:
+            result.append(original);continue
+        if name == 'code_execute' and not saved_text_available:
             result.append(original);continue
         tool=copy.deepcopy(original);parameters=tool['function']['parameters']
         if name == 'generate_image' and server_image_plan:

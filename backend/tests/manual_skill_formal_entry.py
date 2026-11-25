@@ -327,6 +327,10 @@ async def test_formal_entry_real_model_and_supplier_chain(content_db,monkeypatch
             ref=sorted(prior['native'][0]['recipes'][0]['resolved'],key=lambda x:x['content_index'])[0]
             source=next((Path(os.environ['SKILL_FAILURE_CAPTURE_ROOT'])/'workspace').rglob(Path(ref['workspace_path']).name))
             assert hashlib.sha256(source.read_bytes()).hexdigest()==ref['content_sha256']
+            incident_1125 = os.environ.get('SKILL_FORMAL_INCIDENT_1125') == '1'
+            authored_count = 6 if incident_1125 else 3
+            if incident_1125:
+                source = Path(os.environ['SKILL_FORMAL_INCIDENT_IMAGE'])
             photo=await env['upload'](f,source,'正式入口/原产品图.png')
             canvas_handoff=os.environ.get('SKILL_FORMAL_CANVAS_HANDOFF')=='1'
             style_source=source
@@ -348,6 +352,9 @@ async def test_formal_entry_real_model_and_supplier_chain(content_db,monkeypatch
                 text='参考这个产品，帮我想3个新款，把提示词写出来，我先看看。'
                 if os.environ.get('SKILL_FORMAL_CUSTOMER_MAIN')=='1':
                     text='参考这个产品，帮我写3套主图方案，我先看看。'
+            if incident_1125:
+                assert customer_language and os.environ.get('SKILL_FORMAL_CUSTOMER_MAIN') == '1'
+                text='这个才是新款，帮它写六套主图方案，每套都要详细的完整提示词，我先看文字。'
             if waiting_scenario:
                 assert customer_language and os.environ.get('SKILL_FORMAL_CUSTOMER_MAIN')!='1'
                 text+='三套都等我说可以了再做图。'
@@ -367,11 +374,11 @@ async def test_formal_entry_real_model_and_supplier_chain(content_db,monkeypatch
             if (selection and customer_language and os.environ.get('SKILL_FORMAL_CUSTOMER_MAIN')=='1'
                     and len(plans)==1 and plans[0][0]['status']=='needs_input'):
                 first_plan=plans[0][0]
-                assert first_plan['image_count']==3
+                assert first_plan['image_count']==authored_count
                 before=authored['message']['content']
                 before=json.loads(before) if isinstance(before,str) else before
                 assert any(p.get('type')=='text' and p.get('text') for p in before)
-                authored['clarification_reply']='就是图里的本子，只展示封面外观，内页规格先别写，旁边配件不算赠品。继续写3套方案给我看看。'
+                authored['clarification_reply']=f'就是图里的本子，只展示封面外观，内页规格先别写，旁边配件不算赠品。继续写{authored_count}套方案给我看看。'
                 record()
                 authored=await run(f,[TextPart(text=authored['clarification_reply'])])
                 with psycopg.connect(content_db) as c:
@@ -383,7 +390,7 @@ async def test_formal_entry_real_model_and_supplier_chain(content_db,monkeypatch
             if customer_language and os.environ.get('SKILL_FORMAL_CUSTOMER_MAIN')!='1':
                 assert not plans, 'Product design must not enter the inapplicable ecommerce workflow'
             if native_expected or plans:
-                assert len(plans)==1 and plans[0][0]['status']=='ready' and len(plans[0][0]['items'])==3
+                assert len(plans)==1 and plans[0][0]['status']=='ready' and len(plans[0][0]['items'])==authored_count
                 expected_prompt=plans[0][0]['items'][0]['request_text']
                 expected_prompts={plans[0][0]['items'][i]['request_text'] for i in (0,2)}
             else:
@@ -410,6 +417,8 @@ async def test_formal_entry_real_model_and_supplier_chain(content_db,monkeypatch
             visible=json.loads(visible) if isinstance(visible,str) else visible
             shown='\n'.join(p.get('text','') for p in visible)
             assert expected_prompt in shown
+            if native_expected:
+                assert all(item['request_text'] in shown for item in plans[0][0]['items'])
             if customer_language and not native_expected and not waiting_scenario:
                 prompts=re.findall(r'```(?:prompt|text|plaintext)?\r?\n(.*?)\r?\n```',shown,re.S)
                 assert len(prompts)==3, 'Each execution prompt must have an explicit boundary'

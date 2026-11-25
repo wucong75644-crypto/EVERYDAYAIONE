@@ -216,5 +216,14 @@ class Batch:
                 messages.append({'role': 'tool', 'tool_call_id': call_id, 'content': output})
         for block in blocks:
             if block.get('tool_call_id') in self.rejections:
-                block.update(status='error', output='工具参数未通过校验。')
+                block.update(status='error', output=display_rejection(self.rejections[block['tool_call_id']]))
         runtime.checkpoint_base[KEY] = self.state.model_dump(mode='json',exclude_none=True)
+
+
+def display_rejection(raw):
+    detail = json.loads(raw)
+    message = detail.get('message') or '本次没有执行，请核对工具返回。'
+    issues = detail.get('issues') or []
+    if issues:
+        message += ' ' + '；'.join(f"{item['path']}：{item['reason']}" for item in issues[:4])
+    return f"{message}（{detail['code']}）"

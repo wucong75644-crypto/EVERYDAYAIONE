@@ -48,6 +48,14 @@ class DatabaseReplayCheckpointStore:
     def __init__(self, db: Any) -> None:
         self._db = db
 
+    def for_scope(self, *, actor_user_id: str, org_id: str | None) -> DatabaseReplayCheckpointStore:
+        from core.db_scope import DatabaseAccessKind, DatabaseScope
+        from services.task_execution.database_scope import task_database
+
+        scope = DatabaseScope(actor_user_id, org_id, DatabaseAccessKind.RUNTIME)
+        database = task_database(self._db, scope)
+        return self if database is self._db else DatabaseReplayCheckpointStore(database)
+
     async def write(
         self,
         *,

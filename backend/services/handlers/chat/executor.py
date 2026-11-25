@@ -17,6 +17,7 @@ from services.conversation_subtasks import ConversationSubtaskStore
 from services.conversation_state import ConversationPauseRequested, ConversationStopRequested
 from services.conversation_commands import SafePoint
 from services.replay_checkpoint_store import (
+    DatabaseReplayCheckpointStore,
     ReplayCheckpointBoundary,
     ReplayCheckpointStore,
 )
@@ -65,6 +66,13 @@ class ChatGenerationExecutor:
         from services.agent.observability.chat_lifecycle import chat_phase
         chat_phase('executor.begin', task_id=claim.task_id, turn_id=claim.turn_id, attempt=claim.execution_attempt)
         _validate_task(task, claim)
+        content, execution_scope = await asyncio.gather(
+            self._load_input_content(claim),
+            resolve_execution_scope(self._db, task, claim.conversation_id),
+        )
+        replay_store = self._replay_checkpoint_store
+        if isinstance(replay_store, DatabaseReplayCheckpointStore):
+            replay_store = replay_store.for_scope(actor_user_id=execution_scope.actor_user_id, org_id=task.get('org_id'))
         runtime = ConversationTurnRuntime(
             conversation_id=claim.conversation_id,
             task_id=claim.task_id,
@@ -74,16 +82,12 @@ class ChatGenerationExecutor:
             command_store=self._command_store,
             subtask_store=self._subtask_store,
             replay_checkpoint_callback=(
-                self._build_replay_checkpoint_callback(claim)
+                self._build_replay_checkpoint_callback(claim, store=replay_store)
                 if self._replay_checkpoint_store is not None else None
             ),
         )
-        content, execution_scope = await asyncio.gather(
-            self._load_input_content(claim),
-            resolve_execution_scope(self._db, task, claim.conversation_id),
-        )
         chat_phase('executor.inputs', task_id=claim.task_id, turn_id=claim.turn_id, attempt=claim.execution_attempt)
-        replay_context = await self._load_replay_context(task, claim)
+        replay_context = await self._load_replay_context(task, claim, store=replay_store)
         from core.config import get_settings
         if (not (replay_context or {}).get('_task_execution') and not (replay_context or {}).get('_task_followup')
                 and not (replay_context or {}).get('_task_requirement_review') and self._replay_checkpoint_store is not None
@@ -402,13 +406,14 @@ class ChatGenerationExecutor:
     def _build_replay_checkpoint_callback(
         self,
         claim: GenerationClaim,
+        *, store=None,
     ) -> Callable[[SafePoint, Mapping[str, Any]], Any]:
         async def write(
             point: SafePoint,
             payload: Mapping[str, Any],
         ) -> dict[str, Any]:
             return await self._write_replay_checkpoint(
-                claim, point, payload,
+                claim, point, payload, store=store,
             )
 
         return write
@@ -418,8 +423,10 @@ class ChatGenerationExecutor:
         claim: GenerationClaim,
         point: SafePoint,
         payload: Mapping[str, Any],
+        *, store=None,
     ) -> dict[str, Any]:
-        if self._replay_checkpoint_store is None:
+        store = store if store is not None else self._replay_checkpoint_store
+        if store is None:
             return {"outcome": "disabled"}
         boundary = {
             SafePoint.BEFORE_MODEL: ReplayCheckpointBoundary.BEFORE_MODEL,
@@ -431,7 +438,7 @@ class ChatGenerationExecutor:
         if boundary is None:
             return {"outcome": "ignored"}
         try:
-            result = await self._replay_checkpoint_store.write(
+            result = await store.write(
                 task_id=claim.task_id,
                 execution_token=claim.execution_token,
                 boundary=boundary,
@@ -440,13 +447,17 @@ class ChatGenerationExecutor:
         except Exception as error:
             if 'ACTOR_STEER_ATTACHMENT_BEFORE_COMMIT' in str(error):
                 raise
+            from loguru import logger
+            logger.warning('Actor checkpoint write failed | task={} | boundary={} | error_type={} | reason={}',
+                claim.task_id, boundary.value, type(error).__name__,
+                getattr(getattr(error, 'diag', None), 'message_primary', None) or type(error).__name__)
             # An acknowledgement can be lost after commit. Reconcile the whole
             # checkpoint, not merely a matching composition ID, before proceeding.
             from services.handlers.chat.tool_argument_repairs import KEY as ARGUMENT_REPAIRS
             task_checkpoint = any(key in payload for key in ('_task_execution', '_task_bootstrap'))
             if not task_checkpoint and '_skill_composition' not in payload and ARGUMENT_REPAIRS not in payload:
                 raise
-            read = getattr(self._replay_checkpoint_store, 'read_latest', None)
+            read = getattr(store, 'read_latest', None)
             if read is None:
                 raise
             expected = dict(payload)
@@ -461,9 +472,9 @@ class ChatGenerationExecutor:
                 saved = await read(task_id=claim.task_id, execution_token=claim.execution_token,
                                    boundary=boundary)
             except Exception:
-                raise RuntimeError(unconfirmed) from None
+                raise RuntimeError(unconfirmed) from error
             if saved.get('outcome') != 'found' or saved.get('payload') != expected:
-                raise RuntimeError(unconfirmed) from None
+                raise RuntimeError(unconfirmed) from error
             result = {'outcome':'saved','reconciled':True}
         if result.get("outcome") in {
             "ownership_lost", "lease_expired", "terminal",
@@ -475,10 +486,12 @@ class ChatGenerationExecutor:
         self,
         task: Mapping[str, Any],
         claim: GenerationClaim,
+        *, store=None,
     ) -> dict[str, Any] | None:
-        if self._replay_checkpoint_store is None:
+        store = store if store is not None else self._replay_checkpoint_store
+        if store is None:
             return None
-        read_latest = getattr(self._replay_checkpoint_store, "read_latest", None)
+        read_latest = getattr(store, "read_latest", None)
         if read_latest is None:
             # 兼容仅实现写入的旧注入器；生产 Store 必须提供读取能力。
             return None

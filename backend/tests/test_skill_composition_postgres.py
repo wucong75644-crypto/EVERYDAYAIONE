@@ -19,6 +19,9 @@ def composition_db(ecom_db):
         schema=(ROOT/'migrations/239_conversation_actor_production_contract_compat.sql').read_text()
         table=schema[schema.index('CREATE TABLE IF NOT EXISTS public.conversation_turn_checkpoints'):schema.index('CREATE OR REPLACE FUNCTION public.append_conversation_control_command')]
         c.execute(table)
+        reader = schema[schema.index('CREATE OR REPLACE FUNCTION public.load_generation_checkpoint('):]
+        c.execute(reader[:reader.index('$$;', reader.index('AS $$'))+3])
+        c.execute('GRANT EXECUTE ON FUNCTION load_generation_checkpoint(uuid,uuid) TO everydayai')
         c.execute('GRANT SELECT,INSERT,UPDATE ON conversation_turn_checkpoints TO everydayai')
         # Match the production runner role; superuser-only execution hid owner drift.
         c.execute('SET LOCAL ROLE everydayai_owner')
@@ -143,6 +146,46 @@ def test_rollback_refuses_to_erase_v2_runtime_support(composition_db):
     with psycopg.connect(composition_db) as c:
         with pytest.raises(psycopg.Error,match='REQUIRES_DUAL_READER'):
             c.execute((ROOT/'migrations/rollback/339_skill_composition_rollback.sql').read_text())
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_checkpoint_binds_new_planner_with_original_actor_scope(composition_db):
+    from core.local_db import AsyncLocalDBClient
+    from services.replay_checkpoint_store import DatabaseReplayCheckpointStore, ReplayCheckpointBoundary
+
+    f = seed(composition_db)
+    plan_id = str(uuid4())
+    with connect(f) as c:
+        c.execute("""INSERT INTO ecom_image_plans(id,user_id,conversation_id,parent_task_id,input_message_id,
+            base_context_revision,invocation_key,input_digest,status,current_stage,image_count,
+            input_snapshot,prompt_versions,model_settings,target_size)
+            VALUES(%s,%s,%s,%s,%s,0,'scope-regression',%s,'planning',1,6,'{}','{}','{}','{}')""",
+            (plan_id,f['user'],f['conv'],f['task'],f['message'],'a'*64))
+    p = payload(f)
+    workflow = {'version':1, 'kind':'main_images', 'window_task_id':f['task'], 'plan_id':plan_id}
+    p['_ecom_workflow'] = workflow
+    p['_skill_composition']['workflow_links'] = {'ecommerce':workflow}
+    # This is the real failing branch: planner bound before any native task execution.
+    assert '_task_execution' not in p
+    db = AsyncLocalDBClient(psycopg.conninfo.make_conninfo(f['dsn'],user='everydayai'), min_size=1,max_size=1)
+    await db.open()
+    try:
+        raw = DatabaseReplayCheckpointStore(db)
+        kwargs = dict(task_id=f['task'], execution_token=f['token'],
+                      boundary=ReplayCheckpointBoundary.BEFORE_TOOL, payload=p)
+        with pytest.raises(psycopg.errors.InsufficientPrivilege,match='ACTOR_CHECKPOINT_SCOPE_MISMATCH'):
+            await raw.write(**kwargs)
+        scoped = raw.for_scope(actor_user_id=f['user'],org_id=None)
+        assert (await scoped.write(**kwargs))['outcome'] == 'saved'
+        saved = await scoped.read_latest(task_id=f['task'],execution_token=f['token'])
+        assert saved['payload']['_ecom_workflow']['plan_id'] == plan_id
+        assert saved['payload']['_skill_composition']['workflow_links']['ecommerce'] == workflow
+        assert (await scoped.write(**{**kwargs,'execution_token':str(uuid4())}))['outcome'] == 'ownership_lost'
+        wrong = raw.for_scope(actor_user_id=str(uuid4()),org_id=None)
+        with pytest.raises(psycopg.errors.InsufficientPrivilege,match='ACTOR_CHECKPOINT_SCOPE_MISMATCH'):
+            await wrong.write(**kwargs)
+    finally:
+        await db.close()
 
 
 def test_workflow_projection_and_composition_identity_are_one_transaction(composition_db):

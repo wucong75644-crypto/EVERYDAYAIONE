@@ -76,6 +76,7 @@ _DESCRIPTION = (
     "  B. cell 末尾的表达式 → 自动 display 富表示(Jupyter 风格)\n"
     "     例: df.head()  # 表格自动渲染\n"
     "  C. 显式调 emit_* (推荐: 可自定义 title/label):\n"
+    "     以下函数已注入当前 kernel 的全局作用域，直接调用，无需 import；它们不是 chat_tools 模块。\n"
     "     emit_chart(option: dict, title: str = '') -> None       # ECharts 数据图表\n"
     "     emit_diagram(source: str, title: str = '', format: str = 'mermaid') -> None\n"
     "     emit_file(path: str, label: str | None = None) -> None  # 下载卡片\n"

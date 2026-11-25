@@ -1000,6 +1000,7 @@ async def _run_loop(
                 and get_settings().chat_single_image_edit_enabled and not content_tools.has_newer_image_input(runtime))
             tools = [*content_tools.model_tools(
                 tools, selectable_source_images=content_objects.has_selectable_source_images(content_state),
+                saved_text_available=saved_source_available,
                 server_image_plan=server_image_plan, reuse_source=reuse_source,
                 planned_image_count=getattr(getattr(workflow,'value',None),'image_count',None),
                 inline_image=inline_image, single_image_edit=single_image_edit,
@@ -2693,7 +2694,7 @@ async def _execute_tools_impl(
             ready_calls, rejected = guard.filter_calls(calls) if guard else (calls, [])
     if repair_rejections:
         rejected = [item for item in rejected if item[0]['id'] not in repair_rejections]
-        rejected.extend((call, repair_rejections[call['id']], True, '工具参数未通过校验。')
+        rejected.extend((call, repair_rejections[call['id']], True, tool_argument_repairs.display_rejection(repair_rejections[call['id']]))
                         for call in calls if call['id'] in repair_rejections)
         ready_calls = [call for call in ready_calls if call['id'] not in repair_rejections]
     if task_blocked_names:
