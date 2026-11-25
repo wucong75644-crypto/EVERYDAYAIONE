@@ -102,7 +102,7 @@ class ERPAgent(ERPChildFactoryMixin):
         await self._push_thinking("分析查询意图...")
         plan = await self._extract_plan(query)
         if plan is None:
-            return _error_result("无法理解您的请求，请更具体地描述您要查询的内容")
+            return _error_result("本次查询计划提取失败，尚未执行查询，请重试。")
 
         if plan.degraded and any(s.params.get('doc_type') in {'order','daily_stats'} or s.params.get("order_scope") for s in plan.steps):
             return _error_result("查询计划提取失败，无法保证指定统计口径；未执行降级查询，请重试")
@@ -131,10 +131,10 @@ class ERPAgent(ERPChildFactoryMixin):
         return result
 
     async def _extract_plan(self, query: str) -> ExecutionPlan | None:
-        """三级降级链：LLM 多域提取 → 关键词单域 → abort。"""
+        """Only structured model extraction defines a plan; failed extraction executes nothing."""
         from services.agent.plan_builder import (
             _DOMAIN_DOC_TYPES, _DOMAIN_DEFAULT_DOC_TYPE,
-            _sanitize_params, fill_platform, quick_classify, _build_fallback_params,
+            _sanitize_params,
         )
 
         # L1: LLM
@@ -154,7 +154,6 @@ class ERPAgent(ERPChildFactoryMixin):
                     params["doc_type"] = default
                 from services.agent.order_scope import normalize_order_scope
                 normalize_order_scope(params, query)
-                fill_platform(params, query)
                 steps.append(PlanStep(domain=domain, params=params))
             return ExecutionPlan(
                 steps=steps, compute_hint=compute_hint,
@@ -162,20 +161,9 @@ class ERPAgent(ERPChildFactoryMixin):
             )
         except Exception as e:
             log_agent_event(
-                "warning", "ERPAgent plan fallback", self, "erp_agent",
-                "ERP_PLAN_FALLBACK", type(e).__name__,
+                "warning", "ERPAgent plan extraction unavailable", self, "erp_agent",
+                "ERP_PLAN_UNAVAILABLE", type(e).__name__,
             )
-
-        # L2: 关键词
-        domain = quick_classify(query)
-        if domain:
-            params = _build_fallback_params(query, self.request_ctx, domain=domain)
-            if domain == "trade":
-                params.setdefault("doc_type", "order")
-            from services.agent.order_scope import normalize_order_scope
-            normalize_order_scope(params, query)
-            fill_platform(params, query)
-            return ExecutionPlan(steps=[PlanStep(domain=domain, params=params)], degraded=True)
 
         return None
 
@@ -225,7 +213,7 @@ class ERPAgent(ERPChildFactoryMixin):
             for domain,params in result[0]:
                 if params.get('doc_type') not in _DOMAIN_DOC_TYPES.get(domain,()):
                     raise ValueError('ERP_DOCUMENT_TYPE_REQUIRED')
-                if params.get('doc_type') in {'order','daily_stats'} and params.get('order_scope') not in ORDER_SCOPES:
+                if params.get('doc_type') == 'order' and params.get('order_scope') not in ORDER_SCOPES:
                     raise ValueError('ERP_ORDER_SCOPE_REQUIRED')
             return result
         finally:
@@ -281,7 +269,7 @@ class ERPAgent(ERPChildFactoryMixin):
 
         plan = await self._extract_plan(query)
         if plan is None:
-            return _error_result("无法理解您的请求，请更具体地描述您要查询的内容")
+            return _error_result("本次查询计划提取失败，尚未执行查询，请重试。")
 
         if plan.degraded and any(s.params.get('doc_type') in {'order','daily_stats'} or s.params.get('order_scope') for s in plan.steps):
             return _error_result('查询计划提取失败，无法保证指定统计口径；未返回猜测的订单计划，请重试')

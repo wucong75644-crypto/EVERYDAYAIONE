@@ -274,7 +274,7 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
     item_index = 3 if recorded_output or new_output else 2 if write_once else 6 if sixth else 5 if fifth else 1
     body = '  纸品封面，保留细纹理。\n避免改变装订孔及商标。  '
     synthetic_original = scenario in {'image-to-image', 'inline-image-to-image', 'inline-first-turn-upload'} or image_repair or sixth or edit_selected
-    ratio = 'auto' if edit_selected and not previous_edit else '3:4' if synthetic_original or new_output else '1:1'
+    ratio = 'auto' if inline and not with_original or edit_selected and not previous_edit else '3:4' if synthetic_original or new_output else '1:1'
     resolution = '4K' if edit_latest else '2K' if new_output or edit_selected else '1K'
     question = '参考这张原图修改封面，只生成一张' if with_original else '帮我直接生成一张纸品封面图'
     if scenario == 'inline-image-to-image' or image_repair:
@@ -483,7 +483,7 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
             raise RestartTest
         return result
 
-    def runtime_case(request_parts):
+    def runtime_case(request_parts, intent=None):
         r, p, h, q = case(checkpoint)
         b = r.task_bootstrap
         r.task_bootstrap = replace(b, task_id=UUID(f['task']), conversation_id=UUID(f['conv']),
@@ -496,6 +496,23 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
         q = replace(q, task_id=f['task'], conversation_id=f['conv'], user_id=f['user'], content=request_parts,
                     context_anchor=SimpleNamespace(input_message_id=f['message'],
                         base_revision=1 if edit_selected else 0 if first_upload else None))
+        from services.agent.image.ecommerce_planner.workflow import WorkflowBinding, ImageRequestContext
+        action = intent or ('write' if followup else 'edit' if edit_selected or with_original else 'generate')
+        requested_size = ({'aspect_ratio':'3:4'} if scenario == 'inline-image-to-image' or image_repair
+            else {'mode':'auto'} if edit_selected and not previous_edit else
+            {'aspect_ratio':'3:4','resolution':'2K'} if new_output else {})
+        if sixth:
+            requested_size = {'mode':'inherit_reference'}
+        frame = ImageRequestContext(size=requested_size,
+            reference_usage='input' if automatic_output else None)
+        value = WorkflowBinding(kind='ordinary_image', root_task_id=str(r.task_bootstrap.task_id),
+            window_task_id=f['task'], generation_run_id=f['task'], intent=action, request_context=frame)
+        frozen = value.model_dump(mode='json')
+        q.params['_ecom_workflow'] = frozen
+        r.workflow_projection = frozen
+        with psycopg.connect(content_db) as c:
+            c.execute("UPDATE tasks SET request_params=jsonb_set(request_params,'{_ecom_workflow}',%s) WHERE id=%s",
+                      (Jsonb(frozen), f['task']))
         p.messages = [{'role':'user','content':request_parts[0].text}]
         p.core_tools.append(build_tool_catalog().require('generate_image').to_schema())
         return r, p, h, q
@@ -563,7 +580,7 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
             reply = [part.model_dump(mode='json', exclude_none=True)
                      for part in build_content_parts(registered_blocks, fallback_text='')]
             _old, f, history_message, _, _ = new_turn(content_db, old=f, text=later_question, reply=reply)
-            r, p, h, q = runtime_case([TextPart(text=later_question)])
+            r, p, h, q = runtime_case([TextPart(text=later_question)], intent='repeat' if regeneration else 'execute_saved')
             row = selection = None
         else:
             assert saved_block['text'].count(body) == 1
@@ -606,7 +623,7 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
                 with connect(f) as connection:
                     return adopt(connection, f, source, observation, payload)
 
-            r, p, h, q = runtime_case([TextPart(text=later_question)])
+            r, p, h, q = runtime_case([TextPart(text=later_question)], intent='repeat' if regeneration else 'execute_saved')
             r.task_followup_candidate = previous
             r.task_followup_adopt = transfer
 
@@ -656,7 +673,7 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
             with connect(f) as connection:
                 checkpoint_state = connection.execute('SELECT state FROM conversation_turn_checkpoints WHERE task_id=%s',
                     (f['task'],)).fetchone()[0]
-            r, p, h, q = runtime_case([TextPart(text=later_question)])
+            r, p, h, q = runtime_case([TextPart(text=later_question)], intent='repeat' if regeneration else 'execute_saved')
             r.checkpoint_base = checkpoint_state
             r.task_execution_state = TaskState.model_validate(checkpoint_state['_task_execution'])
             assert str(r.task_execution_state.root_task_id) == old_task_id
@@ -737,7 +754,7 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
            'options':{'aspect_ratio':ratio, 'resolution':'1K', 'output_format':'png'}}]}
     if first_upload or edit_selected:
         doc['items'][0]['options'] = {
-            'size_requirement': {'mode': 'inherit_reference'}, 'resolution': '4K',
+            'size_requirement': {'mode': 'inherit_reference'}, 'resolution': '1K' if first_upload else '4K',
         }
     execution_body = ('保留产品结构。画布尺寸按平台输出规格适配。输出比例以平台输出规格为准。'
                       if sixth else body)
@@ -843,7 +860,7 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
             yield StreamChunk(tool_calls=[ToolCallDelta(index=0,id='run',name='generate_image',
                                                         arguments_delta=json.dumps({'content_source':ref(row)}))])
         else:
-            assert receipts and seen == 3
+            assert receipts and seen == 3, p.messages[-4:]
             yield StreamChunk(content='图片任务已受理。')
 
     try:
@@ -1487,7 +1504,7 @@ async def test_confirmed_sibling_has_an_independent_slot_and_preserves_previous_
     user_text = '写三条视频脚本。第1条直接生成视频，第2条和第3条分别等我确认。'
     request = replace(request, content=[TextPart(text=user_text)])
     draft = {'title': '三条短片', 'items': [{'title': str(i), 'body': f'视频脚本{i}'} for i in range(1, 4)]}
-    await execute(runtime, prepared, handler, request, [call(co.SAVE, {'document': draft}, 'save')])
+    await execute(runtime, prepared, handler, request, [call(co.SAVE, {'document': draft, 'confirmation':{'tool':'generate_video','wait_for':[2,3]}}, 'save')])
     state = runtime.task_execution_state
     row, = co.catalog(state)
     registry = build_capability_catalog()
@@ -1620,7 +1637,7 @@ async def test_real_failed_plain_reply_is_committed_and_selected_by_number_in_a_
     with psycopg.connect(content_db) as c:
         c.execute("UPDATE messages SET status='completed',context_revision=0,turn_id=%s,content=%s WHERE id=%s",
                   (first['turn'], Jsonb([value.model_dump(mode='json') for value in q.content]), first['message']))
-    q.params['_ecom_workflow'] = {'intent':'write'}  # Frozen coordinator output; this test enters below execute_chat.
+    q.params['_ecom_workflow'] = {'intent':'write', 'request_context':{'reference_usage':'input'}}  # Frozen coordinator output; enters below execute_chat.
     async def model(**kwargs):
         yield StreamChunk(content=data['plan']['response'])
         yield StreamChunk(finish_reason='stop')
@@ -1735,3 +1752,36 @@ async def test_real_failed_plain_reply_is_committed_and_selected_by_number_in_a_
         assert sorted(selected) == [1, 3]
     finally:
         database.close()
+
+
+@pytest.mark.asyncio
+async def test_three_long_chinese_drafts_commit_and_restore_under_original_database_guards(content_db):
+    """53KB+ is valid text, not a reason to discard two of three authored drafts."""
+    f = seed(content_db)
+    async def checkpoint(point, payload):
+        with connect(f) as connection:
+            return save(connection, f, payload, expected=payload.get('_task_execution_expected_revision', 0))
+    r, p, h, q = case(checkpoint)
+    r.task_bootstrap = replace(r.task_bootstrap, task_id=UUID(f['task']), conversation_id=UUID(f['conv']),
+        actor_user_id=UUID(f['user']), input_message_id=UUID(f['message']),
+        execution_identity=r.task_bootstrap.execution_identity.model_copy(update={'workspace_owner_id': f['user']}))
+    r.task_id, r.conversation_id, r.turn_id = f['task'], f['conv'], f['turn']
+    p.execution_context = replace(p.execution_context, actor_user_id=f['user'], workspace_owner_id=f['user'],
+        conversation_id=f['conv'], task_id=f['task'])
+    q = replace(q, user_id=f['user'], conversation_id=f['conv'], task_id=f['task'])
+    draft = {'title': '三套完整长稿', 'items': [
+        {'title': f'第{i}套', 'body': ('完整中文正文'*1000)+str(i)} for i in range(1, 4)]}
+    blocks = await execute(r, p, h, q, [call(co.SAVE, {'document': draft}, 'long-chinese-drafts')])
+    with connect(f) as connection:
+        payload = connection.execute('SELECT state FROM conversation_turn_checkpoints WHERE task_id=%s', (f['task'],)).fetchone()[0]
+        assert connection.execute('SELECT count(*) FROM credit_transactions WHERE task_id=%s', (f['task'],)).fetchone()[0] == 0
+    state = TaskState.model_validate(payload['_task_execution'])
+    row, = co.catalog(state)
+    assert len(row['items']) == 3
+    assert len(state.artifacts[0].inline_text.encode()) > 50_000
+    for i in (1, 2, 3):
+        assert co.load(state, {'artifact_id': row['artifact_id'], 'item_index': i})[2].body == draft['items'][i-1]['body']
+    assert blocks[-1]['content_delivery_final']
+    assert all(item['body'] in blocks[-1]['text'] for item in draft['items'])
+    assert not state.operations
+    h._execute_tool_calls.assert_not_awaited()

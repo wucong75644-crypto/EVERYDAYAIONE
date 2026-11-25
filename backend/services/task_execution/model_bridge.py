@@ -59,10 +59,27 @@ async def review_model_completion(*, runtime, prepared, blocks, build_checkpoint
         from .direct_loop import advance_results,end_candidate
         current=await advance_results(runtime,prepared)
         candidate=end_candidate(current)
-        await commit_projection(runtime=runtime,candidate=candidate,prepared=prepared,blocks=blocks,
-            point=SafePoint.BEFORE_COMMIT,build_checkpoint=build_checkpoint,turn=turn,
-            next_model_round=next_model_round,repeated_tool_call_guard=repeated_tool_call_guard,
-            checkpoint_overlay=terminal_result)
+        from .content_delivery import KEY
+        delivery = runtime.checkpoint_base.get(KEY) or {}
+        notice = None
+        if (delivery.get('phase') == 'committed' and delivery.get('owner_task_id') == str(runtime.task_id)
+                and delivery.get('delivery_complete') is False and candidate.status == 'completed'):
+            candidate = candidate.model_copy(update={'status': 'partial'})
+            notice = {'type': 'text', 'text': '文字稿尚未全部交付，已保留当前稿件，可接续完成剩余内容。',
+                      'task_status': 'partial', 'content_incomplete': True}
+            blocks.append(notice)
+        sequence = runtime.replay_save_sequence
+        try:
+            await commit_projection(runtime=runtime,candidate=candidate,prepared=prepared,blocks=blocks,
+                point=SafePoint.BEFORE_COMMIT,build_checkpoint=build_checkpoint,turn=turn,
+                next_model_round=next_model_round,repeated_tool_call_guard=repeated_tool_call_guard,
+                checkpoint_overlay=terminal_result)
+        except BaseException:
+            if notice is not None and runtime.replay_save_sequence == sequence:
+                blocks.remove(notice)
+            raise
+        if notice is not None and sink is not None:
+            await sink.on_block(notice)
         return False
     from .requirement_changes import blocked as revision_blocked
     if revision_blocked(runtime):
@@ -202,6 +219,10 @@ async def execute_control_batch(*, prepared, runtime, calls, assistant, blocks,
     published = []
     # One control per batch avoids hidden ordering dependencies in model parallel calls.
     controls = [c for c in calls if c['name'] in TASK_CONTROL_TOOLS]
+    # These reads retain the same state/revision; state-changing controls keep
+    # their original single-control barrier and checkpoint transaction.
+    snapshot_reads = {'find_task_text', 'read_task_text', 'read_task_result'}
+    read_batch = bool(calls) and all(c['name'] in snapshot_reads for c in calls)
     for call in calls:
         from .plan_facts import pending_review
         from .requirement_changes import blocked as revision_blocked
@@ -218,7 +239,7 @@ async def execute_control_batch(*, prepared, runtime, calls, assistant, blocks,
             result={'ok':False,'code':'TASK_PLAN_FACT_REVIEW_PENDING','state_unchanged':True,
                 'instruction':'宿主正在核验原图和已保存规划，等待核验结果后继续，不执行其他工具。'}
             display=None
-        elif call['name'] not in TASK_CONTROL_TOOLS or len(controls) != 1:
+        elif call['name'] not in TASK_CONTROL_TOOLS or (len(controls) != 1 and not read_batch):
             from .requirement_review import coverage_blocked
             result = {'ok': False, 'code': 'TASK_REQUIREMENT_REVIEW_REQUIRED' if coverage_blocked(runtime) else 'TASK_CONTROL_BATCH_BARRIER',
                       'state_unchanged': True, 'retry_next_round': True}
@@ -294,7 +315,8 @@ async def execute_control_batch(*, prepared, runtime, calls, assistant, blocks,
         published.append(block)
         if result.get('ok') and result.get('reused') and isinstance(result.get('image'),dict):
             image=copy.deepcopy(result['image'])
-            staged_blocks.append(image);published.append(image)
+            if image not in staged_blocks:
+                staged_blocks.append(image);published.append(image)
         if display:
             artifact = next(a for a in controller.state.artifacts
                             if a.source_call_id == call['id'] and a.inline_text == display)

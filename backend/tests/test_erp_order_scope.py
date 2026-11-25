@@ -96,7 +96,7 @@ async def test_compare_preserves_filters_dates_and_scope():
         assert {'field': 'amount', 'op': 'gt', 'value': 5} in json.loads(call.args[1]['p_filters'])
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('kind', ['trend', 'ratio', 'distribution', 'cross'])
+@pytest.mark.parametrize('kind', ['ratio', 'distribution', 'cross'])
 async def test_unsupported_scope_never_queries(kind):
     db = MagicMock()
     result = await UnifiedQueryEngine(db, 'org').execute('order', 'summary', BASE, order_scope='exclude_scalping', query_type=kind)
@@ -211,3 +211,18 @@ def test_explicit_include_all_overrides_same_scope_background():
     p = {'doc_type': 'order','order_scope':'all'}
     normalize_order_scope(p, '同一家店，这次包含全部。（背景：只排除刷单）')
     assert p['order_scope'] == 'all'
+
+
+def test_plan_tool_exposes_the_actual_query_contract():
+    from services.agent.plan_builder import QUERY_PLAN_TOOL
+    from services.tools.definitions.erp_local_schemas import build_local_tools
+    params=QUERY_PLAN_TOOL['function']['parameters']['properties']['steps']['items']['properties']['params']
+    assert set(params['required']) >= {'doc_type','order_scope','time_range','query_type'}
+    props=params['properties']
+    assert {'time_col','filters','group_by','metrics','time_granularity','compare_range','alert_type'} <= props.keys()
+    assert set(props['order_scope']['enum']) == {'valid','all','exclude_scalping','only_scalping',None}
+    original=next(t for t in build_local_tools() if t['function']['name']=='local_data')['function']['parameters']['properties']
+    assert props['filters']['items']['required']==original['filters']['items']['required']
+    # A private extraction schema must not mutate the shared execution tool schema.
+    assert original['order_scope']['type']=='string'
+    assert 'not_in' in props['filters']['items']['properties']['op']['enum']

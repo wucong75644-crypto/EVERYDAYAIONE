@@ -110,7 +110,7 @@ def prepare_input(resolver,args,*,scoped,workflow,settings,composition=None,entr
                     or expected["file_version"]!=reference["file_version"]
                     or expected["workspace_path"]!=reference["workspace_path"]):
                 raise ValueError("ECOM_PLAN_REFERENCE_CHANGED")
-    from services.handlers.image_size_requirements import resolve_size_requirement, selected_source_size
+    from services.handlers.image_size_requirements import resolve_size_requirement
     size_fields = {'aspect_ratio', 'mode', 'width', 'height', 'orientation'}
     source = normalized.get('source_prompt')
     bound_specs = {}
@@ -118,7 +118,6 @@ def prepare_input(resolver,args,*,scoped,workflow,settings,composition=None,entr
     fresh_draft = False
     semantic_context = getattr(workflow, 'request_context', None)
     action = getattr(workflow, 'intent', None)
-    semantic_actor = '_media_decisions_v1' in getattr(getattr(owner,'_actor_runtime',None),'checkpoint_base',{})
     if source and 'content_object' in source:
         intent, previous = resolver.size_context(use_previous=False, infer_attachment_canvas=False,
             **({'semantic_context': semantic_context} if semantic_context is not None else {}))
@@ -127,10 +126,13 @@ def prepare_input(resolver,args,*,scoped,workflow,settings,composition=None,entr
         # A fresh inline draft has no prior user-approved output settings.
         fresh_draft = (artifact.source_call_id.startswith('inline-save-')
                        and str(artifact.source_task_id) == owner.task_id)
-        if fresh_draft and (semantic_context is not None or not semantic_actor):
-            if not semantic_actor or intent.get('resolution'):
+        if fresh_draft:
+            # A frozen semantic frame owns user overrides. Keep valid model
+            # options when the frame has no replacement; legacy calls without
+            # a frame retain their established native defaults.
+            if semantic_context is None or intent.get('resolution'):
                 normalized.pop('resolution', None)
-            if ((not semantic_actor or any(intent.get(key) is not None for key in
+            if ((semantic_context is None or any(intent.get(key) is not None for key in
                     ('aspect_ratio','width','height','orientation','mode','canvas_reference')))
                     and not intent.get('orientation') and normalized.get('aspect_ratio') != 'auto'):
                 normalized.pop('aspect_ratio', None)
@@ -149,16 +151,18 @@ def prepare_input(resolver,args,*,scoped,workflow,settings,composition=None,entr
             size=normalized.get('size_requirement')
             if isinstance(size,dict):
                 size.pop('width',None);size.pop('height',None)
+    if (legacy_options and (intent.get('aspect_ratio') or intent.get('mode') in {'auto','inherit_reference'})
+            and not any(k in intent for k in ('width','height'))):
+        # An explicit replacement canvas supersedes retired stored pixel metadata.
+        requested = normalized.get('size_requirement')
+        if isinstance(requested, dict):
+            requested.pop('width', None)
+            requested.pop('height', None)
+        normalized.pop('aspect_ratio', None)
+        bound_specs.pop('aspect_ratio', None)
     structured_size = normalized.get('size_requirement', {})
     if legacy_options and structured_size and 'width' not in structured_size:
         normalized['prompt'] = _adapt_legacy_canvas(normalized['prompt'], legacy_options, normalized.get('aspect_ratio'))
-    if (source and not fresh_draft and not structured_size and not size_fields.intersection(intent)
-            and not size_fields.intersection(previous)):
-        selected_size = selected_source_size(normalized['prompt'])
-        if selected_size:
-            provenance = {f'source_{key}': source[key] for key in ('message_id', 'task_id') if key in source}
-            previous = {**selected_size, 'mode': 'explicit', **previous, **provenance}
-            intent = {**{key: selected_size[key] for key in ('width', 'height') if key in selected_size}, **intent}
     if plan_proof:
         if intent.get('approximate_pixels'):
             from services.handlers.image_size_requirements import normalize_approximate_pixels

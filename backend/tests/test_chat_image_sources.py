@@ -235,7 +235,7 @@ def test_existing_cross_conversation_quote_keeps_current_locator_and_original_ca
     cross_conversation_quote, monkeypatch,
 ):
     from PIL import Image
-    from services.handlers.image_size_requirements import resolve_size_requirement, user_size_intent, size_preflight_notice
+    from services.handlers.image_size_requirements import resolve_size_requirement
     row, owner, files, current = cross_conversation_quote
     Image.new('RGB', (1080,1080), 'red').save(files.resolve_safe_path('B.png'))
     monkeypatch.setattr('core.config.get_settings', lambda:SimpleNamespace(file_workspace_root=str(files._workspace_base)))
@@ -244,17 +244,15 @@ def test_existing_cross_conversation_quote_keeps_current_locator_and_original_ca
     assert displayed[0]['reference']=={'message_id':current['id'],'content_index':0}
     assert displayed[0]['quoted_message_id']==row['id']
     assert displayed[0]['canvas']['aspect_ratio']=='1:1'
-    assert not size_preflight_notice('参考图片写提示词',displayed)
-    assert '"aspect_ratio": "1:1"' in size_preflight_notice('保留原图比例生成图片',displayed)
     selected = resolver(cross_conversation_quote).resolve([displayed[0]['reference']|{'role':'product'}])
     args,target = resolve_size_requirement({'mode':'image_to_image','prompt':'笔记本产品比例3:4，保留原图画布',
-        'aspect_ratio':'3:4','resolution':'1K'},selected,intent=user_size_intent('随机选三个提示词生成图片'))
+        'aspect_ratio':'3:4','resolution':'1K'},selected,intent={})
     assert args['aspect_ratio']=='1:1' and target['original_width']==target['original_height']==1080
     frozen=freeze_image_request(args,selected,origin={'parent_task_id':'parent'},max_credits=300,max_requests=15,size_requirement=target)
     verify_frozen_request(frozen)
     ChatImageInputResolver(owner,base_revision=1,input_message_id=current['id'],files=files).verify(selected)
     args, target=resolve_size_requirement({'mode':'image_to_image','prompt':'产品比例3:4','aspect_ratio':'1:1'},
-        selected,intent=user_size_intent('输出改成3:4'))
+        selected,intent={'aspect_ratio':'3:4'})
     assert args['aspect_ratio']=='3:4' and target['mode']=='explicit'
 
 

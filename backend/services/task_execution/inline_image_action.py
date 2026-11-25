@@ -100,13 +100,12 @@ def input_version(runtime, request):
 
 
 def current_attachment_edit(request):
-    """Only a literal, current attachment target; no historical guesswork."""
-    from services.handlers.image_size_requirements import edit_target_number
+    """Resolve the existing semantic target against actual current attachments."""
     text='\n'.join(part.text for part in request.content if part.type=='text')
     images=[index for index,part in enumerate(request.content) if part.type=='image']
     projection=(getattr(request,'params',None) or {}).get('_ecom_workflow') or {}
     semantics=projection.get('request_context')
-    target=semantics.get('canvas_image') if semantics is not None else edit_target_number(text)
+    target=(semantics or {}).get('canvas_image')
     message=getattr(request.context_anchor,'input_message_id',None)
     if not message or target is None or not 1<=target<=len(images):
         return None
@@ -143,51 +142,33 @@ def previous_result_reference(state, handler, request, context):
 
 
 async def complete_transfer_materials(item, handler, request, context, *, runtime=None):
+    """Merge semantic material selections by verified native identity, not wording."""
+    from services.handlers.chat.content_tools import semantic_context
     from .image_resources import native_resolver
-    from services.handlers.image_size_requirements import explicit_transfer_images
     import asyncio
-
-    if ((getattr(request, 'params', None) or {}).get('_ecom_workflow') or {}).get('request_context') is not None:
-        return item  # Model-selected materials still undergo native identity and permission checks.
-
+    frame = semantic_context(request, runtime)
+    if frame is None or frame.materials is None:
+        return item
     if runtime is not None and (getattr(getattr(runtime, 'task_user_changes', None), 'items', ())
                                 or getattr(runtime, '_steer_messages', ())):
-        return item  # A newer instruction must not inherit literal bindings from the old request.
-
-    parts = request.content
-    images = [index for index, part in enumerate(parts) if part.type == 'image']
-    text = '\n'.join(part.text for part in parts if part.type == 'text')
-    ordinals = explicit_transfer_images(text)
-    if not images or not ordinals:
-        return item  # Historical sources and ambiguous requests keep their original protocol.
-    if any(number > len(images) for number in ordinals):
-        raise TaskError('CHAT_INLINE_IMAGE_REFERENCE_REQUIRED')
-    message_id = getattr(request.context_anchor, 'input_message_id', None)
-    if not message_id:
-        raise TaskError('CHAT_INLINE_IMAGE_REFERENCE_REQUIRED')
-    required = [content.Material(reference=content.MaterialReference(
-        message_id=str(message_id), content_index=images[number - 1]),
-        role=f'用户指定的图{number}' + ('编辑底图' if number == ordinals[-1] else '参考素材'), usage='input')
-        for number in ordinals]
-
+        return item  # Never reapply initiating material choices over a newer input.
     def resolve():
         native = native_resolver(handler, request, context)
         def selectors(materials):
             return [{**m.reference.model_dump(mode='json', exclude_none=True), 'role': m.role} for m in materials]
-        return native.resolve(selectors(item.materials)), native.resolve(selectors(required))
+        return native.resolve(selectors(item.materials)), native.resolve(selectors(frame.materials))
     existing, wanted = await asyncio.to_thread(resolve)
     materials = list(item.materials)
-    # Server-resolved paths compare message/file/resource aliases without
-    # duplicating the same image. No model path or hash is accepted as proof.
-    for material, resolved in zip(required, wanted, strict=True):
-        matches = [index for index, original in enumerate(existing)
+    for material, resolved in zip(frame.materials, wanted, strict=True):
+        matches = [i for i, original in enumerate(existing)
                    if original['workspace_path'] == resolved['workspace_path']]
         if matches:
             for index in matches:
-                materials[index] = materials[index].model_copy(update={'usage': 'input'})
+                materials[index] = materials[index].model_copy(update={'usage': material.usage})
         else:
             materials.append(material)
-    return content.ContentItem.model_validate({**item.model_dump(), 'materials': tuple(materials)})
+            existing.append(resolved)
+    return item.model_copy(update={'materials': tuple(materials)})
 
 
 async def label_current_inputs(item, handler, request, context, *, runtime=None):
@@ -282,14 +263,16 @@ async def prepare(runtime, handler, request, prepared, call, args, registry, *, 
     item = edit.content_item() if edit is not None else InlineRequest.model_validate(args).draft
     current=current_attachment_edit(request) if edit is not None else None
     if current is not None:
-        from services.handlers.image_size_requirements import explicit_transfer_images
         message,index,target,text,images=current
         if (str(edit.source_message_id),edit.source_content_index)!=(message,index):
             raise TaskError('CHAT_INLINE_IMAGE_GENERATED_SOURCE_REQUIRED')
         if (getattr(getattr(runtime,'task_user_changes',None),'items',())
                 or getattr(runtime,'_steer_messages',())):
             raise TaskError('CHAT_INLINE_IMAGE_INPUT_CHANGED')
-        ordinals=sorted(set(explicit_transfer_images(text) or (target,)) | {target})
+        frame = ((getattr(request, 'params', None) or {}).get('_ecom_workflow') or {}).get('request_context') or {}
+        selected = [m.get('reference', {}) for m in frame.get('materials') or () if m.get('usage') == 'input']
+        ordinals = sorted({target, *(images.index(ref['content_index']) + 1 for ref in selected
+            if str(ref.get('message_id')) == message and ref.get('content_index') in images)})
         if any(number>len(images) for number in ordinals):
             raise TaskError('CHAT_INLINE_IMAGE_REFERENCE_REQUIRED')
         materials=tuple(content.Material(reference=content.MaterialReference(message_id=message,content_index=images[n-1]),
@@ -301,8 +284,8 @@ async def prepare(runtime, handler, request, prepared, call, args, registry, *, 
         item=content.ContentItem(title='编辑本轮指定图片',
             body=legend+'\n\n'+edit.edit_instruction,materials=materials)
     if edit is None:
-        item = await complete_transfer_materials(item, handler, request, context, runtime=runtime)
         from services.handlers.chat.content_tools import semantic_intent
+        item = await complete_transfer_materials(item, handler, request, context, runtime=runtime)
         if semantic_intent(request, runtime) == 'edit':
             item = await label_current_inputs(item, handler, request, context, runtime=runtime)
     if edit is not None:
@@ -341,7 +324,7 @@ async def prepare(runtime, handler, request, prepared, call, args, registry, *, 
     save_id = 'inline-save-' + digest([turn_id, call['id']])[:32]
     save = content.SaveContent(document=content.ContentDocument(title=item.title, items=(item,)),
                                continue_execution=True, new_content=True)
-    registration_sources=content.current_source_images(request,runtime)
+    registration_sources=content.registration_source_images(request,runtime)
     candidate, artifact, _, _ = content.save(runtime, {
         'id': save_id, 'name': content.SAVE, 'arguments': save.model_dump_json(),
     }, registry, has_image_attachments=bool(registration_sources),

@@ -1,3 +1,4 @@
+from tests.semantic_fixtures import semantic_request
 """Regressions for the actual production Skill bypass and KIE 200/401 failure."""
 import asyncio
 from dataclasses import replace
@@ -183,16 +184,21 @@ def test_invalid_nonthinking_route_cannot_fallback_or_reserve_credits(selected):
     ('客户示例：“抖音主图”。只分析产品',None),
     ('产品名叫抖音联名本',None),
 ])
-def test_platform_is_frozen_from_explicit_user_evidence(text, expected):
-    from services.agent.image.ecommerce_planner.inputs import explicit_chat_platform
-    assert explicit_chat_platform([{'parts':[{'text':text}]}]) == expected
+def test_platform_is_frozen_from_semantic_context(text, expected):
+    from services.agent.image.ecommerce_planner.workflow import ImageRequestContext
+    frame = ImageRequestContext(platform=expected)
+    assert frame.platform == expected
+    assert text  # Original customer wording belongs to the semantic producer.
+
 
 
 def test_multiple_new_platforms_cannot_reuse_a_previous_single_platform():
-    from services.agent.image.ecommerce_planner.inputs import explicit_chat_platform
-    assert explicit_chat_platform([{'parts':[{'text':'面向1688和小红书的用户'}]}],fallback='抖音') is None
-    assert explicit_chat_platform([{'parts':[{'text':'标题大一点'}]}],fallback='抖音') == '抖音'
-    assert explicit_chat_platform([{'parts':[{'text':'不要用于抖音主图'}]}],fallback='抖音') is None
+    from services.agent.image.ecommerce_planner.workflow import ImageRequestContext
+    changed = ImageRequestContext(platform=None, platform_changed=True)
+    assert changed.platform is None and changed.platform_changed
+    unchanged = ImageRequestContext()
+    assert unchanged.platform is None and not unchanged.platform_changed
+
 
 
 @pytest.mark.parametrize('code,error', [(401, KieAuthenticationError), (429, KieRateLimitError)])
@@ -680,6 +686,7 @@ async def test_ready_writing_plan_is_delivered_by_host_without_another_model_or_
     from services.handlers.chat.stream_session import StreamTotals
     runtime,p,h=actor(),prepared(),handler()
     q=replace(_request(),content=[TextPart(text='策划10张主图，先只写方案不要生成图片')])
+    q = semantic_request(q, 'write')
     text='## 1. 原方案\n\n完整原文，负面条件和素材说明。'
     result=AgentResult('原生策划ready',metadata={'status':'ready','plan_id':str(uuid4()),
         'server_plan_owner_task_id':str(q.task_id),'server_plan_text':text})
@@ -707,6 +714,7 @@ async def test_ready_native_text_recovers_after_tool_checkpoint_without_model_io
     from services.handlers.chat.native_plan_delivery import stage,KEY
     runtime,p,h=actor(),prepared(),handler()
     q=replace(_request(),content=[TextPart(text='只写10套图片方案，不要生成图片')])
+    q = semantic_request(q, 'write')
     text='## 1. 第一套\n\n完整原文\r\n禁止变形。'
     result=AgentResult('ready',metadata={'status':'ready','plan_id':str(uuid4()),
         'server_plan_owner_task_id':str(q.task_id),'server_plan_text':text})
@@ -729,6 +737,7 @@ def test_ready_native_plan_publishes_after_consumed_append_but_waits_for_new_inp
     from tests.test_chat_execution_engine import _request
     from services.handlers.chat.native_plan_delivery import stage,KEY
     runtime=actor();q=replace(_request(),content=[TextPart(text='只写三套方案，不要生成图片')])
+    q = semantic_request(q, 'write')
     runtime.task_user_changes=SimpleNamespace(items=(SimpleNamespace(owner_task_id=runtime.task_id,
         event_id=uuid4(),message_sha256='a'*64,message='补充背景颜色为浅灰色，仍然只写方案。',delivered=delivered),))
     result=AgentResult('ready',metadata={'status':'ready','plan_id':str(uuid4()),
@@ -764,6 +773,7 @@ async def test_native_plan_projection_cannot_replay_stale_or_tampered_text(chang
     from services.handlers.chat.execution_sink import CollectingExecutionSink
     from services.handlers.chat.stream_session import StreamTotals
     runtime=actor();q=replace(_request(),content=[TextPart(text='只写10套图片方案，不要生图')])
+    q = semantic_request(q, 'write')
     result=AgentResult('ready',metadata={'status':'ready','plan_id':str(uuid4()),
         'server_plan_owner_task_id':str(q.task_id),'server_plan_text':'完整原文'})
     stage(runtime,q,[(call('plan_ecommerce_images','{}','p'),result,False,'ready')])

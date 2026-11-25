@@ -7,7 +7,7 @@
 3. 搜索需求（web_search）
 4. 动态模型选择 + 失败重试路由
 
-降级链：qwen3.8-max → qwen3.8-flash → 关键词兜底
+降级链：qwen3.8-max → qwen3.8-flash → 显式命令兜底
 重试降级链：千问主模型 → 千问备用 → 确定性兜底 → 放弃
 """
 
@@ -50,7 +50,7 @@ class RoutingDecision:
     search_query: Optional[str] = None
     recommended_model: Optional[str] = None
     raw_tool_name: str = "text_chat"
-    routed_by: str = "keyword"
+    routed_by: str = "none"
 
 
 @dataclass
@@ -155,7 +155,7 @@ class IntentRouter:
         has_image = any(isinstance(p, ImagePart) for p in content)
 
         if not settings.intent_router_enabled:
-            decision = self._keyword_fallback(content)
+            decision = self._explicit_command_fallback(content)
             self._record_routing_signal(
                 decision, user_id, input_length, has_image, "disabled", org_id=org_id,
             )
@@ -163,7 +163,7 @@ class IntentRouter:
 
         if not settings.dashscope_api_key:
             logger.warning("Intent router skipped: DASHSCOPE_API_KEY not configured")
-            decision = self._keyword_fallback(content)
+            decision = self._explicit_command_fallback(content)
             self._record_routing_signal(
                 decision, user_id, input_length, has_image, "no_api_key", org_id=org_id,
             )
@@ -191,7 +191,7 @@ class IntentRouter:
         # 过滤熔断 Provider 的模型
         active_tools = self._filter_tools_by_breaker(ROUTER_TOOLS)
 
-        # 降级链：主模型 → 备用模型 → 关键词
+        # 降级链：主模型 → 备用模型 → 显式命令（其余留在聊天）
         models = [
             settings.intent_router_model,
             settings.intent_router_fallback_model,
@@ -224,8 +224,8 @@ class IntentRouter:
                     f"model={model} | error={e}"
                 )
 
-        logger.warning("All router models failed, using keyword fallback")
-        decision = self._keyword_fallback(content)
+        logger.warning("All router models failed; keeping explicit commands or chat")
+        decision = self._explicit_command_fallback(content)
         self._record_routing_signal(
             decision, user_id, input_length, has_image, "all_failed", org_id=org_id,
         )
@@ -497,15 +497,15 @@ class IntentRouter:
             filtered.append(tool_copy)
         return filtered
 
-    def _keyword_fallback(self, content: List[ContentPart]) -> RoutingDecision:
+    def _explicit_command_fallback(self, content: List[ContentPart]) -> RoutingDecision:
         """Compatibility name: explicit commands only; unknown free text stays in chat."""
         from schemas.message import infer_generation_type
 
         gen_type = infer_generation_type(content)
         return RoutingDecision(
             generation_type=gen_type,
-            raw_tool_name=f"keyword_{gen_type.value}",
-            routed_by="keyword",
+            raw_tool_name=f"explicit_{gen_type.value}",
+            routed_by="explicit_command",
         )
 
     async def _enhance_with_knowledge(self, text: str, org_id: str | None = None) -> str:
@@ -544,7 +544,7 @@ class IntentRouter:
         user_id: str,
         input_length: int,
         has_image: bool,
-        router_model: str = "keyword",
+        router_model: str = "none",
         org_id: str | None = None,
     ) -> None:
         """记录路由决策信号到 knowledge_metrics（fire-and-forget）"""

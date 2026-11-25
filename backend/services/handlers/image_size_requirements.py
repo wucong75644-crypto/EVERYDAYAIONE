@@ -5,14 +5,6 @@ import re
 
 from services.handlers.image_dimensions import ratio_for
 
-RATIO = re.compile(r"(?<![\d:：])([+-]?\d{1,3})\s*[:：]\s*([+-]?\d{1,3})(?![\d:：])")
-PIXELS = re.compile(r"(?<!\d)([+-]?\d+)\s*[xX×＊*]\s*([+-]?\d+)(?!\d)")
-RESOLUTION = re.compile(r"(?<![\d])(\d+)\s*[kK](?![A-Za-z0-9_])")
-AUTO_RATIO = re.compile(
-    r"比例\s*(?:由你(?:来)?(?:决定|定)|你(?:来)?(?:决定|定)|随你|自动(?:选择|决定)|用auto)"
-    r"|(?:你(?:来)?(?:决定|定)|自动(?:选择|决定))\s*(?:输出|画布)?比例",
-    re.I,
-)
 IMAGE_SIZE_OPTIONS = ('aspect_ratio', 'resolution', 'size_requirement')
 IMAGE_DRAFT_OPTIONS = (*IMAGE_SIZE_OPTIONS, 'output_format')
 
@@ -85,175 +77,18 @@ class ImageSizeError(ValueError):
         self.guidance = guidance
 
 
-def directed_image_transfers(text):
-    """Literal source -> destination phrases, with their spans for target parsing."""
-    number = r'(?:[1-9]\d?|[一二三四五六七八九十])'
-    image = rf'(?:第\s*({number})\s*张(?:图|图片)?|图\s*({number}))(?!\d)'
-    another = rf'(?:第\s*{number}\s*张|图\s*{number})'
-    middle = rf'(?:(?!{another})[^。！？!?；;\n]){{0,40}}?'
-    pattern = rf'(?:把|将|用)?\s*{image}{middle}(?:替换|换|放|移|添加|加)(?:到|入|进|至)\s*{image}'
-    chinese = dict(zip('一二三四五六七八九十', range(1, 11)))
-    def ordinal(values):
-        value = next(value for value in values if value)
-        return int(value) if value.isdecimal() else chinese[value]
-    result = []
-    for match in re.finditer(pattern, text):
-        if re.search(r'(?:不|不要|别|禁止|勿)\s*$', text[:match.start()]):
-            continue
-        source, target = ordinal(match.groups()[:2]), ordinal(match.groups()[2:])
-        if source != target:
-            result.append((match.start(), match.end(), source, target))
-    return result
 
 
-def edit_target_number(text):
-    """Read an explicit target, not the first style reference or model prose."""
-    text = re.sub(r'```[\s\S]*?```|[“「][\s\S]*?[”」]', '', text or '')
-    text = re.sub(r'(?:不要|禁止|勿|别|不)\s*(?:把|将|用|给|在|以|使用|沿用)\s*(?:图|第)[^。！？!?；;，,\n]*', '', text)
-    number = r'(?:[1-9]\d?|[一二三四五六七八九十])'
-    image = rf'(?:第\s*({number})\s*张(?:图|图片)?|图\s*({number}))(?!\d)'
-    patterns = (rf'(?:给|把|将|在)\s*{image}[^。！？!?；;，,\n]{{0,35}}?(?:加|添加|改|修改|替换|保留|去掉)',
-                rf'(?:以|用|使用|沿用)\s*{image}[^。！？!?；;，,\n]{{0,8}}?(?:作为|为|做)?(?:底图|画布|编辑目标)')
-    transfers = directed_image_transfers(text)
-    found = {target for _, _, _, target in transfers}
-    # A source in "把图二的元素换到图一" must not also be read as the target
-    # by the older "把图N...替换" form.
-    for start, end, _, _ in reversed(transfers):
-        text = text[:start] + ' ' * (end - start) + text[end:]
-    chinese = dict(zip('一二三四五六七八九十', range(1, 11)))
-    for pattern in patterns:
-        for match in re.finditer(pattern, text):
-            value = next(value for value in match.groups() if value)
-            found.add(int(value) if value.isdecimal() else chinese[value])
-    return next(iter(found)) if len(found) == 1 else None
 
 
-def canvas_reference_intent(row):
-    """Bind an explicit attachment ordinal to an authenticated message locator."""
-    from services.handlers.chat_context.image_sources import content_parts
-    parts = content_parts(row.get('content'))
-    text = '\n'.join(part.get('text', '') for part in parts if part.get('type') == 'text')
-    ordinal = edit_target_number(text)
-    images = [index for index, part in enumerate(parts) if part.get('type') == 'image']
-    # With no new attachments, ordinals may refer to historical/generated
-    # images. Their existing authenticated resolver owns that selection.
-    if ordinal is None or not images:
-        return None
-    if not 1 <= ordinal <= len(images):
-        raise ImageSizeError('IMAGE_CANVAS_REFERENCE_REQUIRED', '用户指定的编辑底图不在本轮附件中，请核对来源后再执行。')
-    return {'message_id': str(row['id']), 'content_index': images[ordinal - 1]}
 
 
-def explicit_transfer_images(text):
-    """Only literal current-image style transfers, never arbitrary attachments."""
-    target = edit_target_number(text)
-    if target is None or re.search(r'不使用|不用|不要使用|不作为|只分析|仅作分析|仅供分析', text):
-        return ()
-    clean = re.sub(r'```[\s\S]*?```|[“「][\s\S]*?[”」]', '', text)
-    number = r'(?:[1-9]\d?|[一二三四五六七八九十])'
-    pattern = rf'(?:参考|借鉴)\s*(?:图\s*({number})|第\s*({number})\s*张(?:图|图片)?)(?!\d)'
-    chinese = dict(zip('一二三四五六七八九十', range(1, 11)))
-    sources = [source for _, _, source, destination in directed_image_transfers(clean) if destination == target]
-    for match in re.finditer(pattern, clean):
-        value = next(value for value in match.groups() if value)
-        ordinal = int(value) if value.isdecimal() else chinese[value]
-        if ordinal != target and ordinal not in sources:
-            sources.append(ordinal)
-    return tuple([*sources, target]) if sources else ()
 
 
-def user_size_intent(text: str) -> dict:
-    """Read literal dimensions only from user text, never attachments or assistant plans.
-
-    Natural-language intent remains the model's job; literal conflicts cannot be
-    bypassed by a model-supplied mode or approximate resolution.
-    """
-    text = re.sub(r"```[\s\S]*?```", "", text or "")
-    text = re.sub(r"(\d{1,3})\s*比\s*(\d{1,3})", r"\1:\2", text)
-    numerals = {"一":1,"二":2,"三":3,"四":4,"五":5,"六":6,"七":7,"八":8,"九":9,"十":10}
-    def number(value):
-        if "十" in value and len(value) > 1:
-            before, after = value.split("十")
-            return numerals.get(before, 1) * 10 + numerals.get(after, 0)
-        return numerals.get(value, 0)
-    text = re.sub(r"([一二三四五六七八九]?十[一二三四五六七八九]?|[一二三四五六七八九])比([一二三四五六七八九]?十[一二三四五六七八九]?|[一二三四五六七八九])",
-                  lambda match: f"{number(match[1])}:{number(match[2])}", text)
-    # Descriptions of an object's shape or the source file do not specify the
-    # output canvas. Only retain their dimensions when explicitly used as output.
-    segments = re.split(r"[，。；;\n]", text)
-    text = "，".join(segment for segment in segments if not (
-        re.search(r"(?:产品|主体|笔记本|包装盒).{0,8}(?:比例|尺寸)|(?:原图|参考图).{0,8}(?:是|为|尺寸)", segment)
-        and not re.search(r"生成|输出|画布|改成|改为|沿用|保持", segment)))
-    # '原来1:1，改成3:4' is a replacement, not two simultaneous requirements.
-    changed = re.split(r"改成|改为|调整为|换成", text)
-    if len(changed) > 1:
-        text = changed[-1]
-    if any(int(w) <= 0 or int(h) <= 0 for w, h in RATIO.findall(text)):
-        raise ImageSizeError("IMAGE_SIZE_INVALID", "比例宽高必须为正整数。")
-    ratios = {ratio_for(int(w), int(h)) for w, h in RATIO.findall(text) if int(w) and int(h)}
-    pixels = {(int(w), int(h)) for w, h in PIXELS.findall(text)}
-    pixels.update((int(w), int(h)) for w, h in re.findall(r"宽(?:度)?\s*[:：]?\s*(\d+)\s*(?:像素|px)?\s*[,，、]?\s*高(?:度)?\s*[:：]?\s*(\d+)", text, re.I))
-    resolutions = {f"{k}K" for k in RESOLUTION.findall(text)}
-    if len(ratios) > 1 or len(pixels) > 1 or len(resolutions) > 1:
-        raise ImageSizeError("IMAGE_SIZE_AMBIGUOUS", "本次有多个尺寸要求，请明确这张图片使用哪一个；不自动选择。")
-    intent = {}
-    if pixels:
-        width, height = pixels.pop()
-        if width < 1 or height < 1:
-            raise ImageSizeError("IMAGE_SIZE_INVALID", "像素宽高必须是正整数。")
-        intent.update(width=width, height=height)
-        # Size qualifiers stay local to dimensions; "background roughly blue"
-        # must not turn a fixed pixel requirement into an approximate one.
-        approximate=(re.search(r'(?:约|大概|接近|近似)\s*\d+\s*[xX×＊*]\s*\d+|\d+\s*[xX×＊*]\s*\d+\s*(?:像素|px)?\s*左右',text,re.I)
-            or re.search(r'(?:允许|可以|接受)(?:近似|接近)|(?:接近|近似|差不多)(?:即可|就行|就好)|就近匹配|无需精确|不(?:必|用|要求)精确',text))
-        exact=re.search(r'(?<!不)(?:必须|务必|严格)?精确\s*(?:到|为|像素|\d)|(?:不(?:允许|接受|要)|不能)(?:近似|接近)',text)
-        if approximate and not exact:
-            intent['approximate_pixels']=True
-        if ratios and next(iter(ratios)) != ratio_for(width, height):
-            raise ImageSizeError("IMAGE_SIZE_CONFLICT", "精确像素与宽高比冲突，请明确目标规格。")
-    if ratios:
-        intent["aspect_ratio"] = ratios.pop()
-    if resolutions:
-        intent["resolution"] = resolutions.pop()
-    if re.search(r"(?:正方形|方图|方形画布)", text) and "aspect_ratio" not in intent:
-        intent["aspect_ratio"] = "1:1"
-    if AUTO_RATIO.search(text):
-        if ratios or "aspect_ratio" in intent or pixels or "width" in intent:
-            raise ImageSizeError("IMAGE_SIZE_CONFLICT", "自动比例与固定尺寸同时出现，请明确本次使用哪一种。")
-        intent["mode"] = "auto"
-    elif re.search(r"(?:保持|沿用|保留|不改).{0,8}(?:原图|参考图)|(?:原图|参考图).{0,8}(?:比例|尺寸)", text):
-        intent["mode"] = "inherit_reference"
-    elif re.search(r"(?:保持|沿用|保留|不改).{0,8}比例", text):
-        intent["keep_aspect_ratio"] = True
-    elif re.search(r"(?<!\d)\d{3,5}\s*(?:尺寸|像素|px)(?!\w)", text, re.I) and not pixels and "width" not in intent:
-        raise ImageSizeError("IMAGE_SIZE_AMBIGUOUS", "请明确是正方形像素尺寸，还是长边尺寸。")
-    if re.search(r"(?<!\d)\d{3,5}[pP](?![A-Za-z0-9_])", text):
-        raise ImageSizeError("IMAGE_EXACT_SIZE_UNSUPPORTED", "当前图片接口不保证指定像素高度，请选择支持的比例与分辨率档位，不自动近似。")
-    if re.search(r"(?:长边|短边)\s*[：:]?\s*\d+", text):
-        raise ImageSizeError("IMAGE_EXACT_SIZE_UNSUPPORTED", "当前接口不保证精确长边或短边像素，请选择支持的比例与分辨率档位，不自动换算。")
-    if re.search(r"(?:尺寸\s*[：:]?\s*\d{3,5}|(?:做|生成)\s*\d{3,5}\s*$)", text) and "width" not in intent:
-        raise ImageSizeError("IMAGE_SIZE_AMBIGUOUS", "请明确是正方形像素尺寸，还是长边尺寸。")
-    if re.search(r"竖(?:版|图|向(?:画布|封面|海报|图片))|纵向画布", text):
-        intent["orientation"] = "portrait"
-    elif re.search(r"横(?:版|图|向(?:画布|封面|海报|图片))|宽屏", text):
-        intent["orientation"] = "landscape"
-    return intent
 
 
-def selected_source_size(prompt: str) -> dict:
-    """Explicit output declarations in verified selected content, excluding product geometry."""
-    declarations = [match[1] for match in re.finditer(
-        r'(?:输出(?:比例|尺寸|分辨率)|画布(?:比例|尺寸)|aspect[_ ]ratio|(?<!\w)--ar)'
-        r'\s*[:：=为是]?\s*(\d+\s*[:：xX×]\s*\d+|\d+[kK])', prompt, re.I)
-        if not source_canvas_fact(prompt, match.start())]
-    return user_size_intent('，'.join(declarations))
 
 
-def source_canvas_fact(text, start):
-    """Source-image metadata is data, not a competing output requirement."""
-    prefix = text[max(0, start - 20):start]
-    return bool(re.search(r'(?:原图|参考图)(?:的)?(?:画布)?\s*$', prefix)
-                and not re.search(r'(?:保持|沿用|保留|输出).{0,8}$', prefix))
 
 
 def resolve_size_requirement(args: dict, references: list[dict], *, intent=None, previous=None, action=None) -> tuple[dict, dict]:
@@ -390,35 +225,12 @@ def resolve_size_requirement(args: dict, references: list[dict], *, intent=None,
     return args, target
 
 
-def size_preflight_notice(text: str, sources: list[dict]) -> str:
-    """Preflight an explicitly requested output size with the native resolver.
-
-    No task, provider IO or debit. Unselected, mixed canvases are not collapsed.
-    Historical fixed specs remain in history when this message changes one axis.
-    """
-    import json
-    try:
-        intent = user_size_intent(text)
-        if not intent:
-            return ""
-        available = [source for source in sources if source.get("available")]
-        if not available:
-            # A resolution-only update depends on the existing task canvas.
-            if set(intent) <= {"resolution", "keep_aspect_ratio"}:
-                return "服务器尺寸意图：" + json.dumps(intent, ensure_ascii=False) + "；保留当前任务已确定的比例。"
-            _, target = resolve_size_requirement({"mode":"text_to_image","prompt":"size preflight"}, [], intent=intent)
-        else:
-            refs = [{**source.get("canvas", {}), "role":"reference"} for source in available]
-            _, target = resolve_size_requirement({"mode":"image_to_image","prompt":"size preflight"}, refs, intent=intent)
-        target["resolution"] = target.get('resolution') or intent.get("resolution") or "沿用当前任务分辨率；无既定规格时使用模型默认分辨率"
-        return "服务器目标尺寸预检（方案与提示词须一致，正式执行时重新校验选定引用）：" + json.dumps(target, ensure_ascii=False)
-    except ImageSizeError as error:
-        return "服务器尺寸预检未通过：" + error.guidance + " 未创建图片任务或预扣图片积分。"
 
 
-def is_size_instruction(text: str) -> bool:
-    """Do not turn historic size questions/examples into persistent task rules."""
-    if re.search(r"如果|例如|为什么|是什么意思|解释|区别", text):
-        return False
-    return bool(re.search(r"生成|输出|改成|改为|调整|保持|沿用|统一|设成|设为|设置|提高|比例.{0,5}(?:你决定|自动)", text)
-                or re.fullmatch(r"[\d\s:：×xXkK、，,。.]+", text.strip()))
+
+
+def source_canvas_fact(text, start):
+    """Source-image metadata is data, not a competing output requirement."""
+    prefix = text[max(0, start - 20):start]
+    return bool(re.search(r'(?:原图|参考图)(?:的)?(?:画布)?\s*$', prefix)
+                and not re.search(r'(?:保持|沿用|保留|输出).{0,8}$', prefix))

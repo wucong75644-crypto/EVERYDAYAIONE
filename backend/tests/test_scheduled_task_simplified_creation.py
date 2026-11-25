@@ -28,9 +28,10 @@ async def test_strict_parser_never_uses_legacy_default_time_and_keeps_shop_instr
     assert result["changes"]["prompt"] == "把A店的订单日报" and not result["missing_fields"]
     with patch("services.scheduler.task_nl_parser._call_llm", AsyncMock(return_value=None)):
         strict = await parse_task_request("做订单日报")
-        old = await parse_task_nl("做订单日报")
+        from services.scheduler.task_definition_input import TaskDefinitionInputError
+        with pytest.raises(TaskDefinitionInputError):
+            await parse_task_nl("做订单日报")
     assert "time_str" in strict["missing_fields"] and "time_str" not in strict["changes"]
-    assert old["time_str"] == "09:00"  # old prefill API remains compatible
 
 
 @pytest.mark.asyncio

@@ -68,7 +68,7 @@ async def stage_response(runtime, request, prepared, blocks, turn, model_round, 
                elapsed_ms=(time.monotonic() - started) * 1000, metrics={'rendered_bytes': len(raw)})
 
 
-def finish_response(runtime, block, result, *, request=None, source='tool'):
+def finish_response(runtime, block, result, *, request=None, source='tool', delivery_complete=True):
     value = runtime.checkpoint_base.get(KEY)
     if not isinstance(value, dict):
         return
@@ -80,4 +80,5 @@ def finish_response(runtime, block, result, *, request=None, source='tool'):
         'phase': 'committed' if result.get('ok') is True else 'rejected',
         'artifact_id': block.get('content_artifact_id') if block else (result.get('object') or {}).get('artifact_id'),
         'projected': block is not None, 'projection_source': source,
+        'owner_task_id': str(runtime.task_id), 'delivery_complete': delivery_complete,
         'error_code': result.get('code')}

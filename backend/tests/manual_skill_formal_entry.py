@@ -462,28 +462,27 @@ async def test_formal_entry_real_model_and_supplier_chain(content_db,monkeypatch
                     IMAGE_MODEL_CONFIGS[completed[-1]['snapshot']['model']]['supported_sizes']),expected_canvas[1])
             # Replay the exact two-image failure in a fresh conversation, with
             # the same user and original files, through the same HTTP/Actor path.
-            if selection:
-                incident=json.loads(Path(__file__).with_name('fixtures').joinpath('chat_skill_failures_20261122.json').read_text())['canvas']
-                f['conv']=str(uuid4())
-                with psycopg.connect(content_db) as c:
-                    c.execute('INSERT INTO conversations(id,user_id,scope_id) VALUES(%s,%s,%s)',(f['conv'],f['user'],f['user']))
-                refs=sorted(prior['native'][0]['recipes'][0]['resolved'],key=lambda x:x['content_index'])
-                images=[]
-                for i,reference in enumerate(refs):
-                    path=next((Path(os.environ['SKILL_FAILURE_CAPTURE_ROOT'])/'workspace').rglob(Path(reference['workspace_path']).name))
-                    assert hashlib.sha256(path.read_bytes()).hexdigest()==reference['content_sha256']
-                    name=f'用户图{i+1}' if customer_language else f'失败原图{i+1}'
-                    images.append(await env['upload'](f,path,f'正式入口/{name}{path.suffix}'))
-                await run(f,[TextPart(text=incident['user_text']),*images])
-                with psycopg.connect(content_db) as c:
-                    children=c.execute("SELECT id,assistant_message_id,request_params FROM tasks WHERE type='image' AND request_params->'_media_request_v1'->'origin'->>'parent_task_id'=%s",(f['task'],)).fetchall()
-                assert len(children)==1
-                snapshot=children[0][2]['_media_request_v1']
-                assert (snapshot['aspect_ratio'],snapshot['resolution'])==(incident['expected_aspect_ratio'],incident['expected_resolution'])
-                assert [x['content_sha256'] for x in snapshot['references']]==[x['content_sha256'] for x in refs]
-                assert '输入图片1对应用户图1。' in snapshot['prompt']
-                assert '输入图片2对应用户图2。' in snapshot['prompt']
-                await env['generate_all'](f,[{'receipt':{'task_id':str(children[0][0]),'message_id':str(children[0][1])},'native':snapshot}],'original-two-image-failure',parent_terminal=True)
+            incident=json.loads(Path(__file__).with_name('fixtures').joinpath('chat_skill_failures_20261122.json').read_text())['canvas']
+            f['conv']=str(uuid4())
+            with psycopg.connect(content_db) as c:
+                c.execute('INSERT INTO conversations(id,user_id,scope_id) VALUES(%s,%s,%s)',(f['conv'],f['user'],f['user']))
+            refs=sorted(prior['native'][0]['recipes'][0]['resolved'],key=lambda x:x['content_index'])
+            images=[]
+            for i,reference in enumerate(refs):
+                path=next((Path(os.environ['SKILL_FAILURE_CAPTURE_ROOT'])/'workspace').rglob(Path(reference['workspace_path']).name))
+                assert hashlib.sha256(path.read_bytes()).hexdigest()==reference['content_sha256']
+                name=f'用户图{i+1}' if customer_language else f'失败原图{i+1}'
+                images.append(await env['upload'](f,path,f'正式入口/{name}{path.suffix}'))
+            await run(f,[TextPart(text=incident['user_text']),*images])
+            with psycopg.connect(content_db) as c:
+                children=c.execute("SELECT id,assistant_message_id,request_params FROM tasks WHERE type='image' AND request_params->'_media_request_v1'->'origin'->>'parent_task_id'=%s",(f['task'],)).fetchall()
+            assert len(children)==1
+            snapshot=children[0][2]['_media_request_v1']
+            assert (snapshot['aspect_ratio'],snapshot['resolution'])==(incident['expected_aspect_ratio'],incident['expected_resolution'])
+            assert [x['content_sha256'] for x in snapshot['references']]==[x['content_sha256'] for x in refs]
+            assert '输入图片1对应用户图1。' in snapshot['prompt']
+            assert '输入图片2对应用户图2。' in snapshot['prompt']
+            await env['generate_all'](f,[{'receipt':{'task_id':str(children[0][0]),'message_id':str(children[0][1])},'native':snapshot}],'original-two-image-failure',parent_terminal=True)
             # A normal conversational follow-up must not submit another image.
             with psycopg.connect(content_db) as c:
                 count_before=c.execute("SELECT count(*) FROM tasks WHERE type='image'").fetchone()[0]

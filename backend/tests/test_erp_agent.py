@@ -388,14 +388,12 @@ class TestExtractPlan:
 
     @pytest.mark.asyncio
     async def test_fallback_keyword(self):
-        """LLM 失败 → 关键词降级单域"""
+        """LLM 失败不从关键词生成计划，也不执行查询"""
         agent = self._make_agent()
         with patch.object(agent, "_llm_extract", new_callable=AsyncMock, side_effect=ValueError("API 错误")):
             plan = await agent._extract_plan("订单数据查一下")
-        assert plan is not None
-        assert len(plan.steps) == 1
-        assert plan.steps[0].domain == "trade"
-        assert plan.degraded is True
+        assert plan is None
+        agent.db.table.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_abort_no_keyword(self):
@@ -1761,3 +1759,18 @@ class TestCreateAgentPushThinking:
         # bound method 每次访问产生新对象，比较底层函数和绑定实例
         assert child._push_thinking.__func__ is parent._push_thinking.__func__
         assert child._push_thinking.__self__ is parent
+
+
+@pytest.mark.asyncio
+async def test_daily_stats_plan_does_not_require_an_impossible_order_scope():
+    import json
+    from services.agent.erp_agent import ERPAgent
+    params={'doc_type':'daily_stats','mode':'summary','query_type':'trend',
+            'time_range':'2026-10-01 ~ 2026-10-07','metrics':['purchase_qty']}
+    response=SimpleNamespace(content=json.dumps({'steps':[{'domain':'warehouse','params':params}]}),prompt_tokens=1,completion_tokens=1)
+    adapter=_stream_adapter(response)
+    agent=ERPAgent(db=MagicMock(),user_id='u1',conversation_id='c1',org_id='org1')
+    with patch('services.adapters.factory.create_chat_adapter',return_value=adapter):
+        steps,_,_=await agent._llm_extract('用商品日统计查看每天采购数量')
+    assert steps==[('warehouse',params)]
+    adapter.close.assert_awaited_once()

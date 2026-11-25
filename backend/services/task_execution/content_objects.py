@@ -6,7 +6,7 @@ import re
 from typing import Annotated, Any, Literal
 from uuid import UUID
 from pydantic import Field, field_validator, model_serializer, model_validator
-from .contracts import Artifact, Fact, Key, TaskError
+from .contracts import Artifact, Fact, Key, TaskError, MAX_INLINE_TEXT_CHARS
 from .item_confirmation import MediaDirective
 from .reducer import digest, register_artifacts, complete_step
 
@@ -256,6 +256,7 @@ class SaveContent(Fact):
     base: ContentReference | None = None
     message_source: MessageContentSource | None = None
     updates: tuple[ItemUpdate, ...] = Field(default=(), max_length=100)
+    delivery_complete: bool = Field(default=True, description='本轮文字已完整交付时为true。仍需继续保存其他稿件时为false；这只控制文字交付结束，不授权图片或其他执行。')
     continue_execution: bool = Field(default=False, description='仅在本轮还要求实际执行时设为 true。保存成功后仍需调用目标工具。')
     confirmation: MediaDirective | None = Field(
         default=None, description='仅当用户设置了后续确认条件时填写tool、wait_for或wait_all。不是审批开关，不能填approved来批准刚写出的稿件。普通方案不新增确认。')
@@ -320,7 +321,7 @@ def selection_parameters(model=ContentReference):
 
 SCHEMA = {'type': 'function', 'function': {'name': SAVE,
     'description': '保存或修订结构化稿件。新写分条方案、提示词或脚本可直接回复编号标题与完整正文，后台自动登记，无需重复保存。'
-        '明确结构化保存时提交一次document，每条写title和body，页面展示原文。'
+        '明确结构化保存时提交document，每条写title和body，页面展示原文。整组优先一次保存；分次交付时前几次delivery_complete=false，最后一次才为true，不能用continue_execution表示继续写稿。'
         '用户要求部分或全部条目等后续确认再执行时，必须结构化保存整组，用confirmation指定tool及wait_for或wait_all，保留编号。'
         '同轮要求立即执行其他项时continue_execution=true；不把等待条件变成已批准，不给普通写作新增确认。'
         + MIXED_TEXT_GUIDANCE + '普通问答直接回复。'
@@ -328,7 +329,7 @@ SCHEMA = {'type': 'function', 'function': {'name': SAVE,
         '仅后台无法识别边界时才按已核实的完整行范围指定条目。'
         '用户明确修改一张成图时，可用document和new_content=true编写新的编辑指令，在materials绑定这张图。只修订历史文字用base和updates。'
         'body包含最终要求和限制；按用户或方法要求交付的可见结构放display_prefix，内部说明放notes。materials记录用于执行或分析的素材，options仅记已确定执行规格。'
-        '修订既有条目时，base使用该条目的content_source，updates传修订正文。后台绑定版本并保留未改条目、素材和规格。'
+        '修订既有条目时，base使用该条目的content_source，updates每项为{item_index,item:{body:完整修订正文}}。后台绑定版本并保留未改条目、素材和规格。'
         '本轮还要求执行时设continue_execution=true，再调用目标工具。有当前上传图片时，在每条的materials中绑定所用图片。还要求看文字时设show_content=true。',
     'parameters': save_parameters()}}
 
@@ -559,6 +560,24 @@ def source_images_from_message(row):
                  for image in image_sources(row) if image['available'])
 
 
+def historical_source_images(runtime):
+    """Candidates retain provenance; only semantic material selection executes them."""
+    if runtime is None or not hasattr(runtime, 'task_execution_state'):
+        return ()
+    from .direct_loop import content_followup_state
+    state = runtime.task_execution_state or content_followup_state(runtime)
+    latest = {}
+    for artifact in objects(state):
+        record = ContentRecord.model_validate_json(artifact.inline_text)
+        latest[record.object_key] = record
+    images = []
+    for record in latest.values():
+        for image in record.source_images:
+            if image.reference not in [value.reference for value in images]:
+                images.append(image)
+    return tuple(images)
+
+
 def current_source_images(request, runtime=None):
     message_id = getattr(request.context_anchor, 'input_message_id', None)
     if not message_id:
@@ -570,6 +589,15 @@ def current_source_images(request, runtime=None):
             images.extend(SourceImage(name=attachment.workspace_path.rsplit('/',1)[-1],
                 reference=MaterialReference(resource_ref=attachment.resource_ref))
                 for attachment in change.attachments if attachment.kind=='image')
+    return tuple(images)
+
+
+def registration_source_images(request, runtime):
+    # Historic candidates are provenance, not current attachment positions.
+    images = list(current_source_images(request, runtime))
+    for image in historical_source_images(runtime):
+        if image.reference not in [value.reference for value in images]:
+            images.append(image)
     return tuple(images)
 
 
@@ -598,6 +626,8 @@ def save(runtime, call, registry, *, has_image_attachments=False, source_images=
                 'base': value.base.model_copy(update={'sha256': base_record[0].sha256}),
             })
     arguments = value.model_dump(mode='json')
+    if value.delivery_complete:
+        arguments.pop('delivery_complete')  # Preserve pre-field call fingerprints.
     if value.show_content is None:
         arguments.pop('show_content')
     if value.message_source is None:
@@ -623,10 +653,6 @@ def save(runtime, call, registry, *, has_image_attachments=False, source_images=
     if document is not None and '_chat_display_layout' in document.notes:
         raise TaskError(INVALID_OBJECT)
     explicit_execution = value.continue_execution and not allow_implicit_execution_materials
-    if document is not None and source_images and (author_request is not None or explicit_execution):
-        from .content_groups import bind_group
-        document = bind_group(document, source_images, author_request or '', infer_materials=not explicit_execution,
-            semantic_context=request_context)
     message_proof = None
     if value.message_source is not None:
         if checked_message is None:
@@ -634,7 +660,11 @@ def save(runtime, call, registry, *, has_image_attachments=False, source_images=
         document, source_images, message_proof = checked_message
         display_gaps = tuple(message_proof.get('display_gaps', ()))
         message_proof = {k: v for k, v in message_proof.items() if k != 'display_gaps'}
-    elif (document is not None and value.continue_execution and has_image_attachments
+    if document is not None and source_images and (author_request is not None or explicit_execution or value.message_source is not None):
+        from .content_groups import bind_group
+        document = bind_group(document, source_images, author_request or '', infer_materials=not explicit_execution,
+            semantic_context=request_context)
+    if (value.message_source is None and document is not None and value.continue_execution and has_image_attachments
             and any(not item.materials for item in document.items)):
         raise TaskError(ATTACHMENT_USAGE_REQUIRED)
     identity = message_identity(message_proof) if message_proof is not None else [str(runtime.task_id), call['id']]
@@ -700,7 +730,10 @@ def save(runtime, call, registry, *, has_image_attachments=False, source_images=
                                  ('source_images', source_images), ('presentation_profile',presentation_profile),
                                  ('confirmation_items', confirmation_items), ('confirmation_tool', confirmation_tool))
                              if not present})
-    if len(body.encode()) > 50000: raise TaskError('CONTENT_OBJECT_TOO_LARGE')
+    # Content records share the Artifact character cap and the existing task
+    # byte budget. A separate 50KB cap rejected otherwise valid Chinese drafts.
+    if len(body) > MAX_INLINE_TEXT_CHARS:
+        raise TaskError('CONTENT_OBJECT_TOO_LARGE')
     checksum = hashlib.sha256(body.encode()).hexdigest()
     if message_proof is not None and (existing := message_artifact(state, message_proof)) is not None:
         if existing.sha256 != checksum:
@@ -778,7 +811,6 @@ def _legacy_image_options(options, original_goal, has_reference):
     """Translate old image-only fields at execution, preserving archive identity."""
     if not {'width', 'height'}.intersection(options):
         return options
-    from services.handlers.image_size_requirements import ImageSizeError, user_size_intent
 
     result = dict(options)
     pixels = {key: result.pop(key) for key in ('width', 'height') if key in result}
@@ -787,23 +819,10 @@ def _legacy_image_options(options, original_goal, has_reference):
         raise TaskError('CONTENT_ARGUMENTS_INVALID')
     if (len(pixels) != 2 or any(type(value) is not int or value < 1 for value in pixels.values())):
         raise TaskError('CONTENT_ARGUMENTS_INVALID')
-    try:
-        initial = user_size_intent(original_goal)
-    except ImageSizeError:
-        initial = None
-    if has_reference and initial is not None and 'width' not in initial:
-        if 'resolution' in initial:
-            result['resolution'] = initial['resolution']
-        else:
-            result.pop('resolution', None)
-        if 'aspect_ratio' in initial:
-            result['aspect_ratio'] = initial['aspect_ratio']
-            result['size_requirement'] = {'mode': 'explicit'}
-        else:
-            result.pop('aspect_ratio', None)
-            result['size_requirement'] = {'mode': 'inherit_reference'}
-    else:
-        result['size_requirement'] = {'mode': 'explicit', **pixels}
+    # Legacy exact pixel metadata already specifies its ratio. Do not emit a
+    # second retired aspect hint which can conflict with a current typed canvas.
+    result.pop('aspect_ratio', None)
+    result['size_requirement'] = {'mode': 'explicit', **pixels}
     return result
 
 

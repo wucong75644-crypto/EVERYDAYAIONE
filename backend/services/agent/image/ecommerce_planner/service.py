@@ -25,7 +25,7 @@ from .workflow import binding, store_binding, WorkflowBinding, KEY
 from .prompt_resources import HASHES, INTEGRATION_RULES_SHA256, SCHEMA_SHA256, resources, wrapper
 from .assembly import ASSEMBLY_VERSION, CLEAN_ASSEMBLY_VERSION, assemble_designs, fixed_canvas_conflict
 from .designs import DesignsOutput, DesignRepair, DesignValidationError, apply_repair, repair_context
-from .inputs import FixedSettings, explicit_chat_platform, model_input, source_bindings, user_content
+from .inputs import FixedSettings, model_input, source_bindings, user_content
 from .page_delivery import PageDelivery
 from .format_delivery import PROMPTS_VERSION, FORMAT_VERSION, normalize_visual, validate_questions
 from .position_delivery import POSITION_VERSION, PositionDelivery, validate_outline
@@ -349,9 +349,8 @@ class EcommerceImagePlanner(PositionDelivery, PageDelivery):
             "platform": (fixed.platform if fixed else (self.workflow.request_context.platform
                 if self.workflow.request_context.platform is not None or self.workflow.request_context.platform_changed
                 else (previous_plan or {}).get('input_snapshot',{}).get('platform'))
-                if self.workflow and self.workflow.request_context is not None else None
-                if '_media_decisions_v1' in getattr(getattr(self.owner,'_actor_runtime',None),'checkpoint_base',{}) else explicit_chat_platform(messages,
-                    fallback=(previous_plan or {}).get("input_snapshot", {}).get("platform"))),
+                if self.workflow and self.workflow.request_context is not None
+                else (previous_plan or {}).get('input_snapshot', {}).get('platform')),
             "language": fixed.language if fixed else (previous_plan or {}).get("input_snapshot", {}).get("language"),
             **({"supersedes_plan_id": previous_plan["id"]} if previous_plan else {})}
         input_snapshot["source_bindings"] = source_bindings(input_snapshot)

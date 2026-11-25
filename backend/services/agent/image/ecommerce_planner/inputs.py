@@ -9,34 +9,6 @@ from .contracts import StrictModel, source_id
 from services.agent.image.reference_roles import is_product
 
 
-def explicit_chat_platform(messages, *, fallback=None):
-    """Freeze only an unambiguous literal platform request; keep all raw text.
-
-    Multiple platforms and quotations remain for planning clarification rather
-    than silently choosing a destination. A later explicit request wins.
-    """
-    import re
-    aliases = (('抖音','抖音'), ('淘宝','淘宝'), ('天猫','天猫'), ('京东','京东'),
-               ('拼多多','拼多多'), ('小红书','小红书'), ('1688','1688'))
-    for message in reversed(messages):
-        text = '\n'.join(part['text'] for part in message.get('parts', []))
-        text = re.sub(r'```[\s\S]*?```|[“「『][^”」』]*[”」』]|"[^"\n]*"', '', text)
-        requested = set()
-        denied = False
-        for clause in re.split(r'[。！？!?；;\n]', text):
-            if re.search(r'不要|不需要|不做|不用于|不是|无需', clause):
-                denied = denied or any(alias in clause for alias, _ in aliases)
-                continue
-            for alias, label in aliases:
-                if re.search(rf'(?:面向|适合|适配|用于|针对|发布到|在)[^。！？]{{0,8}}{alias}|{alias}(?:电商|平台|端口|主图|详情|上)', clause):
-                    requested.add(label)
-        if requested:
-            return next(iter(requested)) if len(requested) == 1 else None
-        if denied:
-            return None  # Never restore a historical platform just rejected.
-    return fallback
-
-
 class FixedSettings(StrictModel):
     task_type: Literal["main_images", "detail_page"]
     platform: str = Field(min_length=1, max_length=100)

@@ -398,7 +398,6 @@ class ChatImageInputResolver:
 
     def size_context(self, *, use_previous=True, infer_attachment_canvas=True, semantic_context=None):
         from services.handlers.chat_context.image_sources import content_parts
-        from services.handlers.image_size_requirements import user_size_intent, canvas_reference_intent
         def text(row):
             return "\n".join(part.get("text", "") for part in content_parts(row.get("content"))
                               if isinstance(part, dict) and part.get("type") == "text")
@@ -406,12 +405,11 @@ class ChatImageInputResolver:
         if current.get("role") != "user":
             raise PermissionError("IMAGE_SOURCE_MESSAGE_DENIED")
         actor = getattr(getattr(self, 'owner', None), '_actor_runtime', None)
-        if semantic_context is None and '_media_decisions_v1' in getattr(actor, 'checkpoint_base', {}):
+        if semantic_context is None:
             from services.agent.image.ecommerce_planner.workflow import ImageRequestContext
             raw = (getattr(actor, 'workflow_projection', None) or {}).get('request_context')
             semantic_context = ImageRequestContext.model_validate(raw or {})
-        intent = (semantic_context.size.model_dump(exclude_none=True) if semantic_context is not None
-                  else user_size_intent(text(current)))
+        intent = semantic_context.size.model_dump(exclude_none=True)
         locator = None
         if semantic_context is not None:
             resource=getattr(semantic_context,'canvas_resource',None)
@@ -435,16 +433,10 @@ class ChatImageInputResolver:
                     from services.handlers.image_size_requirements import ImageSizeError
                     raise ImageSizeError('IMAGE_CANVAS_BINDING_INVALID', '画布投影指向不存在的当前附件，尚未派发。')
                 locator = {'message_id': str(current['id']), 'content_index': images[ordinal - 1]}
-        else:
-            locator = canvas_reference_intent(current)
         if locator:
             intent['canvas_reference'] = locator
             if not any(key in intent for key in ('aspect_ratio', 'width', 'orientation', 'mode')):
                 intent['mode'] = 'inherit_reference'
-        if (infer_attachment_canvas and semantic_context is None
-                and any(isinstance(part, dict) and part.get("type") == "image" for part in content_parts(current.get("content")))
-                and not any(key in intent for key in ("aspect_ratio", "mode", "width", "orientation"))):
-            intent["mode"] = "inherit_reference"
         if not use_previous:
             return intent, {}
         # Prior requirements come only from user text within the closed anchor,
@@ -469,20 +461,7 @@ class ChatImageInputResolver:
             if (row.get("conversation_id") != self.owner.conversation_id or row.get("org_id") != self.owner.org_id
                     or row.get("context_revision") is None or row["context_revision"] > self.base_revision):
                 continue
-            if row.get("role") == "user":
-                if semantic_context is not None:
-                    continue  # Current semantics and verified receipts own specs; old prose is not a contract.
-                from services.handlers.image_size_requirements import is_size_instruction
-                if not is_size_instruction(text(row)):
-                    continue
-                try:
-                    prior = user_size_intent(text(row))
-                except ValueError:
-                    break  # An unresolved old requirement cannot become a default.
-                if prior:
-                    prior = {**prior, "source_message_id": str(row["id"])}
-                    previous.update({key: value for key, value in prior.items() if key not in previous})
-            elif row.get("role") == "assistant":
+            if row.get("role") == "assistant":
                 prior = (row.get("generation_params") or {}).get("size_requirement") or {}
                 if isinstance(prior, dict) and prior:
                     prior = {**prior, "source_task_id": (row.get("generation_params") or {}).get("task_id")}

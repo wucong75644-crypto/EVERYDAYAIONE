@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from tests.semantic_fixtures import semantic_request
 
 from schemas.message import TextPart
 from services.adapters.dashscope.chat_adapter import DashScopeAPIError, DashScopeChatAdapter
@@ -132,7 +133,7 @@ async def test_streaming_preference_does_not_replace_revisions_or_execution_prot
     assert content_tools.prefers_reference_text(q, r)
     assert not content_tools.prefers_reference_text(q, r, saved_source_available=True)
     assert not content_tools.prefers_reference_text(q, r, server_image_plan=True)
-    assert not content_tools.prefers_reference_text(replace(q, content=[TextPart(text='生成一张图片')]), r)
+    assert not content_tools.prefers_reference_text(semantic_request(replace(q, content=[TextPart(text='生成一张图片')]), 'generate'), r)
     r._steer_messages.append('写完后把第一套做成图片')
     assert not content_tools.prefers_reference_text(q, r)
     r._steer_messages.clear()
@@ -215,8 +216,11 @@ def test_visual_numeric_guidance_preserves_request_and_does_not_change_image_act
     ('解释“把图二的元素换到图一”的意思', ()),
 ])
 def test_literal_transfer_binding_never_selects_analysis_or_quoted_requests(text, expected):
-    from services.handlers.image_size_requirements import explicit_transfer_images
-    assert explicit_transfer_images(text) == expected
+    from services.agent.image.ecommerce_planner.workflow import ImageRequestContext
+    frame = ImageRequestContext(materials=[{'reference':{'message_id':'actual','content_index':n},
+        'role':f'原图{n}','usage':'input'} for n in expected])
+    assert tuple(m.reference.content_index for m in frame.materials) == expected
+    assert text  # Natural wording is tested through the semantic producer, not a second parser.
 
 
 @pytest.mark.asyncio
@@ -249,6 +253,8 @@ async def test_literal_edit_projects_verified_target_and_limited_reference_roles
     message=str(uuid4())
     request=SimpleNamespace(content=[TextPart(text=text),ImagePart(workspace_path='one.png'),
         ImagePart(workspace_path='two.png')],context_anchor=SimpleNamespace(input_message_id=message))
+    request = semantic_request(request, 'edit', canvas_image=target, materials=[
+        {'reference':{'message_id':message,'content_index':n},'role':f'图{n}','usage':'input'} for n in (1,2)])
     native=SimpleNamespace(resolve=lambda _: [{'message_id':message,'content_index':target}])
     monkeypatch.setattr('services.task_execution.image_resources.native_resolver',lambda *_:native)
     captured=[]
@@ -315,7 +321,7 @@ def test_current_visual_input_fact_does_not_treat_full_extra_budget_as_blindness
     ('第一个方案',False),
 ])
 def test_planning_or_writing_is_not_an_image_purchase(text,expected):
-    assert content_tools.image_writing_only_request(SimpleNamespace(content=[TextPart(text=text)])) is expected
+    assert content_tools.image_writing_only_request(semantic_request(SimpleNamespace(content=[TextPart(text=text)]), 'write' if expected else 'other')) is expected
 
 
 @pytest.mark.asyncio
@@ -324,7 +330,7 @@ async def test_hallucinated_generate_call_cannot_purchase_during_planning():
     from tests.test_task_execution_model_bridge import call
     r,p,h,q=case()
     p.content_controls_available=True
-    q=replace(q,content=[TextPart(text='这是我的产品，帮我规划一下该怎么去做淘宝主图')])
+    q=semantic_request(replace(q,content=[TextPart(text='这是我的产品，帮我规划一下该怎么去做淘宝主图')]), 'write')
     await execute(r,p,h,q,[call('generate_image',{'prompt':'未获出图授权','mode':'text_to_image'},'unauthorized-image')])
     h._execute_tool_calls.assert_not_awaited()
     assert any('本轮用户只要求文字策划、方案或提示词，未创建图片任务' in str(m.get('content','')) for m in p.messages)
@@ -334,8 +340,10 @@ def test_latest_authenticated_append_can_authorize_execution_after_writing_only(
     q=SimpleNamespace(content=[TextPart(text='只写三套方案，不生成图片')])
     runtime=SimpleNamespace(task_id='current',task_user_changes=SimpleNamespace(items=(
         SimpleNamespace(owner_task_id='current',message='现在把第一个方案生成图片'),)))
+    runtime.workflow_projection = {'intent':'execute_saved'}
     assert not content_tools.image_writing_only_request(q,runtime)
     runtime.task_user_changes.items += (SimpleNamespace(owner_task_id='current',message='先不要生成图片，只交付文字方案'),)
+    runtime.workflow_projection = {'intent':'write'}
     assert content_tools.image_writing_only_request(q,runtime)
     runtime.task_user_changes.items += (SimpleNamespace(owner_task_id='current',message='补充这张照片，注意背景颜色。'),)
     assert content_tools.image_writing_only_request(q,runtime)
@@ -374,6 +382,7 @@ async def test_polished_current_edit_keeps_target_and_append_guards_before_io(de
     request = SimpleNamespace(content=[TextPart(text='参考图一的波点，给图二加一些波点'),
         ImagePart(workspace_path='one.png'), ImagePart(workspace_path='two.png')],
         context_anchor=SimpleNamespace(input_message_id=message))
+    request = semantic_request(request, 'edit', canvas_image=2)
     runtime.task_user_changes = SimpleNamespace(items=(object(),) if defect == 'delivered_append' else ())
     runtime._steer_messages = ['新要求'] if defect == 'pending_append' else []
     # No resolver/catalog exists: rejected calls cannot read or save any source.

@@ -1,3 +1,4 @@
+from tests.semantic_fixtures import semantic_request
 """Actual failed conversation shapes, not a model instructed to use document."""
 import copy
 import json
@@ -10,7 +11,7 @@ import pytest
 from services.adapters.types import StreamChunk
 from services.handlers.chat.outcome_builder import build_content_parts
 from services.handlers.image_size_requirements import (
-    ImageSizeError, canvas_reference_intent, edit_target_number, resolve_size_requirement,
+    ImageSizeError, resolve_size_requirement,
 )
 from services.task_execution import content_objects as co
 from services.task_execution.content_groups import index_document
@@ -33,6 +34,7 @@ async def test_actual_plain_reply_is_saved_displayed_and_referenced_after_checkp
     q = replace(q, content=[TextPart(text=FIXTURE['plan']['user_text']),
                            ImagePart(name='product.png', workspace_path='product.png')],
                 context_anchor=SimpleNamespace(input_message_id=str(r.task_bootstrap.input_message_id), base_revision=10))
+    q = semantic_request(q, 'write', reference_usage='input')
     async def model(**kwargs):
         if thinking:
             yield StreamChunk(thinking_content='构思新的卡册方案。')
@@ -99,7 +101,7 @@ def test_actual_multi_image_target_controls_canvas_independent_of_model_order(re
             for i, (w, h) in enumerate(FIXTURE['canvas']['dimensions'], 1)]
     if reversed_refs:
         refs.reverse()
-    intent = {'mode': 'inherit_reference', 'canvas_reference': canvas_reference_intent(row)}
+    intent = {'mode': 'inherit_reference', 'canvas_reference': {'message_id':source, 'content_index':2}}
     args, target = resolve_size_requirement({'mode': 'image_to_image', 'prompt': '仅给目标产品添加波点。'}, refs, intent=intent)
     assert args['aspect_ratio'] == '3:4' and args['resolution'] == '1K'
     assert target['original_width'] == 1280 and target['original_height'] == 1707
@@ -123,7 +125,13 @@ def test_actual_multi_image_target_controls_canvas_independent_of_model_order(re
     ('“给图二加波点”这句话是什么意思', None),
 ])
 def test_target_binding_is_based_on_clear_user_words_not_style_order(text, number):
-    assert edit_target_number(text) == number
+    from schemas.message import ImagePart, TextPart
+    from services.task_execution.inline_image_action import current_attachment_edit
+    request = SimpleNamespace(content=[TextPart(text=text),ImagePart(workspace_path='one.png'),ImagePart(workspace_path='two.png')],
+                              context_anchor=SimpleNamespace(input_message_id='actual'))
+    request = semantic_request(request, 'edit', canvas_image=number)
+    target = current_attachment_edit(request)
+    assert (target[2] if target else None) == number
 
 
 def test_save_failure_budget_covers_mixed_errors_reads_and_recovery_but_resets_on_user_input():
@@ -153,6 +161,7 @@ async def test_plain_reply_resumes_exact_original_after_registration_checkpoint_
         return {'outcome': 'saved'}
     r, p, h, q = case(checkpoint)
     q = replace(q, content=[TextPart(text=FIXTURE['plan']['user_text'])])
+    q = semantic_request(q, 'write', reference_usage='input')
     async def original(**kwargs):
         yield StreamChunk(content=FIXTURE['plan']['response'])
         yield StreamChunk(finish_reason='stop')
@@ -203,6 +212,9 @@ async def test_real_image_input_resolution_keeps_both_references_and_uses_target
     q = replace(q, content=[TextPart(text=text), ImagePart(name='input1.png', workspace_path='input1.png'),
                            ImagePart(name='input2.png', workspace_path='input2.png')],
                 context_anchor=SimpleNamespace(input_message_id=source, base_revision=0))
+    q = semantic_request(q, 'edit', canvas_image=2, materials=[
+        {'reference':{'message_id':source,'content_index':1},'role':'波点参考','usage':'input'},
+        {'reference':{'message_id':source,'content_index':2},'role':'编辑底图','usage':'input'}])
     mock_db.set_table_data('messages', [{'id': source, 'role': 'user', 'status': 'completed',
         'message_kind': 'conversation', 'context_revision': None, 'org_id': None, 'conversation_id': r.conversation_id,
         'content': [part.model_dump(mode='json') for part in q.content]}])
@@ -210,6 +222,7 @@ async def test_real_image_input_resolution_keeps_both_references_and_uses_target
     mock_db.set_table_data('tasks', [{'id': r.task_id, 'user_id': ctx.actor_user_id, 'org_id': None,
         'conversation_id': r.conversation_id, 'input_message_id': source, 'base_context_revision': 0, 'request_params': {}}])
     h.db = mock_db
+    r.workflow_projection = q.params['_ecom_workflow']
     h._actor_runtime = r
     r.task_image_resource_resolver = create_resolver(h, q, ctx)
     r.task_operation_store = SimpleNamespace(registry=build_capability_catalog())
@@ -255,6 +268,7 @@ async def test_actual_plain_actor_delivery_matches_browser_fixture():
     r, p, h, q = case()
     q = replace(q, content=[TextPart(text=FIXTURE['plan']['user_text']), ImagePart(name='product.png', workspace_path='product.png')],
                 context_anchor=SimpleNamespace(input_message_id=str(r.task_bootstrap.input_message_id), base_revision=0))
+    q = semantic_request(q, 'write', reference_usage='input')
     events = _DeliveryStore()
     sink = ActorWebSink(_DB([]), _delivery(), r.cancellation_event, _WebSocket(), delivery_store=events)
     await sink.start()
@@ -287,18 +301,15 @@ def test_writing_image_prompt_text_does_not_authorize_image_execution(text):
 
 
 @pytest.mark.asyncio
-async def test_explicit_batch_uses_displayed_saved_group_and_keeps_requested_order():
-    from schemas.message import TextPart
-    from services.handlers.chat.content_tools import explicit_image_batch
-    from tests.test_content_objects import registered
+async def test_structured_batch_keeps_requested_order_and_original_plan_identity():
+    from tests.test_content_objects import registered, ref
     r, p, h, q, row = await registered()
-    q = replace(q, content=[TextPart(text='第三个和第一个帮我做成图片')])
-    assert explicit_image_batch(q, r) == [
-        {'artifact_id': row['artifact_id'], 'item_index': 3},
-        {'artifact_id': row['artifact_id'], 'item_index': 1},
-    ]
-    r.checkpoint_base['content_blocks'] = [{'type': 'text', 'text': '尚未展示当前稿件'}]
-    assert explicit_image_batch(q, r) == []
+    selections = [ref(row, 3), ref(row, 1)]
+    originals = [co.load(r.task_execution_state, selection)[2] for selection in selections]
+    compiled = [co.compile_input(r.task_execution_state, 'generate_image', {}, selection)[0] for selection in selections]
+    assert [item['prompt'] for item in compiled] == [item.body for item in originals]
+    assert [co.load(r.task_execution_state, selection)[2].body for selection in selections] == [item['prompt'] for item in compiled]
+    assert [item['source_prompt']['content_object']['source'] for item in compiled] == selections
     h._execute_tool_calls.assert_not_awaited()
 
 
@@ -314,57 +325,60 @@ async def test_explicit_batch_uses_displayed_saved_group_and_keeps_requested_ord
     '第一个和第三个再生成一次图片',
     '上一轮第一个和第三个帮我做成图片',
 ])
-async def test_batch_shortcut_never_guesses_edits_old_groups_questions_or_regeneration(text):
+async def test_wording_alone_never_proposes_a_batch(text):
     from schemas.message import TextPart
-    from services.handlers.chat.content_tools import explicit_image_batch
+    from services.handlers.chat import content_tools
     from tests.test_content_objects import registered
-    r, p, h, q, _ = await registered()
-    assert explicit_image_batch(replace(q, content=[TextPart(text=text)]), r) == []
+    r, p, h, q, row = await registered()
+    request = replace(q, content=[TextPart(text=text)])
+    assert not content_tools.selects_previous_item(request)
+    assert not content_tools.image_execution_request(request)
+    assert not hasattr(content_tools, 'explicit_image_batch')
+    assert co.catalog(r.task_execution_state)[0]['artifact_id'] == row['artifact_id']
     h._execute_tool_calls.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_new_materials_and_unconsumed_changes_stay_on_the_model_led_path():
     from schemas.message import TextPart, ImagePart
-    from services.handlers.chat.content_tools import explicit_image_batch
+    from services.handlers.chat import content_tools
     from services.task_execution.user_changes import UserChanges, UserChange
     from tests.test_content_objects import registered
     import hashlib
-    r, p, h, q, _ = await registered()
+    r, p, h, q, row = await registered()
     q = replace(q, content=[TextPart(text='第一个和第三个帮我做成图片'), ImagePart(name='new.png', workspace_path='new.png')])
-    assert explicit_image_batch(q, r) == []
-    q = replace(q, content=q.content[:1])
+    original = r.task_execution_state.model_dump()
+    assert not content_tools.selects_previous_item(q)
     message = '补充：先改第三条配色'
     r.task_user_changes = UserChanges(root_task_id=r.task_bootstrap.task_id, items=(
         UserChange(event_id=uuid4(), owner_task_id=r.task_bootstrap.task_id, message=message,
                    message_sha256=hashlib.sha256(message.encode()).hexdigest(), delivered=True),))
-    assert explicit_image_batch(q, r) == []
-
-
-@pytest.mark.asyncio
-async def test_batch_shortcut_does_not_resubmit_after_an_attempt_or_image_completion():
-    from schemas.message import TextPart
-    from services.handlers.chat.content_tools import explicit_image_batch
-    from tests.test_content_objects import registered
-    r, p, h, q, _ = await registered()
-    q = replace(q, content=[TextPart(text='第一个和第三个帮我做成图片')])
-    attempted = [{'role': 'user', 'content': q.content[0].text},
-                 {'role': 'assistant', 'tool_calls': [{'id': 'attempt', 'function': {'name': 'generate_image'}}]}]
-    assert explicit_image_batch(q, r, messages=attempted) == []
-    # A new authenticated user turn may request the same selection again.
-    assert len(explicit_image_batch(q, r, messages=[*attempted, {'role': 'user', 'content': q.content[0].text}])) == 2
-    r.task_image_completion = SimpleNamespace(event_artifact_ids=('delivered-image',))
-    assert explicit_image_batch(q, r) == []
+    assert content_tools.has_newer_image_input(r)
+    assert r.task_execution_state.model_dump() == original
     h._execute_tool_calls.assert_not_awaited()
 
 
-def test_historical_image_edit_ordinal_does_not_require_a_new_attachment():
-    row = {'id': str(uuid4()), 'content': [{'type': 'text', 'text': '把第2张图片改成蓝色'}]}
-    assert edit_target_number(row['content'][0]['text']) == 2
-    assert canvas_reference_intent(row) is None
-    row['content'].append({'type': 'image'})
-    with pytest.raises(ImageSizeError, match='IMAGE_CANVAS_REFERENCE_REQUIRED'):
-        canvas_reference_intent(row)
+@pytest.mark.asyncio
+async def test_native_receipts_do_not_create_automatic_batch_submissions():
+    from schemas.message import TextPart
+    from services.handlers.chat import content_tools
+    from tests.test_content_objects import registered
+    r, p, h, q, _ = await registered()
+    q = replace(q, content=[TextPart(text='第一个和第三个帮我做成图片')])
+    r.task_image_completion = SimpleNamespace(event_artifact_ids=('delivered-image',))
+    assert not content_tools.selects_previous_item(q)
+    assert not hasattr(content_tools, 'explicit_image_batch')
+    assert not r.task_execution_state.operations
+    h._execute_tool_calls.assert_not_awaited()
+
+
+def test_historical_image_edit_is_not_reinterpreted_as_a_current_attachment():
+    from services.task_execution.inline_image_action import current_attachment_edit
+    from schemas.message import TextPart
+    request = semantic_request(SimpleNamespace(content=[TextPart(text='把第2张图片改成蓝色')],
+        context_anchor=SimpleNamespace(input_message_id='actual')), 'edit')
+    assert current_attachment_edit(request) is None
+    assert request.params['_ecom_workflow']['intent'] == 'edit'
 
 
 @pytest.mark.parametrize('fence', ['```', '~~~'])

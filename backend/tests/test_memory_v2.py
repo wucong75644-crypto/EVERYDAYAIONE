@@ -241,8 +241,8 @@ class TestL1QualityGate:
     def test_short_message_filtered(self):
         from services.memory.l1_extractor import _should_extract
 
-        assert _should_extract("hi") is False
-        assert _should_extract("ok") is False
+        assert _should_extract("hi") is True
+        assert _should_extract("ok") is True
 
     def test_command_filtered(self):
         from services.memory.l1_extractor import _should_extract

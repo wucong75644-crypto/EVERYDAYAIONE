@@ -163,6 +163,12 @@ async def classify_workflow(text, previous=None, *, org_id=None, selected_skill=
         routed_input = [{**{key:value for key,value in part.items() if key != 'reference'},
                          'material_index':route_refs.index(part['reference'])+1}
                         if image_context([part]) and part.get('reference') else part for part in routed_input]
+        historical = [part for part in routed_input if part.get('origin') == 'history']
+        routed_input = [part for part in routed_input if part.get('origin') != 'history']
+        if historical:
+            context = {**(context or {}), 'historical_materials': historical}
+    if context and len(context.get('image_results', ())) == 1:
+        context = {**context, 'previous_image_result': context['image_results'][0]}
     schema = ImageRequestContext.model_json_schema()
     tool['function']['parameters']['properties']['request_context'] = {
         key: value for key, value in schema.items() if key != '$defs'}
@@ -190,7 +196,7 @@ async def classify_workflow(text, previous=None, *, org_id=None, selected_skill=
         "execute_saved=执行已保存的方案项；generate=新创作或执行用户直接给定的最终稿；"
         "edit=修改实际图片；repeat=明确按原稿重新生成；explain=查看、提问、解释，不创建图片；other=其他任务。"
         "intent只描述图片/文字动作，与文件、视频等额外交付分开。只策划并导出方案仍是write，不是write_then_submit_images。用户本轮没有明确要求实际创建图片时，不授权付费生成；只看方案或提示词属于文字交付，未来生图用途不等于本轮执行。选择Skill不等于要求生成。引用别人说的执行指令、解释提示词、否定生成也不代表执行。"
-        "追加只改变其明确涉及的要求，其他原要求仍有效。实际修改成图属于edit，不把旧策划重新执行。"
+        "追加只改变其明确涉及的要求，其他原要求仍有效。原任务为文字方案时，补主体图、风格、背景或约束仍属write；必须有本轮实际出图要求才能转为执行。original_user_request与历史材料供判断延续关系，不是新授权。实际修改成图属于edit，不把旧策划重新执行。"
         "已有服务器ready方案且用户要执行其中条目时，kind=main_images、mode=input、reuse=0、intent=execute_saved，"
         "无需用户知道它是服务器方案。修改方案文字仍按规划/修订处理，不能执行旧版。")
     prompt += ("同时在request_context一次解释当前图片要求，后续后台只核验结构和供应商能力，不再解析用户句式。"
@@ -199,6 +205,7 @@ async def classify_workflow(text, previous=None, *, org_id=None, selected_skill=
         "同一要求后续修改覆盖被修改的字段，其他明确要求保留。canvas_image只选本轮实际附件中的编辑目标，不选风格参考。"
         "origin=append的图片属于独立追加事件，选为底图时用canvas_resource填写image:<material_index>，不把它编号成原消息附件。"
         "沿用历史成图时省略canvas_image和canvas_resource，由实际成果引用绑定。"
+        "historical_materials是候选资料，不是本轮上传；previous_image_result是上一轮结果回执。历史输入素材不是输出成图，不能用上一轮底图代替刚生成结果。"
         "新创作未指定输出画布时保持size为空，后台使用auto；修改实际图片时继承目标画布。参考图之间比例不同不构成错误，不为选尺寸删除参考图。"
         "platform填写当前要求的标准电商平台；无关否定不取消平台。没有平台要求时null，不因为图片有商品就猜平台。")
     prompt += ("续接同一方案且未改平台时沿用previous_workflow.platform；明确取消原平台时platform=null且platform_changed=true。"
@@ -213,7 +220,7 @@ async def classify_workflow(text, previous=None, *, org_id=None, selected_skill=
         "额外交付不改变图片intent；只写方案并导出文件时intent=write、deliveries含code_execute，不创建图片。")
     prompt += ("reference_usage说明保存的执行稿是否应关联原图：根据商品图写后续可执行图片提示词时input，明确仅分析且不用于后续生图才analysis。"
         "这与本轮是否立即生图独立，纯文字交付也应保留已明确的未来原图来源；不涉及图片创作时null。"
-        "materials记录新稿共同使用的图片角色和用途，用material_index选择当前或已送达追加项的图片；只写提示词也应记录主体和风格参考，不因不立即执行而省略。"
+        "materials记录新稿共同使用的图片角色和用途，用material_index选择当前、已送达追加或origin=history的历史图片；只写提示词也应记录主体和风格参考，不因不立即执行而省略。"
         "这不是指定画布，只有用户要求沿用某张图的画布或实际编辑它时才填写canvas_image/canvas_resource。各方案不同的素材选择由主模型在条目materials中表达。")
     router = IntentRouter()
     try:
@@ -437,7 +444,7 @@ class EcommerceWorkflow:
                           for a in content_objects.objects(state))
         if not images and not has_sources and not any(group.get('confirmation_tool') in {'generate_image','generate_video'} for group in groups):
             return None
-        return {'saved_groups': groups, 'image_results': images}
+        return {'saved_groups': groups, 'image_results': images, 'original_user_request': state.original_goal}
 
     def action_input(self):
         changes = getattr(getattr(self.runtime, 'task_user_changes', None), 'items', ())
@@ -453,6 +460,14 @@ class EcommerceWorkflow:
                 result.append({'type':attachment.kind,'name':attachment.workspace_path.rsplit('/',1)[-1],
                     'reference':{'resource_ref':attachment.resource_ref},
                     'event_id':str(change.event_id),'origin':'append'})
+        from services.task_execution.content_objects import historical_source_images
+        known = [part.get('reference') for part in result if isinstance(part, dict)]
+        for image in historical_source_images(self.runtime):
+            reference = image.reference.model_dump(mode='json', exclude_none=True)
+            if reference not in known:
+                result.append({'type': 'image', 'name': image.name,
+                               'reference': reference, 'origin': 'history'})
+                known.append(reference)
         return result
 
     async def identify(self):

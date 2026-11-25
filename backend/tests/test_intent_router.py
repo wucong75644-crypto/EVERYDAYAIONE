@@ -47,7 +47,7 @@ class TestRoutingDecision:
         assert d.tool_params == {}
         assert d.search_query is None
         assert d.raw_tool_name == "text_chat"
-        assert d.routed_by == "keyword"
+        assert d.routed_by == "none"
 
     def test_custom_values(self):
         d = RoutingDecision(
@@ -203,25 +203,25 @@ class TestParseResponse:
 
 
 # ============================================================
-# _keyword_fallback 测试
+# _explicit_command_fallback 测试
 # ============================================================
 
 
 class TestKeywordFallback:
     def test_chat_text(self, router):
         content = _make_text_content("你好，请帮我翻译")
-        result = router._keyword_fallback(content)
+        result = router._explicit_command_fallback(content)
         assert result.generation_type == GenerationType.CHAT
-        assert result.routed_by == "keyword"
+        assert result.routed_by == "explicit_command"
 
     def test_free_text_image_request_stays_in_chat(self, router):
         content = _make_text_content("画一只猫")
-        result = router._keyword_fallback(content)
+        result = router._explicit_command_fallback(content)
         assert result.generation_type == GenerationType.CHAT
 
     def test_free_text_video_request_stays_in_chat(self, router):
         content = _make_text_content("生成视频：海浪")
-        result = router._keyword_fallback(content)
+        result = router._explicit_command_fallback(content)
         assert result.generation_type == GenerationType.CHAT
 
 
@@ -266,7 +266,7 @@ class TestRoute:
             content = _make_text_content("画一只猫")
             result = await router.route(content, "user-1", "conv-1")
             assert result.generation_type == GenerationType.CHAT
-            assert result.routed_by == "keyword"
+            assert result.routed_by == "explicit_command"
 
     @pytest.mark.asyncio
     async def test_no_api_key_uses_keyword(self, router):
@@ -278,7 +278,7 @@ class TestRoute:
             )
             content = _make_text_content("你好")
             result = await router.route(content, "user-1", "conv-1")
-            assert result.routed_by == "keyword"
+            assert result.routed_by == "explicit_command"
 
     @pytest.mark.asyncio
     async def test_empty_text_skips_routing(self, router):
@@ -399,7 +399,7 @@ class TestRoute:
             result = await router.route(content, "user-1", "conv-1")
 
             assert result.generation_type == GenerationType.CHAT
-            assert result.routed_by == "keyword"
+            assert result.routed_by == "explicit_command"
 
 
 # ============================================================

@@ -1,9 +1,10 @@
+from tests.semantic_fixtures import semantic_request
 """User intent fixes: no extra approval/model, keep native execution contracts."""
 from types import SimpleNamespace
 import pytest
 from schemas.message import ImagePart, TextPart
 from services.handlers.chat import content_tools
-from services.handlers.image_size_requirements import resolve_size_requirement,user_size_intent
+from services.handlers.image_size_requirements import resolve_size_requirement
 
 @pytest.mark.parametrize('text',[
     '帮我写几个可以生图的提示词，文字就行。',
@@ -19,7 +20,7 @@ from services.handlers.image_size_requirements import resolve_size_requirement,u
     '补充这张图片供你观察波点排列，只作设计分析，不作为后续生图输入；三套方案都设为浅米灰色，仍然只写文字，不要生成图片。',
 ])
 def test_prompt_text_and_quoted_actions_are_not_image_execution(text):
-    q=SimpleNamespace(content=[TextPart(text=text)])
+    q=semantic_request(SimpleNamespace(content=[TextPart(text=text)]), 'write')
     assert not content_tools.image_execution_request(q)
     assert content_tools.image_writing_only_request(q)
 
@@ -33,7 +34,7 @@ def test_prompt_text_and_quoted_actions_are_not_image_execution(text):
     '写好方案和生成一张图片。',
 ])
 def test_real_generation_in_another_clause_still_executes(text):
-    q=SimpleNamespace(content=[TextPart(text=text)])
+    q=semantic_request(SimpleNamespace(content=[TextPart(text=text)]), 'write_then_submit_images')
     assert content_tools.image_execution_request(q)
     assert not content_tools.image_writing_only_request(q)
 
@@ -46,7 +47,7 @@ def test_real_generation_in_another_clause_still_executes(text):
 ])
 def test_approximate_pixels_select_supported_specs_not_an_exact_output_contract(text,ratio,tier,requested):
     args,target=resolve_size_requirement({'mode':'text_to_image','prompt':'商品摄影',
-        'size_requirement':{'mode':'explicit','width':requested[0],'height':requested[1]}},[],intent=user_size_intent(text))
+        'size_requirement':{'mode':'explicit','width':requested[0],'height':requested[1]}},[],intent={'width':requested[0],'height':requested[1],'approximate_pixels':True, **({'resolution':'1K'} if text == '约1920×1080，但是用1K档位' else {})})
     assert (args['aspect_ratio'],args['resolution'])==(ratio,tier)
     assert (target['requested_width'],target['requested_height'])==requested
     assert target['approximate'] is True
@@ -60,7 +61,7 @@ def test_approximate_pixels_select_supported_specs_not_an_exact_output_contract(
 ])
 def test_exact_pixels_and_approximate_background_cannot_bypass_existing_capability_check(text):
     with pytest.raises(ValueError,match='EXACT_SIZE_UNSUPPORTED'):
-        resolve_size_requirement({'mode':'text_to_image','prompt':'test'},[],intent=user_size_intent(text))
+        resolve_size_requirement({'mode':'text_to_image','prompt':'test'},[],intent={'width':1920,'height':1080})
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('text',[
@@ -72,7 +73,7 @@ async def test_hallucinated_image_tool_is_not_dispatched_for_text_only_variants(
     from tests.test_model_directed_loop import case,execute
     from tests.test_task_execution_model_bridge import call
     r,p,h,q=case();p.content_controls_available=True
-    q=replace(q,content=[TextPart(text=text)])
+    q=semantic_request(replace(q,content=[TextPart(text=text)]), 'write')
     await execute(r,p,h,q,[call('generate_image',{'prompt':'must not purchase','mode':'text_to_image'},'not-authorized')])
     h._execute_tool_calls.assert_not_awaited()
     assert any('本轮用户只要求文字' in str(m.get('content','')) for m in p.messages)
@@ -112,7 +113,7 @@ def test_observed_multilingual_quoted_prompts_keep_whole_sections_and_numbered_r
 
 @pytest.mark.parametrize('quote',[("'","'"),('‘','’'),('`','`')])
 def test_alternative_quotation_styles_are_text_not_actions(quote):
-    q=SimpleNamespace(content=[TextPart(text=f'帮我写几个{quote[0]}生成图片{quote[1]}的提示词，文字就行。')])
+    q=semantic_request(SimpleNamespace(content=[TextPart(text=f'帮我写几个{quote[0]}生成图片{quote[1]}的提示词，文字就行。')]), 'write')
     assert not content_tools.image_execution_request(q)
     assert content_tools.image_writing_only_request(q)
 
@@ -136,7 +137,7 @@ def test_approximate_size_matching_a_saved_plan_keeps_its_exact_text_and_native_
     resolver=SimpleNamespace(owner=SimpleNamespace(user_id='owner',org_id=None,conversation_id='conv'),
         normalize_legacy=lambda a:deepcopy(a),locate_source_prompt=lambda _:None,
         resolve=lambda _: [deepcopy(ref)],verify=lambda *a,**k:None,
-        size_context=lambda **k:(user_size_intent('约1920×1080，接近即可'),{}))
+        size_context=lambda **k:({'width':1920,'height':1080,'approximate_pixels':True},{}))
     args,proof_refs,target,proof=prepare_input(resolver,{'plan_source':{'plan_id':plan_id,'revision':1,'item_id':item_id}},
         scoped=SimpleNamespace(table=lambda _:Query()),workflow=None,
         settings=SimpleNamespace(chat_image_transparent_enabled=False),entry_checked=True)
@@ -163,7 +164,7 @@ def test_fresh_edit_inherits_native_canvas_instead_of_model_invented_pixels(user
         locate_source_prompt=lambda _:source,complete_source_prompt=lambda s,p:(p,s),
         content_image_item=lambda _:(SimpleNamespace(source_call_id='inline-save-edit',source_task_id='current'),SimpleNamespace(options={})),
         resolve=lambda _:[ref],verify=lambda *a,**k:None,
-        size_context=lambda **k:(user_size_intent(user_text),{}),selected_image_size=lambda _:previous)
+        size_context=lambda **k:({'width':1920,'height':1080} if exact else {},{}),selected_image_size=lambda _:previous)
     options={'scoped':None,'workflow':None,'settings':SimpleNamespace(chat_image_transparent_enabled=False),'entry_checked':True}
     if exact:
         with pytest.raises(ValueError,match='EXACT_SIZE_UNSUPPORTED'):prepare_input(resolver,args,**options)
@@ -187,6 +188,8 @@ async def test_optional_size_advice_does_not_reject_visible_prose_registration_o
     q=replace(q,content=[TextPart(text='参考这张图帮我写几个可以生图的提示词，文字就行。'+('每套输出16:9、2K。' if explicit_size else '')),
         ImagePart(name='原图.png',workspace_path='uploads/original.png')],
         context_anchor=SimpleNamespace(input_message_id=str(r.task_bootstrap.input_message_id)))
+    q = semantic_request(q, 'write', reference_usage='input',
+        size={'aspect_ratio':'16:9','resolution':'2K'} if explicit_size else {})
     text=('**选项一：商品摄影**\n> **中文：** 保持商品原有结构，白色背景。\n'
           '> **English:** Preserve the product, white background.\n\n'
           '**选项二：桌面场景**\n> **中文：** 保持商品原有结构，桌面背景。\n'
@@ -219,7 +222,7 @@ async def test_optional_size_advice_does_not_reject_visible_prose_registration_o
     if explicit_size:
         assert (args['aspect_ratio'],args['resolution'])==('16:9','2K')
     else:
-        assert 'aspect_ratio' not in args
+        assert args['aspect_ratio'] == 'auto'
     h._execute_tool_calls.assert_not_awaited()
 
 
@@ -229,7 +232,7 @@ async def test_optional_size_advice_does_not_reject_visible_prose_registration_o
     '提示词写一下。',
 ])
 def test_object_before_verb_is_a_text_authoring_request(text):
-    q = SimpleNamespace(content=[TextPart(text=text)])
+    q = semantic_request(SimpleNamespace(content=[TextPart(text=text)]), 'write')
     assert content_tools.authored_text_request(q)
     assert content_tools.image_writing_only_request(q)
     assert not content_tools.image_execution_request(q)

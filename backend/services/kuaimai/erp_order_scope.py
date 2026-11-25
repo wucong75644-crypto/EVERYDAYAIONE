@@ -1,5 +1,5 @@
 """Explicit order scopes reuse tenant classification for summaries and comparisons."""
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 
 from services.agent.tool_output import ColumnMeta, OutputFormat, OutputStatus, ToolOutput
@@ -119,3 +119,70 @@ async def query_order_scope(db, org_id, filters, tr, scope, group_by=None,
                                     'categories': classified.categories, 'query_type': 'summary'})
     except Exception as exc:
         return scope_error(f'无法按指定订单口径查询：{exc}')
+
+
+async def query_order_scope_trend(db, org_id, filters, tr, scope, group_by=None,
+                                  time_granularity='day', metrics=None, limit=366):
+    """Aggregate order details once, then apply the same tenant categories per period."""
+    from collections import defaultdict
+    from services.kuaimai.erp_analytics_trend import (
+        _auto_adjust_granularity, _fill_zero_periods, _build_trend_columns,
+        _translate_platform_in_rows, format_trend_summary,
+    )
+    from services.kuaimai.erp_unified_schema import RPC_ORDER_STATS_FILTER_FIELDS
+    aliases = {'count': 'order_count', 'amount': 'order_amount', 'qty': 'order_qty'}
+    requested = list(dict.fromkeys(aliases.get(m, m) for m in (metrics or ['order_count', 'order_amount'])))
+    columns = {'order_count': 'doc_count', 'order_qty': 'total_qty', 'order_amount': 'total_amount'}
+    if set(requested) - columns.keys():
+        return scope_error('订单口径趋势仅支持订单数、数量和金额；未忽略指标执行')
+    if any(f.field != tr.time_col and f.field not in (RPC_ORDER_STATS_FILTER_FIELDS | {'doc_created_at','pay_time','consign_time'}) and f.field != 'doc_type' for f in filters):
+        return scope_error('订单口径趋势不支持该筛选字段；未忽略条件执行')
+    dimensions = [GROUP_BY_MAP.get(g, g) for g in (group_by or [])]
+    if len(dimensions) > 1 or any(g not in {'status','product','shop','supplier','warehouse','platform'} for g in dimensions):
+        return scope_error('订单口径趋势不支持该分组；未忽略分组执行')
+    if time_granularity not in {'day','week','month'}:
+        return scope_error('无效的趋势时间粒度')
+    granularity = _auto_adjust_granularity(time_granularity, tr.start_iso, tr.end_iso)
+    try:
+        classifier = OrderClassifier.for_org(db, org_id)
+        dsl = [{'field': f.field, 'op': f.op, 'value': f.value} for f in filters
+               if f.field != tr.time_col and f.field != 'doc_type']
+        raw = db.rpc('erp_order_stats_grouped', {
+            'p_org_id': org_id, 'p_start': tr.start_iso, 'p_end': tr.end_iso,
+            'p_time_col': tr.time_col, 'p_filters': json.dumps(dsl) if dsl else None,
+            'p_group_by': dimensions[0] if dimensions else None,
+            'p_time_granularity': granularity,
+        }).execute().data
+        if not isinstance(raw, list):
+            raise ValueError('分类趋势未返回有效数据')
+        periods = defaultdict(list)
+        for row in raw:
+            periods[str(row['period'])[:10]].append(row)
+        rows = []
+        for period, items in sorted(periods.items()):
+            values = _metrics(classifier, items, scope, dimensions)
+            for value in values if isinstance(values, list) else [values]:
+                row = {'period': period, **{m: value[columns[m]] for m in requested}}
+                if dimensions:
+                    row['group_key'] = value['group_key']
+                rows.append(row)
+        if not dimensions:
+            end = datetime.fromisoformat(tr.end_iso)
+            # A half-open interval ending at noon still contains that calendar day.
+            fill_end = tr.end_iso
+            if end.time() != datetime.min.time():
+                fill_end = (end.replace(hour=0, minute=0, second=0, microsecond=0)
+                            + timedelta(days=1)).isoformat()
+            rows = _fill_zero_periods(rows, tr.start_iso, fill_end, granularity, requested)
+        # Never truncate an accounting result silently; this is the existing chart row budget.
+        if len(rows) > min(limit, 366):
+            return scope_error('趋势结果超过展示行数，请缩小时间范围或分组；未返回不完整合计')
+        _translate_platform_in_rows(rows)
+        return ToolOutput(source='erp', format=OutputFormat.TABLE, data=rows,
+            columns=_build_trend_columns(requested, dimensions[0] if dimensions else None),
+            summary=f'[统计口径] {SCOPE_LABELS[scope]}\n[统计时间列] {tr.time_col}\n' +
+                format_trend_summary(rows, granularity, requested, dimensions[0] if dimensions else None),
+            metadata={'order_scope': scope, 'time_column': tr.time_col, 'query_type': 'trend',
+                      'granularity': granularity, 'metrics': requested, 'row_count': len(rows)})
+    except Exception as exc:
+        return scope_error(f'无法按指定订单口径查询趋势：{exc}')

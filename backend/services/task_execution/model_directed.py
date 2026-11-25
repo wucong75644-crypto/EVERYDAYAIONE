@@ -5,6 +5,8 @@ all user requirements. Existing operation adapters remain the execution path.
 """
 from __future__ import annotations
 
+import json
+
 from uuid import UUID
 
 from pydantic import Field
@@ -121,6 +123,32 @@ def operation_binding(state, call):
     return step.id, key, effect_version(state, key)
 
 
+def content_item_identity(arguments):
+    source = arguments
+    for key in ('source_prompt', 'content_object', 'source'):
+        if not isinstance(source, dict):
+            return None
+        source = source.get(key)
+    if isinstance(source, dict) and isinstance(source.get('artifact_id'), str) and type(source.get('item_index')) is int:
+        return source['artifact_id'], source['item_index']
+    return None
+
+
+def independent_accepted_image(state, operation, call):
+    """Compare host-frozen content sources; confirmation slots keep their contract."""
+    if operation.status != 'accepted' or operation.tool_name != 'generate_image' or call.name != 'generate_image':
+        return False
+    current = content_item_identity(thaw(call.arguments))
+    if current is None:
+        return False
+    recipe = next((a for a in state.artifacts if a.step_id == operation.step_id
+                   and 'image.direct.recipe' in a.validations), None)
+    if recipe is None:
+        return False
+    previous = content_item_identity(json.loads(recipe.inline_text).get('normalized', {}))
+    return previous is not None and previous != current
+
+
 def record_calls(state, bootstrap, calls, registry,*,input_sha256=None,media_slots=None):
     """Prepare append-only, concrete tool obligations, not guessed user goals.
 
@@ -178,6 +206,7 @@ def record_calls(state, bootstrap, calls, registry,*,input_sha256=None,media_slo
             raise TaskError('TASK_DIRECT_RESULT_REUSE_REQUIRED')
         if any(v.capability == capability and v.status in {'reserved', 'accepted', 'uncertain'}
                and v is not original and not (v.status == 'accepted' and v.step_id in siblings)
+               and not independent_accepted_image(state, v, call)
                for v in previous_operations):
             raise TaskError('TASK_DIRECT_EFFECT_UNRESOLVED')
         if original is not None:

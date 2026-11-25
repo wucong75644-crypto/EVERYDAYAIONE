@@ -264,16 +264,23 @@ class UnifiedQueryEngine:
             scope = "valid"
         if scope and resolved_type == "detail":
             resolved_type = "export"  # SQL 分类筛选必须发生在 LIMIT 之前
-        if resolved_type == "trend":
+        if resolved_type == "trend" and not scope:
             supported = {"shop_name", "platform", "outer_id", "doc_type"}
             if any(f.field not in TIME_COLUMNS and (f.field not in supported or f.op not in {"eq", "like"} or (f.field == "outer_id" and f.op != "eq")) for f in validated):
                 return scope_error("趋势日统计不支持这些明细筛选条件，请改用订单汇总或导出；未忽略条件执行")
-        if scope and resolved_type not in {"summary", "compare", "export", "export_large"}:
+        if scope and resolved_type not in {"summary", "compare", "trend", "export", "export_large"}:
             return scope_error(f"当前 {resolved_type} 查询不支持指定订单口径，请改用订单汇总、对比或导出；未执行查询")
         if scope and metrics and set(metrics) - {"count", "amount", "qty", "order_count", "order_amount", "order_qty"}:
             return scope_error("指定订单口径目前支持订单数、数量和金额，其他指标请单独查询；未忽略口径执行")
 
-        if scope and resolved_type in {"summary", "compare"}:
+        if scope and resolved_type == "trend":
+            from services.kuaimai.erp_order_scope import query_order_scope_trend
+            result = await query_order_scope_trend(
+                self.db, self.org_id, validated, tr or _default_time_range_30d(), scope,
+                group_by=group_by, time_granularity=time_granularity or "day",
+                metrics=metrics, limit=limit,
+            )
+        elif scope and resolved_type in {"summary", "compare"}:
             result = await query_order_scope(
                 self.db, self.org_id, validated, tr, scope, group_by=group_by,
                 query_type=resolved_type, compare_range=compare_range or "mom", metrics=metrics,

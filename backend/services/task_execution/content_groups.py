@@ -171,15 +171,7 @@ def index_document(text: str, *, allow_plain=False, fenced_prompts=False) -> Ind
 def bind_group(document, images, request_text, selected=None, *, infer_materials=True, semantic_context=None):
     """Keep unknown/analysis-only provenance available without creating an execution input."""
     from .content_objects import image_materials
-    from services.handlers.image_size_requirements import ImageSizeError, selected_source_size, user_size_intent
-
-    if semantic_context is not None:
-        shared_size=semantic_context.size.model_dump(exclude_none=True)
-    else:
-        try:
-            shared_size=user_size_intent(request_text)
-        except ImageSizeError:
-            shared_size={}  # Prose may discuss alternatives; saving must not choose one.
+    shared_size = semantic_context.size.model_dump(exclude_none=True) if semantic_context is not None else {}
     shared_options={key:shared_size[key] for key in ('aspect_ratio','resolution') if key in shared_size}
     selected_materials = getattr(semantic_context, 'materials', None)
     if selected_materials is not None and any(material.reference not in [image.reference for image in images]
@@ -199,55 +191,37 @@ def bind_group(document, images, request_text, selected=None, *, infer_materials
             from .contracts import TaskError
             raise TaskError('CONTENT_SOURCE_IMAGE_UNAVAILABLE')
 
-    # A single explicitly referenced product for image prompts has an unambiguous origin.
-    # For a collection, or an explicit analysis-only request, keep the existing selection protocol.
-    unique = infer_materials and len(images) == 1
-    analysis_only = infer_materials and bool(re.search(r'(?:仅|只)(?:作|供|用于|用来).{0,8}(?:分析|理解)|(?:不要(?:使用|用|带)|不用|不使用|不带)(?:该|这张|任何)?(?:原图|参考图)|不作为(?:执行|生图)参考', request_text))
+    unique = len(images) == 1 and (infer_materials or semantic_context is not None)
+    analysis_only = semantic_context is not None and semantic_context.reference_usage == 'analysis'
     shared = selected
-    if semantic_context is not None:
-        analysis_only = semantic_context.reference_usage == 'analysis'
-        unique = len(images) == 1
-        if shared is None and unique and semantic_context.reference_usage == 'input':
-            shared = (1,)
-    if semantic_context is None and shared is None and unique and not analysis_only and re.search(
-            r'参考.{0,12}(图|产品)|(?:用|沿用).{0,8}(?:原图|新图)'
-            r'|(?:在|基于).{0,24}(?:图|产品).{0,12}(?:基础|二创)'
-            r'|(?:这个|这张)(?:图片|图).{0,8}产品', request_text):
+    if semantic_context is not None and shared is None and unique and semantic_context.reference_usage == 'input':
         shared = (1,)
     items = []
     for item in document.items:
         indices = shared
-        if semantic_context is None and indices is None and unique and not analysis_only and re.search(
-                r'(?:以|使用|沿用).{0,28}(?:上传的|原图|参考图).{0,12}(?:作为|保持|保留)', item.body):
-            indices = (1,)
         materials = item.materials or tuple(image_materials(images, indices or ()))
-        if selected_materials is not None and not item.materials:
-            materials = tuple(selected_materials)
+        if selected_materials is not None:
+            # Shared reference roles survive per-item styling. An explicit
+            # per-item choice (including analysis-only) overrides the same input.
+            overrides = {material.reference: material for material in item.materials}
+            materials = tuple(overrides.get(material.reference, material) for material in selected_materials)
+            materials += tuple(material for material in item.materials
+                               if material.reference not in [shared.reference for shared in selected_materials])
         elif unique and not item.materials and selected is None and (analysis_only or shared):
-            # Legacy text without explicit materials can retain its inferred group role.
+            # The semantic group role supplements items without explicit materials.
             usage = 'analysis' if analysis_only else 'input'
             if not materials:
                 materials = tuple(image_materials(images, (1,)))
             materials = tuple(material.model_copy(update={'usage': usage})
                               if material.reference == images[0].reference else material
                               for material in materials)
-        elif analysis_only and not item.materials and selected is None and (semantic_context is not None or re.search(
-                r'(?:都|均|全部|所有图.{0,3})(?:仅|只)', request_text)):
+        elif analysis_only and not item.materials and selected is None:
             materials = tuple(material.model_copy(update={'usage': 'analysis'})
                               for material in image_materials(images, range(1, len(images) + 1)))
-        try:
-            specs = selected_source_size(item.body) if semantic_context is None else {}
-        except ImageSizeError as error:
-            if str(error) != 'IMAGE_SIZE_AMBIGUOUS':
-                raise
-            # Saving prose is not executing it. Alternative suggested sizes do
-            # not establish one option; preserve the whole body without guessing.
-            specs = {}
-        options = {k: specs[k] for k in ('aspect_ratio', 'resolution') if k in specs}
         # The authenticated author's explicit request outranks model-authored
         # suggestions, including structured item options. Execution may still
         # apply a newer user request through the existing size resolver.
-        options = {**options, **item.options, **shared_options}
+        options = {**item.options, **shared_options}
         if semantic_context is not None and (images or semantic_context.reference_usage is not None
                 or selected_materials is not None or semantic_context.media.tool == 'generate_image'):
             if canvas is not None and not any(key in shared_size for key in ('aspect_ratio','width','orientation')) and shared_size.get('mode') != 'auto':
