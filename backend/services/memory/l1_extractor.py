@@ -431,13 +431,8 @@ def _should_extract(content: str) -> bool:
     # 跳过纯命令
     if stripped.startswith("/") and len(stripped) < 50:
         return False
-    # 含触发词的短消息直接通过
-    trigger_keywords = ["喜欢", "习惯", "记住", "以后", "从现在", "必须"]
-    if any(kw in stripped for kw in trigger_keywords):
-        return True
-    # 跳过超短消息（中文信息密度高，阈值设低）
-    if len(stripped) < 8:
-        return False
+    # Apply one size budget to every wording. The existing extraction model
+    # decides durable value; a missing business/preference keyword cannot drop it.
     return True
 
 

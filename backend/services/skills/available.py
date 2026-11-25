@@ -51,11 +51,8 @@ async def available_skills(db, settings, *, actor_user_id: str, conversation_id:
     candidates = await asyncio.to_thread(repository.catalog_candidates)
     checker = PermissionChecker(db)
     required = {code for candidate in candidates for code in candidate.catalog_metadata.required_permissions}
-    permissions = set()
-    permission_codes = sorted(required & PERMISSIONS.keys()) if org_id is not None else ()
-    for code in permission_codes:
-        if await checker.check(actor_user_id, org_id, code):
-            permissions.add(code)
+    permissions = (await checker.check_many(actor_user_id, org_id, required & PERMISSIONS.keys())
+                   if org_id is not None and required & PERMISSIONS.keys() else frozenset())
     context = SkillResolutionContext(
         actor_user_id=actor_user_id, org_id=org_id, conversation_scope="user",
         agent_domain="general", execution_mode="interactive", task_mode=task_mode, permissions=frozenset(permissions),

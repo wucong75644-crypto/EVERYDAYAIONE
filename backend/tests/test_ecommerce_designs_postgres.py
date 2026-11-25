@@ -85,8 +85,8 @@ async def test_real_planner_uses_page_settings_for_both_modes_and_preserves_imag
     service = EcommerceImagePlanner(owner)
     service.settings = SimpleNamespace(**vars(planner().settings), ecom_image_planning_enabled=True)
     class Resolver:
-        def __init__(self, *args, **kwargs):
-            pass
+        def __init__(self, owner, *args, **kwargs):
+            self.owner = owner
         def _message(self, message_id):
             return {"role": "user", "content": [{"type": "text", "text": raw}]}
         def resolve(self, selected):
@@ -96,7 +96,7 @@ async def test_real_planner_uses_page_settings_for_both_modes_and_preserves_imag
             assert [ref["asset_id"] for ref in selected] == [ref["asset_id"] for ref in public]
         def preview(self, selected):
             return f"https://example.invalid/{public.index(next(ref for ref in public if ref['asset_id'] == selected['asset_id']))}.png"
-        def size_context(self):
+        def size_context(self, **kwargs):
             return {}, {}
         def normalize_legacy(self, args):
             return args

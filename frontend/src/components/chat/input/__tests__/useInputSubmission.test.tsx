@@ -557,3 +557,23 @@ it('retries an unconfirmed steer with the original task and request ID', async (
     store.mockRestore();
   }
 });
+
+it.each([false, true])('submits as a new message only after a confirmed closed steer window, attachments=%s', async withAttachments => {
+  const restore = vi.fn();
+  const options = makeOptions({
+    isStreaming: true,
+    sendSteer: vi.fn(async () => 'window_closed' as const),
+    attachmentSnapshot: snapshot(withAttachments ? [image('参考.png', 'https://cdn.example.com/original.png')] : []),
+    detachAttachmentsForSubmission: vi.fn(() => ({ restore })),
+  });
+  const { result } = renderHook(() => useInputSubmission(options));
+  await act(() => result.current.handleSubmit());
+  expect(options.handleChatMessage).toHaveBeenCalledTimes(1);
+  expect(vi.mocked(options.handleChatMessage).mock.calls).toEqual([withAttachments
+    ? ['保留这段输入', 'conversation-1', options.attachmentSnapshot.imageInputs, null, null,
+      options.attachmentSnapshot.orderedAttachments]
+    : ['保留这段输入', 'conversation-1', null, null]]);
+  expect(options.clearConfirmedSteer).not.toHaveBeenCalled();
+  expect(restore).toHaveBeenCalledTimes(withAttachments ? 1 : 0);
+  expect(options.setSendError).not.toHaveBeenCalledWith(expect.stringContaining('送达状态未确认'));
+});

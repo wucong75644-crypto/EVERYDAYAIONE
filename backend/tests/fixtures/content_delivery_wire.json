@@ -1,0 +1,112 @@
+{
+  "proposal": {
+    "title": "产品新方案",
+    "notes": "分析：这是摄影参考，判断模式B。",
+    "items": [
+      {
+        "title": "主题1",
+        "body": "完整正文1，文字 ORIGINAL-1\n保持原产品结构，禁止水印。\n不能变形，条目限制1。",
+        "materials": [
+          {
+            "reference": {
+              "message_id": "original",
+              "content_index": 1
+            },
+            "role": "原产品",
+            "usage": "input"
+          },
+          {
+            "reference": {
+              "message_id": "analysis",
+              "content_index": 1
+            },
+            "role": "仅构图分析",
+            "usage": "analysis"
+          }
+        ],
+        "options": {
+          "aspect_ratio": "1:1",
+          "resolution": "1K",
+          "output_format": "png"
+        }
+      },
+      {
+        "title": "主题2",
+        "body": "完整正文2，文字 ORIGINAL-2\n保持原产品结构，禁止水印。\n不能变形，条目限制2。",
+        "materials": [
+          {
+            "reference": {
+              "message_id": "original",
+              "content_index": 1
+            },
+            "role": "原产品",
+            "usage": "input"
+          },
+          {
+            "reference": {
+              "message_id": "analysis",
+              "content_index": 1
+            },
+            "role": "仅构图分析",
+            "usage": "analysis"
+          }
+        ],
+        "options": {
+          "aspect_ratio": "1:1",
+          "resolution": "1K",
+          "output_format": "png"
+        }
+      },
+      {
+        "title": "主题3",
+        "body": "完整正文3，文字 ORIGINAL-3\n保持原产品结构，禁止水印。\n不能变形，条目限制3。",
+        "materials": [
+          {
+            "reference": {
+              "message_id": "original",
+              "content_index": 1
+            },
+            "role": "原产品",
+            "usage": "input"
+          },
+          {
+            "reference": {
+              "message_id": "analysis",
+              "content_index": 1
+            },
+            "role": "仅构图分析",
+            "usage": "analysis"
+          }
+        ],
+        "options": {
+          "aspect_ratio": "1:1",
+          "resolution": "1K",
+          "output_format": "png"
+        }
+      }
+    ],
+    "display_prefix": "下面是三条完整提示词。"
+  },
+  "events": [
+    {
+      "event_type": "message_chunk",
+      "payload": {
+        "chunk": "下面是三条完整提示词。"
+      },
+      "delivery_seq": 1
+    },
+    {
+      "event_type": "content_block_add",
+      "payload": {
+        "block": {
+          "type": "text",
+          "text": "下面是三条完整提示词。\n\n## 1. 主题1\n\n完整正文1，文字 ORIGINAL-1\n保持原产品结构，禁止水印。\n不能变形，条目限制1。\n\n## 2. 主题2\n\n完整正文2，文字 ORIGINAL-2\n保持原产品结构，禁止水印。\n不能变形，条目限制2。\n\n## 3. 主题3\n\n完整正文3，文字 ORIGINAL-3\n保持原产品结构，禁止水印。\n不能变形，条目限制3。",
+          "content_artifact_id": "canonical-artifact",
+          "content_delivery_final": true,
+          "content_replaces_text": "下面是三条完整提示词。"
+        }
+      },
+      "delivery_seq": 2
+    }
+  ]
+}

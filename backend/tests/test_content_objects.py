@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 import pytest
+from tests.semantic_fixtures import semantic_request
 from services.task_execution import content_objects as co
 from services.task_execution.contracts import TaskError, TaskState
 from services.task_execution.direct_loop import context_message, schemas, image_plan_item
@@ -13,6 +14,7 @@ from services.task_execution.reducer import digest
 from services.tools.catalog import build_capability_catalog
 from tests.test_model_directed_loop import case, execute
 from tests.test_task_execution_model_bridge import call
+from tests.test_skill_storage import storage  # noqa: F401
 
 
 def document():
@@ -488,14 +490,14 @@ async def run_content_loop(r, p, h, q, stream, blocks=None, *, sink=None):
     return sink, blocks, totals
 
 
-@pytest.mark.parametrize(('request_text', 'image_fields'), [
-    ('生成一张米白色产品主图。', {'content_source', 'draft'}),
-    ('用上面的第2条提示词出图。', {'content_source'}),
-    ('这个是图片。你用你写的提示词帮我生成新的图片', {'content_source'}),
-    ('不用你写的提示词，重新写一份再生成一张图片。', {'content_source', 'draft'}),
-    ('先只改你写的提示词，不要生成图片。', {'content_source', 'draft'}),
+@pytest.mark.parametrize(('request_text', 'image_fields', 'intent'), [
+    ('生成一张米白色产品主图。', {'content_source', 'draft'}, 'generate'),
+    ('用上面的第2条提示词出图。', {'content_source'}, 'execute_saved'),
+    ('这个是图片。你用你写的提示词帮我生成新的图片', {'content_source'}, 'execute_saved'),
+    ('不用你写的提示词，重新写一份再生成一张图片。', {'content_source', 'draft'}, 'write_then_submit_images'),
+    ('先只改你写的提示词，不要生成图片。', None, 'write'),
 ])
-async def test_model_request_assembles_one_current_contract_per_tool(monkeypatch, request_text, image_fields):
+async def test_model_request_assembles_one_current_contract_per_tool(monkeypatch, request_text, image_fields, intent):
     from dataclasses import replace
 
     from schemas.message import TextPart
@@ -508,6 +510,7 @@ async def test_model_request_assembles_one_current_contract_per_tool(monkeypatch
     monkeypatch.setattr(get_settings(), "chat_inline_image_enabled", True)
     runtime, prepared, handler, request = case()
     request = replace(request, content=[TextPart(text=request_text)])
+    request = semantic_request(request, intent)
     prepared.messages = [
         {'role': 'system', 'content': StaticLayer.render()},
         {'role': 'user', 'content': request_text},
@@ -529,7 +532,10 @@ async def test_model_request_assembles_one_current_contract_per_tool(monkeypatch
     sent = requests[0]
     offered = {tool['function']['name']: tool['function'] for tool in sent['tools']}
     assert len(offered) == len(sent['tools'])
-    assert set(offered['generate_image']['parameters']['properties']) == image_fields
+    if image_fields is None:
+        assert 'generate_image' not in offered  # Writing is not purchase authorization.
+    else:
+        assert set(offered['generate_image']['parameters']['properties']) == image_fields
     assert set(offered['generate_video']['parameters']['properties']) == {'content_source'}
     assert '仅接受文字脚本' in offered['generate_video']['description']
     assert '保留用户给出的来源、时间' in offered['web_search']['parameters']['properties']['query']['description']
@@ -539,7 +545,7 @@ async def test_model_request_assembles_one_current_contract_per_tool(monkeypatch
     assert set(save_material['required']) == {'reference', 'role', 'usage'}
     assert save_material['properties']['role']['description'] == co.MATERIAL_ROLE_GUIDANCE
     assert save_material['properties']['usage']['enum'] == ['input', 'analysis']
-    if 'draft' in image_fields:
+    if image_fields is not None and 'draft' in image_fields:
         assert offered['generate_image']['parameters']['$defs']['Material'] == save_material
     system = ' '.join(message['content'] for message in sent['messages'] if message['role'] == 'system')
     assert '目录匹配不等于必须使用' in system
@@ -549,7 +555,7 @@ async def test_model_request_assembles_one_current_contract_per_tool(monkeypatch
     handler._execute_tool_calls.assert_not_awaited()
 
 
-async def test_first_turn_explicit_history_reference_asks_without_sampling_or_dispatch():
+async def test_first_turn_missing_history_is_clarified_by_model_without_dispatch():
     from dataclasses import replace
     from unittest.mock import AsyncMock
 
@@ -563,7 +569,12 @@ async def test_first_turn_explicit_history_reference_asks_without_sampling_or_di
     ], context_anchor=SimpleNamespace(base_revision=0, input_message_id=str(uuid4())))
     prepared.messages = [{'role': 'user', 'content': text}]
     prepared.core_tools = [build_legacy_catalog().require('generate_image').to_schema()]
-    stream = AsyncMock(side_effect=AssertionError('没有旧稿时直接澄清'))
+    request = semantic_request(request, 'execute_saved')
+    from services.adapters.types import StreamChunk
+    sampled = []
+    async def stream(**kwargs):
+        sampled.append(kwargs)
+        yield StreamChunk(content='缺少原提示词，请发原稿，或确认按当前素材重新写。', finish_reason='stop')
 
     _, blocks, totals = await run_content_loop(runtime, prepared, handler, request, stream)
 
@@ -571,7 +582,7 @@ async def test_first_turn_explicit_history_reference_asks_without_sampling_or_di
     assert '原提示词' in totals.text and '重新写' in totals.text
     assert '回执' not in totals.text
     assert runtime.task_execution_state is None
-    stream.assert_not_called()
+    assert len(sampled) == 1
     handler._execute_tool_calls.assert_not_awaited()
 
 
@@ -633,6 +644,7 @@ async def test_reusing_previous_prompt_rejects_a_fresh_draft_even_after_model_co
     runtime, prepared, handler, request, _ = await registered()
     text = '用你写的提示词帮我生成新的图片'
     request = replace(request, content=[TextPart(text=text)])
+    request = semantic_request(request, 'execute_saved')
     prepared.messages.append({'role': 'user', 'content': text})
     prepared.core_tools = [build_legacy_catalog().require('generate_image').to_schema()]
     original = runtime.task_execution_state
@@ -659,7 +671,8 @@ async def test_reusing_previous_prompt_rejects_a_fresh_draft_even_after_model_co
 
     _, _, totals = await run_content_loop(runtime, prepared, handler, request, stream)
 
-    assert rounds == 2 and totals.text == question
+    assert rounds == 2 and totals.text.startswith(question)
+    assert totals.text.endswith('本轮没有提交图片任务。你可以重新发送生成要求。')
     assert co.objects(runtime.task_execution_state) == co.objects(original)
     assert runtime.task_execution_state.operations == original.operations
     handler._execute_tool_calls.assert_not_awaited()
@@ -751,8 +764,11 @@ async def test_mixed_draft_preserves_visible_text_without_saving_second_version(
         yield model_save_chunk(incomplete)
 
     sink, blocks, totals = await run_content_loop(r, p, h, q, stream)
-    part, = build_content_parts(blocks, fallback_text=totals.text)
-    assert rounds == 1 and part.text == sink.text == body
+    parts = build_content_parts(blocks, fallback_text=totals.text)
+    assert rounds == 2  # One bounded protocol correction, then explicit failure.
+    assert parts[0].text == body and sink.text.startswith(body)
+    assert all('另一份草稿' not in part.text for part in parts)
+    assert parts[-1].content_incomplete is True
     assert not co.catalog(r.task_execution_state)
     h._execute_tool_calls.assert_not_awaited()
 
@@ -804,6 +820,7 @@ async def test_image_submission_narration_requires_receipt():
     from services.adapters.types import StreamChunk
     r, p, h, q = case()
     q = replace(q, content=[TextPart(text='用第四个方案做成图片')])
+    q = semantic_request(q, 'execute_saved')
 
     async def promise(**kwargs):
         yield StreamChunk(content='我来登记第四条，然后')
@@ -811,7 +828,8 @@ async def test_image_submission_narration_requires_receipt():
 
     sink, blocks, totals = await run_content_loop(r, p, h, q, promise)
     shown, = [block['text'] for block in blocks if block['type'] == 'text']
-    assert shown == totals.text == sink.text == '本轮没有提交图片任务。你可以重新发送生成要求。'
+    assert shown == totals.text == sink.text == '我来登记第四条，然后提交生图。图片任务已提交。\n\n本轮没有提交图片任务。你可以重新发送生成要求。'
+    assert r.task_execution_state is None
     h._execute_tool_calls.assert_not_awaited()
 
 
@@ -827,6 +845,7 @@ async def test_saved_image_repeat_only_repairs_missing_call_once():
     message = uuid4()
     q = replace(q, content=[TextPart(text='这个再做一张')],
                 context_anchor=SimpleNamespace(input_message_id=message))
+    q = semantic_request(q, 'repeat')
     p.core_tools = [build_legacy_catalog().require('generate_image').to_schema()]
     rounds = 0
 
@@ -841,9 +860,10 @@ async def test_saved_image_repeat_only_repairs_missing_call_once():
         yield StreamChunk(content='图片任务已提交。', finish_reason='stop')
 
     sink, blocks, _ = await run_content_loop(r, p, h, q, promise)
-    assert rounds == 2 and sink.text == content_tools.IMAGE_NOT_SUBMITTED
+    assert rounds == 2 and sink.text == '图片任务已提交。\n\n'+content_tools.IMAGE_NOT_SUBMITTED
     assert content_tools.checkpoint_state(r)['image_call_repair_input'] == str(message)
-    assert [b['text'] for b in blocks if b['type'] == 'text'] == [content_tools.IMAGE_NOT_SUBMITTED]
+    assert [b['text'] for b in blocks if b['type'] == 'text'] == ['图片任务已提交。\n\n'+content_tools.IMAGE_NOT_SUBMITTED]
+    assert not r.task_execution_state.operations
     h._execute_tool_calls.assert_not_awaited()
 
 
@@ -860,6 +880,7 @@ async def test_unconfirmed_delivery_uses_one_repair_and_never_claims_submission(
     message = uuid4()
     q = replace(q, content=[TextPart(text=request_text)],
                 context_anchor=SimpleNamespace(input_message_id=message))
+    q = semantic_request(q, 'other', deliveries=[tool_name])
     assert tool_name not in p.tool_context.discovered_tools
     rounds = []
 
@@ -871,8 +892,9 @@ async def test_unconfirmed_delivery_uses_one_repair_and_never_claims_submission(
     sink, blocks, _ = await run_content_loop(r, p, h, q, promise)
     assert len(rounds) == 2
     expected = '本轮未提交视频任务。' if tool_name == 'generate_video' else '本轮未交付文件。'
-    assert [b['text'] for b in blocks if b['type'] == 'text'] == [expected]
-    assert '已提交' not in sink.text
+    assert [b['text'] for b in blocks if b['type'] == 'text'] == [f'{label}已提交，正在排队。\n\n'+expected]
+    assert sink.text.endswith(expected)
+    assert not r.task_execution_state.operations
     h._execute_tool_calls.assert_not_awaited()
 
 
@@ -883,6 +905,7 @@ async def test_video_acceptance_does_not_confirm_publication():
 
     r, p, h, q, _ = await registered()
     q = replace(q, content=[TextPart(text='用第二个方案生成一段视频')])
+    q = semantic_request(q, 'other', deliveries=['generate_video'])
     p.delivery_receipts = {'generate_video'}
 
     async def promise(**kwargs):
@@ -1003,6 +1026,7 @@ def test_explicit_saved_plan_regeneration_uses_only_current_user_input(text, reg
     message = uuid4()
     request = replace(request, content=[TextPart(text=text)],
                       context_anchor=SimpleNamespace(input_message_id=message))
+    request = semantic_request(request, 'repeat' if regenerates else 'other')
     assert content_tools.image_regeneration_variant(request) == (f'regenerate:{message}' if regenerates else None)
     if regenerates:
         assert content_tools.selects_previous_item(request)
@@ -1017,6 +1041,7 @@ def test_regeneration_without_repeating_the_plan_number_uses_the_new_user_messag
 
     _, _, _, request = case()
     request = replace(request, content=[TextPart(text='再帮我生成一次')])
+    request = semantic_request(request, 'repeat')
     for message in (uuid4(), uuid4()):
         turn = replace(request, context_anchor=SimpleNamespace(input_message_id=message))
         assert content_tools.image_regeneration_variant(turn) == f'regenerate:{message}'
@@ -1038,6 +1063,7 @@ def test_model_regeneration_action_requires_current_literal_user_evidence(messag
     message_id = uuid4()
     request = replace(request, content=[TextPart(text=message)],
                       context_anchor=SimpleNamespace(input_message_id=message_id))
+    request = semantic_request(request, 'repeat' if valid else 'other')
     if valid:
         assert content_tools.image_regeneration_variant(request, evidence) == f'regenerate:{message_id}'
     else:
@@ -1127,6 +1153,7 @@ async def test_existing_item_execution_rejects_a_rewritten_new_document_before_d
 
     runtime, prepared, handler, request, row = await registered()
     request = replace(request, content=[TextPart(text='第一个方案帮我做成图片')])
+    request = semantic_request(request, 'execute_saved')
     assert content_tools.selects_previous_item(request)
     schema, = content_tools.model_tools([co.SCHEMA], reuse_source=True)
     assert 'document' not in schema['function']['parameters']['properties']
@@ -1138,7 +1165,7 @@ async def test_existing_item_execution_rejects_a_rewritten_new_document_before_d
     assert co.catalog(runtime.task_execution_state) == [row]
     handler._execute_tool_calls.assert_not_awaited()
     for independent in ('画一张有第二条鱼的图片', '写四条方案，再把第二条做成图片', '只改第二条文案'):
-        assert not content_tools.selects_previous_item(replace(request, content=[TextPart(text=independent)]))
+        assert not content_tools.selects_previous_item(semantic_request(replace(request, content=[TextPart(text=independent)]), 'write'))
 
 
 @pytest.mark.asyncio
@@ -1152,17 +1179,19 @@ async def test_author_contract_keeps_user_format_and_original_when_model_omits_o
     request = replace(request, content=[TextPart(text='参考这张图写两条提示词，不要改变原图结构'),
                                         ImagePart(name='产品.png', workspace_path='product.png')],
                       context_anchor=SimpleNamespace(base_revision=0, input_message_id=source))
+    request = semantic_request(request, 'write', reference_usage='input')
     original = '正向\r\n 保留封面。\n负面\n禁止透视变形。'
     doc = {'title': '设计', 'items': [{'title': '甲', 'body': '第一份原文。'}, {'title': '乙', 'body': original}]}
 
     async def model(**kwargs):
-        offered = next(t['function'] for t in kwargs['tools'] if t['function']['name'] == co.SAVE)
-        assert offered['parameters']['required'] == ['document']
-        assert 'message_source' not in offered['parameters']['properties']
-        yield model_save_chunk(doc)
-        yield StreamChunk(finish_reason='tool_calls')
+        save = next(t for t in kwargs['tools'] if t['function']['name'] == co.SAVE)
+        assert 'confirmation' in save['function']['parameters']['properties']
+        # The host registers the visible original, including mixed CRLF/LF.
+        yield StreamChunk(content='## 1. 甲\n\n```text\n第一份原文。\n```\n\n## 2. 乙\n\n```text\n'+original+'\n```')
+        yield StreamChunk(finish_reason='stop')
 
     _, blocks, _ = await run_content_loop(runtime, prepared, handler, request, model)
+    handler._execute_tool_calls.assert_not_awaited()
     part, = [b for b in blocks if b['type'] == 'text']
     assert part['text'].count(original) == 1
     row, = co.catalog(runtime.task_execution_state)
@@ -1395,13 +1424,13 @@ async def test_viewing_old_image_routes_to_read_and_displays_once(monkeypatch):
     from services.handlers.chat.outcome_builder import build_content_parts
 
     r, p, h, q, row = await registered()
-    q = replace(q, content=[TextPart(text='给我看第二个方案之前生成的图')])
+    q = semantic_request(replace(q, content=[TextPart(text='给我看第二个方案之前生成的图')]), 'explain')
     await execute(r, p, h, q, [call('generate_image', {'content_source': ref(row, 2)}, 'mistaken-generate')])
     reply = next(m['content'] for m in reversed(p.messages)
                  if m['role'] == 'tool' and m['tool_call_id'] == 'mistaken-generate')
     if isinstance(reply, list):
         reply = reply[0]['text']
-    assert 'show_image' in reply
+    assert '本轮用户只要求文字' in reply
     assert not getattr(h, '_tool_result_stop_reason', None)
 
     reference = {'message_id': str(uuid4()), 'content_index': 0}
@@ -1466,7 +1495,7 @@ async def test_inline_image_failures_leave_no_original_or_native_operation(mixed
     await execute(r, p, h, q, calls)
     outputs = [json.dumps(m['content'], ensure_ascii=False) for m in p.messages if m['role'] == 'tool']
     assert len(outputs) == len(calls)
-    assert all(('CHAT_INLINE_IMAGE_BATCH_REQUIRED' if mixed else 'CHAT_INLINE_IMAGE_INPUT_INVALID') in entry
+    assert all(('CHAT_INLINE_IMAGE_BATCH_REQUIRED' if mixed else 'IMAGE_ORIGINAL_UNAVAILABLE') in entry
                for entry in outputs)
     assert KEY not in r.checkpoint_base
     assert not co.objects(r.task_execution_state)
@@ -1506,6 +1535,7 @@ async def test_prompt_only_request_delivers_answer_without_image_receipt(questio
 
     runtime, prepared, handler, request = case()
     request = replace(request, content=[TextPart(text=question)])
+    request = semantic_request(request, 'write')
     reply = '保留蓝色正方形的形状、位置和颜色，仅把背景换成浅黄色。'
 
     async def stream(**kwargs):
@@ -1524,10 +1554,10 @@ def test_prompt_authoring_can_be_followed_by_explicit_image_execution():
 
     assert image_execution_request(SimpleNamespace(content=[TextPart(
         text='先写一段提示词，再用它生成一张图片。',
-    )]))
+    )], params={'_ecom_workflow': {'intent':'write_then_submit_images'}}))
     assert image_execution_request(SimpleNamespace(content=[TextPart(
         text='不要生成第一张图片，只用第二张图出图。',
-    )]))
+    )], params={'_ecom_workflow': {'intent':'generate'}}))
 
 
 @pytest.mark.parametrize(('text', 'delivery', 'image'), [
@@ -1543,20 +1573,25 @@ def test_compound_requests_preserve_the_independent_delivery(text, delivery, ima
     from schemas.message import TextPart
     from services.handlers.chat import content_tools
 
-    request = SimpleNamespace(content=[TextPart(text=text)])
+    request = semantic_request(SimpleNamespace(content=[TextPart(text=text)]), 'generate' if image else 'other', deliveries=list(delivery))
     assert content_tools.requested_delivery_tools(request) == delivery
     assert content_tools.image_execution_request(request) is image
 
 
-async def test_requested_video_waits_for_later_user_confirmation_even_if_tool_is_available():
+@pytest.mark.parametrize('with_skill', [False, True])
+async def test_requested_video_waits_for_later_user_confirmation_even_if_tool_is_available(storage, with_skill):
     from dataclasses import replace
 
     from schemas.message import TextPart
     from services.handlers.chat import content_tools
 
     runtime, prepared, handler, request, row = await registered()
+    if with_skill:
+        from tests.test_skill_multiturn_integration import attach_lazy_method
+        source = await attach_lazy_method(runtime, storage)
     text = '先生成图片，等我确认后再生成视频'
     request = replace(request, content=[TextPart(text=text)])
+    request = semantic_request(request, 'generate', media={'tool':'generate_video','wait_all':True})
     prepared.content_controls_available = True
     prepared.content_visible_tool_names = {'generate_video'}
     assert content_tools.image_execution_request(request)
@@ -1567,22 +1602,25 @@ async def test_requested_video_waits_for_later_user_confirmation_even_if_tool_is
     ])
 
     handler._execute_tool_calls.assert_not_awaited()
-    assert '用户要求确认后再生成视频。本次未派发' in json.dumps(prepared.messages[-1]['content'], ensure_ascii=False)
+    assert '第 1 项在等待用户确认，本次未派发。' in json.dumps(prepared.messages[-1]['content'], ensure_ascii=False)
     assert not runtime.task_execution_state.operations
+    if with_skill:
+        source.load_assets.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 async def test_independent_conditions_on_same_media_batch_bind_to_saved_item():
     from dataclasses import replace
     from schemas.message import TextPart
-    from services.task_execution.item_confirmation import check, wait_all
+    from services.task_execution.item_confirmation import check, MediaDirective
 
     runtime, prepared, handler, request = case()
     prepared.content_controls_available = True
     text = '请写三条视频脚本。第1条直接生成视频，第2条和第3条分别等我确认。'
-    assert not wait_all(text)
-    assert wait_all('写三个视频脚本，每条分别等我确认。')
-    request = replace(request, content=[TextPart(text=text)])
+    waiting = MediaDirective(tool='generate_video', wait_for=[2, 3])
+    assert not waiting.wait_all
+    assert MediaDirective(tool='generate_video', wait_all=True).wait_all
+    request = semantic_request(replace(request, content=[TextPart(text=text)]), 'write', media=waiting.model_dump())
     draft = {'title': '三个海蓝手账短片',
              'items': [{'title': f'脚本{i}', 'body': f'产品故事{i}，用横屏展示海蓝手账。'}
                        for i in range(1, 4)]}
@@ -1599,9 +1637,10 @@ async def test_independent_conditions_on_same_media_batch_bind_to_saved_item():
     assert check(submit(1), state, text) is None
     assert check(submit(2), state, text)[0] == 'CHAT_MEDIA_AWAITING_USER'
     assert check(submit(3), state, text)[0] == 'CHAT_MEDIA_AWAITING_USER'
-    assert check(submit(2), state, '确认第2条') is None
-    assert check(submit(3), state, '确认第2条')[0] == 'CONTENT_CONFIRMATION_DIFFERENT_ITEM'
-    assert check(submit(3), state, '我确认第3条，可以生成') is None
+    approval = MediaDirective(tool='generate_video', approved=[2], confirmation_only=True)
+    assert check(submit(2), state, '确认第2条', semantic=approval) is None
+    assert check(submit(3), state, '确认第2条', semantic=approval)[0] == 'CONTENT_CONFIRMATION_DIFFERENT_ITEM'
+    assert check(submit(3), state, '我确认第3条，可以生成', semantic=MediaDirective(tool='generate_video',approved=[3],confirmation_only=True)) is None
     assert check(submit(2), state, '先不要确认第2条')[0] == 'CHAT_MEDIA_AWAITING_USER'
     assert check(submit(3), state, '好的继续')[0] == 'CHAT_MEDIA_AWAITING_USER'
     assert check(call('generate_video', {'prompt': '绕过来源'}, 'direct'), state,
@@ -1617,7 +1656,7 @@ async def test_independent_conditions_on_same_media_batch_bind_to_saved_item():
     prepared.content_visible_tool_names = {'generate_video'}
     await execute(runtime, prepared, handler, request, [submit(1), submit(2), submit(3)])
     assert dispatched == [draft['items'][0]['body']]
-    approved_request = replace(request, content=[TextPart(text='确认第2条')])
+    approved_request = semantic_request(replace(request, content=[TextPart(text='确认第2条')]), 'execute_saved', media=approval.model_dump())
     await execute(runtime, prepared, handler, approved_request, [submit(2), submit(3)])
     assert dispatched == [item['body'] for item in draft['items'][:2]]
 
@@ -1724,7 +1763,8 @@ def test_steer_visual_input_requires_verified_image_kind(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_inflight_attachment_restarts_real_gateway_with_the_original_task(tmp_path, monkeypatch):
+@pytest.mark.parametrize('with_skill', [False, True])
+async def test_inflight_attachment_restarts_real_gateway_with_the_original_task(tmp_path, monkeypatch, storage, with_skill):
     import asyncio
     from dataclasses import replace
     from unittest.mock import AsyncMock
@@ -1741,6 +1781,10 @@ async def test_inflight_attachment_restarts_real_gateway_with_the_original_task(
 
     monkeypatch.setattr('services.agent.observability.chat_lifecycle.chat_phase', lambda *args, **kwargs: None)
     runtime, prepared, handler, request = case()
+    if with_skill:
+        from tests.test_skill_multiturn_integration import attach_lazy_method
+        source = await attach_lazy_method(runtime, storage)
+        original_method = runtime.skill_runtime.active['skill0']
     request = replace(request, content=[TextPart(text='写策划书，只写文字，不生成图片或视频。')])
     monkeypatch.setattr(get_settings(), 'file_workspace_root', str(tmp_path))
     monkeypatch.setattr(FileExecutor, 'get_cdn_url', lambda self, relative: 'https://cdn.example.test/ref.png')
@@ -1799,6 +1843,11 @@ async def test_inflight_attachment_restarts_real_gateway_with_the_original_task(
         assert runtime.task_user_changes.items[0].delivered
         assert str(change.event_id) in runtime.task_direct_seen
         adapter.close.assert_not_awaited()
+        if with_skill:
+            assert runtime.skill_runtime.active['skill0'].rendered == original_method.rendered
+            assert runtime.skill_runtime.active['skill0'].loaded_asset_ids == ('guide',)
+            source.load_assets.assert_awaited_once()
+            assert sum('A private reference.' in str(message.get('content')) for message in prepared.messages) == 1
     finally:
         await prepared.model_gateway.close()
     adapter.close.assert_awaited_once()
@@ -1817,7 +1866,7 @@ async def test_confirmed_video_message_uses_actual_receipt_before_streaming(outc
 
     monkeypatch.setattr('services.agent.observability.chat_lifecycle.chat_phase', lambda *args, **kwargs: None)
     runtime, prepared, handler, request, _ = await registered()
-    request = replace(request, content=[TextPart(text='确认第2条')])
+    request = semantic_request(replace(request, content=[TextPart(text='确认第2条')]), 'other', media={'tool':'generate_video','approved':[2],'confirmation_only':True})
     result = AgentResult('视频任务已受理', metadata={
         'outcome': outcome, 'task_id': 'video-id', 'accepted': True,
     })
@@ -1849,4 +1898,4 @@ def test_generated_image_edit_is_separate_from_saved_plan_regeneration(text, exp
     from schemas.message import TextPart
     from services.handlers.chat.content_tools import requests_generated_image_edit
 
-    assert requests_generated_image_edit(SimpleNamespace(content=[TextPart(text=text)])) is expected
+    assert requests_generated_image_edit(semantic_request(SimpleNamespace(content=[TextPart(text=text)]), 'edit' if expected else 'other')) is expected

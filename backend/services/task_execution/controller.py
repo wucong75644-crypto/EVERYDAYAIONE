@@ -125,7 +125,7 @@ CONTROL_DESCRIPTIONS = {
     'import_task_result':'把本任务真实已返回的只读工具成果导入对应就绪步骤。填写原tool_call_id与arguments；'
         '宿主读取Actor原账本、核对原参数哈希与当前权限；text/data为真实返回内容，file须为原结果FileRef且当前文件存在、未过期和获准读取。'
         'step.capability须与原工具目录一致；不执行查询、不重收费，不能当作写入、删除、发帖等动作的完成回执。',
-    'read_task_result':'不填artifact_id时列出本任务原工具账本的调用定位与状态；填当前native.read.result成果ID时读取完整已存数据/文本或重新核验文件引用。'
+    'read_task_result':'不填artifact_id时列出本任务原工具账本的调用定位与状态；填native.read.result成果ID时读取已存数据/文本或核验文件；填本任务image成果ID时核验并展示原图片。'
         '上下文压缩或续接后按原成果读取，不凭摘要重造查询结果，也不重新执行业务工具。',
 }
 
@@ -313,6 +313,26 @@ class TaskController:
         if actual.sha256!=artifact.sha256 or actual.reference!=artifact.reference:raise TaskError('TASK_SANDBOX_OUTPUT_CHANGED')
         return value
 
+    async def _read_image_artifact(self, artifact):
+        # Use the existing owner/lease-fenced query and today's resource policy.
+        # Reading an image never reserves a new operation or changes its source.
+        if (not artifact.reference.startswith('task-image:') or self.image_resource_resolver is None
+                or not hasattr(self.artifact_reader, 'reusable_images')):
+            raise TaskError('TASK_IMAGE_REUSE_READER_UNAVAILABLE')
+        rows = await self.artifact_reader.reusable_images(self.state, source_task_id=artifact.source_task_id)
+        source = next((row for row in rows
+                       if row['task_id'] == str(artifact.source_task_id)
+                       and artifact.reference == 'task-image:' + row['task_id']
+                       and row['part_sha256'] == artifact.sha256), None)
+        if source is None:
+            raise TaskError('TASK_CONTINUATION_IMAGE_UNVERIFIED')
+        try:
+            await self.image_resource_resolver([{'message_id': source['message_id'],
+                'content_index': source['content_index'], 'role': 'reference'}], require_originals=False)
+        except (ValueError, PermissionError, OSError):
+            raise TaskError('TASK_IMAGE_REUSE_RESOURCE_UNAVAILABLE') from None
+        return {'artifact_id': artifact.id, 'image': source['part'], 'reused': True}
+
     async def control(self, name, arguments, *, call_id) -> ControlOutcome:
         if name not in CONTROL_INPUTS:
             raise TaskError('TASK_CONTROL_UNKNOWN')
@@ -475,16 +495,22 @@ class TaskController:
             elif name in {'import_task_result','read_task_result'}:
                 if self.artifact_reader is None:raise TaskError('TASK_ARTIFACT_READER_UNAVAILABLE')
                 if name=='read_task_result':
-                    found=await self.artifact_reader.native_result(self.state,artifact_id=value.artifact_id)
-                    if value.artifact_id is None:extra['results']=found.get('results',[])
+                    image = next((a for a in self.state.artifacts
+                                  if a.id == value.artifact_id and a.kind == 'image'), None)
+                    if image is not None:
+                        extra.update(await self._read_image_artifact(image))
+                        candidate = self.state
                     else:
-                        from .native_results import read_result
-                        artifact=next((a for a in self.state.artifacts if a.id==value.artifact_id),None)
-                        if artifact is None:raise TaskError('TASK_ARTIFACT_NOT_FOUND')
-                        import asyncio
-                        context=await self.result_context() if callable(self.result_context) else self.result_context
-                        extra.update(await asyncio.to_thread(read_result,self.state,artifact,found['record'],context=context))
-                    candidate=self.state
+                        found=await self.artifact_reader.native_result(self.state,artifact_id=value.artifact_id)
+                        if value.artifact_id is None:extra['results']=found.get('results',[])
+                        else:
+                            from .native_results import read_result
+                            artifact=next((a for a in self.state.artifacts if a.id==value.artifact_id),None)
+                            if artifact is None:raise TaskError('TASK_ARTIFACT_NOT_FOUND')
+                            import asyncio
+                            context=await self.result_context() if callable(self.result_context) else self.result_context
+                            extra.update(await asyncio.to_thread(read_result,self.state,artifact,found['record'],context=context))
+                        candidate=self.state
                 else:
                     from .native_results import import_result
                     from services.tools.catalog import build_capability_catalog

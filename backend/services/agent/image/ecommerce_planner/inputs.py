@@ -18,6 +18,33 @@ class FixedSettings(StrictModel):
     image_count: int = Field(ge=1, le=15)
 
 
+def text_message_ids(source_ids, current_message_id):
+    """Validate selectors, then include the already authenticated input once."""
+    if (not isinstance(source_ids,list) or len(source_ids)>8
+            or any(not isinstance(item,str) for item in source_ids)
+            or len(set(source_ids))!=len(source_ids)):
+        raise ValueError('ECOM_PLAN_HISTORY_INVALID')
+    return [*(item for item in source_ids if item!=current_message_id),current_message_id]
+
+
+def with_user_changes(messages, changes, owner_task_id):
+    """Freeze already delivered, authenticated appends with their event provenance."""
+    if changes is None:
+        return messages
+    from services.task_execution.user_changes import UserChanges
+    value=UserChanges.model_validate(changes)
+    result=list(messages)
+    seen={message.get('source_id') for message in result}
+    for item in value.items:
+        source=f'user_change:{item.event_id}'
+        if str(item.owner_task_id)!=str(owner_task_id) or not item.delivered or source in seen:
+            continue
+        result.append({'source_id':source,'message_sha256':item.message_sha256,
+            'parts':[{'content_index':0,'text':item.message}]})
+        seen.add(source)
+    return result
+
+
 def source_bindings(snapshot):
     """Derive aliases from the frozen order, never from an AI-authored locator."""
     bindings = {f"image_{number}": {"source_id": source_id(ref), "kind": "image", "role": ref["role"]}
@@ -35,7 +62,8 @@ def model_input(snapshot, messages, refs):
     text = []
     for message in messages:
         for part in message["parts"]:
-            text.append({"source_ref": f"text_{len(text) + 1}", "text": part["text"]})
+            text.append({"source_ref": f"text_{len(text) + 1}", "text": part["text"],
+                **({'source_kind':'user_append'} if str(message.get('source_id','')).startswith('user_change:') else {})})
     return {"settings": {"task_type": snapshot.get("task_type", "main_images"),
             "image_count": snapshot.get("image_count"), "platform": snapshot.get("platform"),
             "language": snapshot.get("language"), **{key: snapshot["target_size"][key]

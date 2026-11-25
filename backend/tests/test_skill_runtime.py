@@ -31,6 +31,8 @@ class Source:
         self.candidates = candidates if candidates is not None else [item()]
         self.body = body
         self.discover = AsyncMock(return_value=self.candidates)
+        self.discover_selection = AsyncMock(side_effect=lambda selection: [
+            c for c in self.candidates if c.skill_key == selection.skill_id])
         self.session_bindings = AsyncMock(return_value=[])
         self.load = AsyncMock(side_effect=self._load)
 
@@ -383,11 +385,15 @@ def test_reference_prompt_size_guidance_only_applies_to_the_reviewed_skill():
     from services.handlers.image_size_requirements import SIZE_GUIDANCE
     from services.skills.context import instruction_message
     from services.task_execution.methods import PROFILES, REFERENCE_PROMPTS_PROFILE
+    from services.skills.runtime import ActiveSkill
+    from services.skills.renderer import argument_summary
 
     (package, key, revision, sha), = [identity for identity, profile in PROFILES.items()
                                      if profile[0] == REFERENCE_PROMPTS_PROFILE]
-    active = SimpleNamespace(skill_key=key, revision=revision, body_sha256=sha,
-                             rendered='原版提示词和完整工作步骤')
+    body = '原版提示词和完整工作步骤'
+    active = ActiveSkill(skill_key=key, revision=revision, body_sha256=sha,
+                         rendered=body, rendered_sha256=digest(body),
+                         args_summary=argument_summary({}), effective_allowed_tool_names=frozenset())
     candidate = SimpleNamespace(package_id=package, skill_key=key, description='参考图提示词',
                                 catalog_metadata=SimpleNamespace(task_stage=None, name='参考图提示词'))
     context = instruction_message(active, candidate, manual=True, context_version=2)

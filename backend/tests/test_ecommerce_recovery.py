@@ -217,14 +217,15 @@ async def test_dashscope_download_failure_retries_only_before_any_stream_and_pre
 
 
 @pytest.mark.parametrize('answer,expected', [
-    ({'kind': 'main_images', 'mode': 'retry', 'reuse_through_stage': 2}, 'main_images'),
-    ({'kind': 'ordinary_image', 'mode': 'new', 'reuse_through_stage': 0}, 'ordinary_image'),
-    ({'kind': 'ordinary_image', 'mode': 'retry', 'reuse_through_stage': 2}, 'unavailable'),
-    ({'kind': 'main_images', 'mode': 'new', 'reuse_through_stage': 2}, 'unavailable'),
-    ({'kind': 'main_images', 'mode': 'retry', 'reuse_through_stage': True}, 'unavailable'),
-    ({'kind': 'main_images', 'mode': 'retry', 'reuse_through_stage': 2, 'prompt': 'injected'}, 'unavailable'),
+    ({'kind': 'main_images', 'mode': 'retry', 'reuse_through_stage': 2, 'intent': 'write_then_submit_images'}, 'main_images'),
+    ({'kind': 'ordinary_image', 'mode': 'new', 'reuse_through_stage': 0, 'intent': 'generate'}, 'ordinary_image'),
+    ({'kind': 'ordinary_image', 'mode': 'retry', 'reuse_through_stage': 2, 'intent': 'write_then_submit_images'}, 'unavailable'),
+    ({'kind': 'main_images', 'mode': 'new', 'reuse_through_stage': 2, 'intent': 'write_then_submit_images'}, 'unavailable'),
+    ({'kind': 'main_images', 'mode': 'retry', 'reuse_through_stage': True, 'intent': 'write'}, 'unavailable'),
+    ({'kind': 'main_images', 'mode': 'retry', 'reuse_through_stage': 2, 'intent': 'write_then_submit_images', 'prompt': 'injected'}, 'unavailable'),
 ])
 async def test_semantic_route_is_one_call_and_strict(monkeypatch, answer, expected):
+    answer={'image_count':None,**answer}
     settings = SimpleNamespace(intent_router_enabled=True, dashscope_api_key='test-only',
         intent_router_model='test-router', intent_router_timeout=9)
     monkeypatch.setattr('core.config.get_settings', lambda: settings)
@@ -338,3 +339,10 @@ async def test_workflow_skill_restores_exact_identity_without_manual_selection(a
     assert (await runtime.activate(json.dumps({'skill_id':'ecommerce-main-images'})))['ok']
     assert source.load.await_args.args[0].package_id==original.package_id
     assert source.load.await_args.args[0].revision=='v3'
+
+
+def test_network_disconnect_is_explained_without_authorizing_a_blind_retry():
+    from services.agent.image.ecommerce_planner.recovery import failure_summary
+    text=failure_summary('NETWORK_ERROR','uncertain',2,(1,))
+    assert '连接中断' in text and '未收到完整结果' in text
+    assert '停止自动重发' in text and '已保留有效阶段：1' in text and '未按此方案提交生图' in text

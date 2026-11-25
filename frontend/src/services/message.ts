@@ -40,7 +40,7 @@ export interface VideoGenerationParams {
 export interface ChatGenerationParams {
   model: string;
   thinkingEffort?: string;
-  thinkingMode?: 'default' | 'deep_think';
+  thinkingMode?: 'default' | 'deep_think' | 'disabled';
 }
 
 /** 生成参数（用于重新生成时继承） */

@@ -25,13 +25,36 @@ from tests.test_model_directed_loop import case, execute
 from tests.test_task_execution_model_bridge import call
 
 
-async def image_wire_contracts(monkeypatch, text, *, single_image_edit=True):
+def test_query_plan_tool_and_forced_choice_reach_the_existing_model_transport():
+    from services.agent.plan_builder import QUERY_PLAN_TOOL
+    adapter=DashScopeChatAdapter(api_key='test',model='deepseek-v4-pro')
+    choice={'type':'function','function':{'name':'submit_query_plan'}}
+    body=adapter._request_body([],stream=True,reasoning_effort=None,thinking_mode='disabled',tools=[QUERY_PLAN_TOOL],tool_choice=choice)
+    assert body['tools']==[QUERY_PLAN_TOOL] and body['tool_choice']==choice
+    schema=QUERY_PLAN_TOOL['function']['parameters']
+    valid={'steps':[{'domain':'trade','params':{'doc_type':'order','order_scope':'valid','shop_name':'原店铺','time_range':'2026-10-01 ~ 2026-10-07','query_type':'summary'}}]}
+    assert Draft202012Validator(schema).is_valid(valid)
+    missing=copy.deepcopy(valid);del missing['steps'][0]['params']['order_scope']
+    assert not Draft202012Validator(schema).is_valid(missing)
+    for field in ('time_range','query_type'):
+        incomplete=copy.deepcopy(valid);del incomplete['steps'][0]['params'][field]
+        assert not Draft202012Validator(schema).is_valid(incomplete)
+    invalid=copy.deepcopy(valid);invalid['steps'][0]['params']['order_scope']='invented'
+    assert not Draft202012Validator(schema).is_valid(invalid)
+    ordinary=adapter._request_body([],stream=True,reasoning_effort=None,thinking_mode='disabled')
+    assert 'tool_choice' not in ordinary
+
+
+async def image_wire_contracts(monkeypatch, text, *, single_image_edit=True, intent=None):
     from core.config import get_settings
 
     monkeypatch.setattr(get_settings(), 'chat_inline_image_enabled', True)
     monkeypatch.setattr(get_settings(), 'chat_single_image_edit_enabled', single_image_edit)
     runtime, prepared, handler, request = case()
     request = replace(request, content=[TextPart(text=text)])
+    if intent is not None:
+        from tests.semantic_fixtures import semantic_request
+        request=semantic_request(request,intent)
     prepared.messages = [{'role': 'user', 'content': text}]
     prepared.core_tools = [build_legacy_catalog().require('generate_image').to_schema()]
     sent = []
@@ -55,16 +78,16 @@ async def wire_contracts(monkeypatch):
     return await image_wire_contracts(monkeypatch, '参考这张图的配色重新生成一张')
 
 
-@pytest.mark.parametrize(('text', 'enabled', 'simple'), [
-    ('把你刚生成的那张图的桌面颜色调浅一点', True, True),
-    ('把你刚生成的那张图的桌面颜色调浅一点', False, False),
-    ('把你生成的第二张图的桌面颜色调浅一点', True, True),
-    ('把你刚生成的那张图改成竖版', True, False),
-    ('把你刚生成的那张图调浅，并另外生成一张新图', True, False),
-    ('把你刚生成的那张图调浅，同时生成一段视频', True, False),
+@pytest.mark.parametrize(('text', 'enabled', 'simple','intent'), [
+    ('把你刚生成的那张图的桌面颜色调浅一点', True, True,'edit'),
+    ('把你刚生成的那张图的桌面颜色调浅一点', False, False,'edit'),
+    ('把你生成的第二张图的桌面颜色调浅一点', True, True,'edit'),
+    ('把你刚生成的那张图改成竖版', True, False,None),
+    ('把你刚生成的那张图调浅，并另外生成一张新图', True, False,None),
+    ('把你刚生成的那张图调浅，同时生成一段视频', True, False,None),
 ])
-async def test_single_edit_publishes_flat_contract_only_for_supported_requests(monkeypatch, text, enabled, simple):
-    contracts = await image_wire_contracts(monkeypatch, text, single_image_edit=enabled)
+async def test_single_edit_publishes_flat_contract_only_for_supported_requests(monkeypatch, text, enabled, simple,intent):
+    contracts = await image_wire_contracts(monkeypatch, text, single_image_edit=enabled,intent=intent)
     parameters = contracts['generate_image']
     if not simple:
         assert 'edit_instruction' not in parameters['properties']
@@ -248,3 +271,63 @@ async def test_image_draft_and_reference_skill_publish_same_size_fields(wire_con
     args = {'draft': {key: value for key, value in item.items() if key != 'display_prefix'}}
     assert Draft202012Validator(inline).is_valid(args) is valid
     assert (offered_argument_error('generate_image', args, inline) is None) is valid
+
+
+@pytest.mark.parametrize('scenario',['unique','pending','ambiguous','explicit-multiple'])
+def test_previous_result_source_is_the_receipt_output_and_not_its_old_input(monkeypatch,scenario):
+    from types import SimpleNamespace
+    from services.task_execution.inline_image_action import previous_result_reference
+    task='00000000-0000-4000-8000-000000000001'
+    other='00000000-0000-4000-8000-000000000002'
+    operations=[SimpleNamespace(tool_name='generate_image',status='accepted',receipt_ref='task:'+task)]
+    if scenario=='explicit-multiple':
+        operations.append(SimpleNamespace(tool_name='generate_image',status='accepted',receipt_ref='task:'+other))
+    state=SimpleNamespace(operations=operations)
+    candidates=[({'id':'old-input','role':'assistant','status':'completed'},0,{'task_id':other}),
+                ({'id':'new-output','role':'assistant','status':'running' if scenario=='pending' else 'completed'},
+                 2,{'task_id':task})]
+    if scenario=='ambiguous':
+        candidates.append(({'id':'another-output','role':'assistant','status':'completed'},0,{'task_id':task}))
+    native=SimpleNamespace(known_sources=lambda:candidates)
+    monkeypatch.setattr('services.task_execution.image_resources.native_resolver',lambda *args:native)
+    selected=previous_result_reference(state,object(),object(),object())
+    assert selected==({'message_id':'new-output','content_index':2} if scenario=='unique' else None)
+
+
+@pytest.mark.parametrize('previous',[False,True])
+def test_previous_result_is_an_explicit_model_choice_not_a_user_keyword_rule(previous):
+    from services.task_execution.inline_image_action import PreviousResultEdit, request_type, is_inline_call
+    native=build_legacy_catalog().require('generate_image').to_schema()
+    projected,=content_tools.model_tools([native],inline_image=True,previous_result=previous)
+    schema=projected['function']['parameters']
+    args={'previous_result_edit':'背景改为浅灰，保留主体。'}
+    assert Draft202012Validator(schema).is_valid(args) is previous
+    assert request_type(schema['properties'],args) is (PreviousResultEdit if previous else None)
+    assert is_inline_call({'name':'generate_image','arguments':json.dumps(args)})
+    assert Draft202012Validator(schema).is_valid({'content_source':{'artifact_id':'saved','item_index':1}})
+    assert not Draft202012Validator(schema).is_valid({**args,'draft':{'title':'new','body':'new'}})
+
+
+def test_new_planner_calls_require_explicit_count_but_native_legacy_schema_stays_compatible():
+    native=build_legacy_catalog().require('plan_ecommerce_images').to_schema()
+    before=copy.deepcopy(native)
+    projected,=content_tools.model_tools([native])
+    args={'references':[{'file_id':'real-file','role':'product'}]}
+    assert Draft202012Validator(native['function']['parameters']).is_valid(args)
+    schema=projected['function']['parameters']
+    assert schema['properties']['image_count']==native['function']['parameters']['properties']['image_count']
+    assert not Draft202012Validator(schema).is_valid(args)
+    assert Draft202012Validator(schema).is_valid({**args,'image_count':3})
+    assert Draft202012Validator(schema).is_valid({'continue_plan_id':'4825ec68-a21c-49d0-b941-f3668ea7c228'})
+    assert native==before
+
+
+def test_frozen_user_count_is_owned_by_server_and_is_not_a_second_model_argument():
+    native=build_legacy_catalog().require('plan_ecommerce_images').to_schema()
+    before=copy.deepcopy(native)
+    projected,=content_tools.model_tools([native],planned_image_count=3)
+    schema=projected['function']['parameters']
+    assert 'image_count' not in schema['properties']
+    assert Draft202012Validator(schema).is_valid({'references':[{'file_id':'original','role':'product'}]})
+    assert not Draft202012Validator(schema).is_valid({'references':[{'file_id':'original','role':'product'}],'image_count':10})
+    assert native==before

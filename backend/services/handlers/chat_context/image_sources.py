@@ -53,7 +53,11 @@ def image_sources(row, org_id=None, visible_indices=()):
             if isinstance(generation, dict) and generation.get("origin") == "chat_image":
                 if generation.get("task_id"):
                     item["task_id"] = str(generation["task_id"])
-                if generation.get("submission_state"):
+                # Submission metadata is frozen at acceptance; a completed
+                # message with a real output is no longer queued for generation.
+                if row.get("status") == "completed" and available:
+                    item["submission_state"] = "published"
+                elif generation.get("submission_state"):
                     item["submission_state"] = generation["submission_state"]
             for key in ("task_id", "asset_id"):
                 if part.get(key):

@@ -396,20 +396,47 @@ class ChatImageInputResolver:
                 **{key: dimensions[key] for key in ("width", "height", "aspect_ratio")}})
         return resolved
 
-    def size_context(self, *, use_previous=True, infer_attachment_canvas=True):
+    def size_context(self, *, use_previous=True, infer_attachment_canvas=True, semantic_context=None):
         from services.handlers.chat_context.image_sources import content_parts
-        from services.handlers.image_size_requirements import user_size_intent
         def text(row):
             return "\n".join(part.get("text", "") for part in content_parts(row.get("content"))
                               if isinstance(part, dict) and part.get("type") == "text")
         current = self._message(self.input_message_id)
         if current.get("role") != "user":
             raise PermissionError("IMAGE_SOURCE_MESSAGE_DENIED")
-        intent = user_size_intent(text(current))
-        if (infer_attachment_canvas
-                and any(isinstance(part, dict) and part.get("type") == "image" for part in content_parts(current.get("content")))
-                and not any(key in intent for key in ("aspect_ratio", "mode", "width", "orientation"))):
-            intent["mode"] = "inherit_reference"
+        actor = getattr(getattr(self, 'owner', None), '_actor_runtime', None)
+        if semantic_context is None:
+            from services.agent.image.ecommerce_planner.workflow import ImageRequestContext
+            raw = (getattr(actor, 'workflow_projection', None) or {}).get('request_context')
+            semantic_context = ImageRequestContext.model_validate(raw or {})
+        intent = semantic_context.size.model_dump(exclude_none=True)
+        locator = None
+        if semantic_context is not None:
+            resource=getattr(semantic_context,'canvas_resource',None)
+            if resource is not None:
+                changes=getattr(getattr(actor,'task_user_changes',None),'items',())
+                available={a.resource_ref for change in changes
+                    if change.delivered and str(change.owner_task_id)==str(getattr(actor,'task_id',None))
+                    for a in change.attachments if a.kind=='image'}
+                if resource not in available or semantic_context.canvas_image is not None:
+                    from services.handlers.image_size_requirements import ImageSizeError
+                    raise ImageSizeError('IMAGE_CANVAS_BINDING_INVALID','画布投影与实际已送达素材不一致，尚未派发。')
+                resolved=self.resolve([{'resource_ref':resource,'role':'画布来源'}])[0]
+                locator={key:resolved[key] for key in ('workspace_path','content_sha256')}
+            ordinal = semantic_context.canvas_image
+            images = [i for i, part in enumerate(content_parts(current.get('content')))
+                      if isinstance(part, dict) and part.get('type') == 'image']
+            # A current-attachment ordinal cannot identify a historical result.
+            # Its authenticated receipt/reference is resolved by the caller.
+            if ordinal is not None and images:
+                if ordinal > len(images):
+                    from services.handlers.image_size_requirements import ImageSizeError
+                    raise ImageSizeError('IMAGE_CANVAS_BINDING_INVALID', '画布投影指向不存在的当前附件，尚未派发。')
+                locator = {'message_id': str(current['id']), 'content_index': images[ordinal - 1]}
+        if locator:
+            intent['canvas_reference'] = locator
+            if not any(key in intent for key in ('aspect_ratio', 'width', 'orientation', 'mode')):
+                intent['mode'] = 'inherit_reference'
         if not use_previous:
             return intent, {}
         # Prior requirements come only from user text within the closed anchor,
@@ -420,9 +447,17 @@ class ChatImageInputResolver:
             "context_revision", self.base_revision).eq("message_kind", "conversation").in_(
             "status", ["completed", "interrupted"]).order("context_revision", desc=True).limit(50).execute().data or []
         previous = {}
-        siblings = self.owner.db.table("tasks").select("id,request_params,user_id,org_id,conversation_id").eq(
+        siblings_query = self.owner.db.table("tasks").select("id,request_params,user_id,org_id,conversation_id").eq(
             "request_params->'_media_request_v1'->'origin'->>'parent_task_id'", self.owner.task_id).eq(
-            "type", "image").order("created_at", desc=True).limit(1).execute().data or []
+            "type", "image")
+        # A replay cannot inherit settings from its own already accepted child.
+        # Other calls retain the original sequential canvas inheritance.
+        from services.tools.dispatcher import _dispatch_call_id
+        current_call = _dispatch_call_id.get()
+        if current_call:
+            siblings_query = siblings_query.neq(
+                "request_params->'_media_request_v1'->'origin'->>'tool_call_id'", current_call)
+        siblings = siblings_query.order("created_at", desc=True).limit(1).execute().data or []
         for sibling in siblings:
             if (sibling.get("user_id") == self.owner.user_id and sibling.get("org_id") == self.owner.org_id
                     and sibling.get("conversation_id") == self.owner.conversation_id):
@@ -434,18 +469,7 @@ class ChatImageInputResolver:
             if (row.get("conversation_id") != self.owner.conversation_id or row.get("org_id") != self.owner.org_id
                     or row.get("context_revision") is None or row["context_revision"] > self.base_revision):
                 continue
-            if row.get("role") == "user":
-                from services.handlers.image_size_requirements import is_size_instruction
-                if not is_size_instruction(text(row)):
-                    continue
-                try:
-                    prior = user_size_intent(text(row))
-                except ValueError:
-                    break  # An unresolved old requirement cannot become a default.
-                if prior:
-                    prior = {**prior, "source_message_id": str(row["id"])}
-                    previous.update({key: value for key, value in prior.items() if key not in previous})
-            elif row.get("role") == "assistant":
+            if row.get("role") == "assistant":
                 prior = (row.get("generation_params") or {}).get("size_requirement") or {}
                 if isinstance(prior, dict) and prior:
                     prior = {**prior, "source_task_id": (row.get("generation_params") or {}).get("task_id")}
@@ -461,17 +485,32 @@ class ChatImageInputResolver:
 
     def selected_image_size(self, reference):
         """Read the verified, explicitly selected generated image's settings."""
-        task_id = reference.get("task_id")
-        message_id = reference.get("message_id") or reference.get("source_message_id")
+        quoted = reference.get('source') == 'quoted'
+        task_id = reference.get('quoted_task_id') if quoted else reference.get("task_id")
+        message_id = reference.get('quoted_message_id') if quoted else reference.get("message_id") or reference.get("source_message_id")
         if not task_id or not message_id:
             return {}
-        row = self._message(str(message_id))
+        if quoted:
+            # These origin IDs come only from resolve()'s existing quote/task/
+            # file-scope checks, never from model arguments. The authorized
+            # origin may be another owned conversation, outside this anchor.
+            row = self.owner.db.table('messages').select(
+                'id,org_id,role,status,generation_params').eq('id',str(message_id)).maybe_single().execute().data
+            if (not row or row.get('org_id') != self.owner.org_id or row.get('role') != 'assistant'
+                    or row.get('status') != 'completed'):
+                return {}
+        else:
+            row = self._message(str(message_id))
         params = row.get("generation_params") or {}
         if str(params.get("task_id")) != str(task_id):
             return {}
         target = params.get("size_requirement") or {}
         resolution = target.get("resolution") or params.get("resolution")
         previous = {"source_task_id": str(task_id), "source_message_id": str(message_id)}
+        from services.handlers.image_size_requirements import nearest_reference_ratio
+        from services.adapters.kie.configs import IMAGE_MODEL_CONFIGS
+        previous.update(mode='explicit', aspect_ratio=nearest_reference_ratio(reference,
+            IMAGE_MODEL_CONFIGS[default_chat_image_model('image_to_image')]['supported_sizes']))
         if resolution:
             previous["resolution"] = resolution
         return previous

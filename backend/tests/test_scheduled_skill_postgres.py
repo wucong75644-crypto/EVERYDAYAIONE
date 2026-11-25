@@ -34,6 +34,13 @@ def configured(environment, monkeypatch):
     monkeypatch.setattr('core.config.get_settings', lambda: env.config)
     env.permissions = AsyncMock(return_value=True)
     monkeypatch.setattr('services.permissions.checker.PermissionChecker.check', env.permissions)
+    async def batch_permissions(self, user, org, codes):
+        allowed = set()
+        for code in codes:
+            if await env.permissions(user, org, code):
+                allowed.add(code)
+        return frozenset(allowed)
+    monkeypatch.setattr('services.permissions.checker.PermissionChecker.check_many', batch_permissions)
     env.db = MagicMock(pool=env.pool)
     env.db.table.return_value.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = SimpleNamespace(data={'status': 'active'})
     # org_members has two filters.

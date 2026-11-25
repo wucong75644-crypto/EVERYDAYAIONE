@@ -157,7 +157,22 @@ class ModelTurnTiming:
         self.first = None
         self.last = None
         self.chunks = 0
+        self.thinking_started = None
+        self.thinking_ended = None
         self.max_gap_ms = 0.0
+
+    def on_thinking(self):
+        now = self.clock()
+        if self.thinking_started is None:
+            self.thinking_started = now
+        self.thinking_ended = now
+
+    @property
+    def thinking_duration_ms(self):
+        if self.thinking_started is None:
+            return 0
+        end = self.first if self.first is not None else self.thinking_ended
+        return max(0, round((end - self.thinking_started) * 1000))
 
     def on_text(self):
         now = self.clock()
@@ -173,6 +188,7 @@ class ModelTurnTiming:
             'first_body_ms': round((self.first - self.started) * 1000, 3) if self.first is not None else None,
             'elapsed_ms': round((self.clock() - self.started) * 1000, 3),
             'body_chunks': self.chunks,
+            'thinking_duration_ms': self.thinking_duration_ms,
             'max_body_gap_ms': round(self.max_gap_ms, 3),
             'held_for_knowledge': held,
             'review': review,

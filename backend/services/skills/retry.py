@@ -7,6 +7,7 @@ from uuid import UUID
 from fastapi import HTTPException
 from pydantic import Field, model_validator
 
+from services.skills.observability import measure_skill
 from services.skills.contracts import Contract, SkillTaskMode, SkillKey
 from services.skills.selection import SkillSelection
 
@@ -126,7 +127,8 @@ async def original_intent(db, *, user_id, org_id, conversation_id, message_id, t
         raise HTTPException(409, '无法确认原任务的 Skill，请稍后重试') from None
 
 
-async def capture_intent(handler, *, user_id, conversation_id, task_mode, selection):
+@measure_skill("intent")
+async def capture_intent(handler, *, user_id, conversation_id, task_mode, selection, turn_id=None):
     from core.config import get_settings
     from services.skills.runtime_source import ActorSkillSource
     from services.tools.context import ToolContext
@@ -141,11 +143,15 @@ async def capture_intent(handler, *, user_id, conversation_id, task_mode, select
             source = ActorSkillSource(handler, context, settings, task_mode=task_mode)
             bindings = await source.session_bindings()
             if selection:
-                for candidate in await source.discover():
+                for candidate in await source.discover_selection(selection):
                     if candidate.skill_key == selection.skill_id and candidate.revision == selection.revision:
                         packages[candidate.skill_key] = candidate.package_id
             # Runtime directory gives an existing session pin precedence.
             packages.update({c.skill_key: c.package_id for c in bindings})
+            if selection and selection.skill_id not in packages:
+                raise HTTPException(409, '所选 Skill 不可用或版本已变化，请重新选择后发送。')
+        except HTTPException:
+            raise
         except Exception:
             raise HTTPException(409, '无法确认会话 Skill，请检查设置后重试') from None
     return parse_intent({'task_mode': task_mode, 'selected_skill': selection,
@@ -180,7 +186,24 @@ class PinnedIntentSource:
     async def session_bindings(self):
         return [await self._candidate(s) for s in self.intent.session_skills]
 
+    async def discover_selection(self, selection):
+        if selection != self.intent.selected_skill:
+            from services.skills.runtime import SkillBindingError
+            raise SkillBindingError('原任务 Skill 的版本记录不一致。')
+        return [await self._candidate(selection)]
+
     async def discover(self):
+        selected = self.intent.selected_skill
         if self.retry:
-            return [await self._candidate(self.intent.selected_skill)] if self.intent.selected_skill else []
-        return await self.source.discover()
+            return await self.discover_selection(selected) if selected else []
+        candidates = await self.source.discover()
+        if selected is None:
+            return candidates
+        package_id = self.intent.package_ids.get(selected.skill_id)
+        if any(c.skill_key == selected.skill_id and c.revision == selected.revision
+               and package_id is not None and c.package_id == package_id for c in candidates):
+            return candidates  # Fresh discovery already validated this exact pin.
+        # Keep dynamic discovery, but never replace an explicitly captured
+        # package/revision if publication or precedence changed while queued.
+        pinned = await self.discover_selection(selected)
+        return pinned + [c for c in candidates if c.skill_key != selected.skill_id]

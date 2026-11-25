@@ -609,11 +609,11 @@ async def test_business_permission_checker_denies_before_handler(setup, monkeypa
     spec = runtime.registry.require("web_search")
     runtime.registry._specs["web_search"] = replace(spec, policy_rules=replace(spec.policy_rules, required_permissions=("task.view",)))
     executor.tool_policy_snapshot = {"permissions": {"task.view": True}}
-    checker = AsyncMock(return_value=False)
-    monkeypatch.setattr("services.permissions.checker.PermissionChecker.check", checker)
+    checker = AsyncMock(return_value=frozenset())
+    monkeypatch.setattr("services.permissions.checker.PermissionChecker.check_many", checker)
     result = await runtime.execute("web_search", {"query": "x"}, call_id="permission")
     assert result.execution.status == "not_started"
-    checker.assert_awaited_once_with("u1", "o1", "task.view")
+    checker.assert_awaited_once_with("u1", "o1", {"task.view"})
     executor.handler.assert_not_awaited()
 
 
@@ -751,7 +751,7 @@ async def test_declared_permission_is_loaded_without_trusting_a_prior_boolean(se
     runtime = executor.tool_runtime
     spec = runtime.registry.require("web_search")
     runtime.registry._specs["web_search"] = replace(spec, policy_rules=replace(spec.policy_rules, required_permissions=("task.view",)))
-    monkeypatch.setattr("services.permissions.checker.PermissionChecker.check", AsyncMock(return_value=True))
+    monkeypatch.setattr("services.permissions.checker.PermissionChecker.check_many", AsyncMock(return_value=frozenset({"task.view"})))
     result = await runtime.execute("web_search", {"query": "x"}, call_id="granted")
     assert result.execution.handler_started
     executor.handler.assert_awaited_once()

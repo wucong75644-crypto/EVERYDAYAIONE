@@ -181,6 +181,7 @@ const TASK_STEP_TEXT: Record<string, string> = {
 /** Agent Loop 工具名 → 前端展示文字 */
 const AGENT_STEP_MAP: Record<string, string> = {
   ...TASK_STEP_TEXT,
+  read_skill_asset: '正在读取 Skill 附件',
   web_search: '正在搜索',
   web_extractor: '正在读取网页',
   get_conversation_context: '正在查看对话',
@@ -218,6 +219,7 @@ const TOOL_CALL_MAP: Record<string, string> = {
   erp_api_search: '正在搜索ERP文档',
   search_knowledge: '正在查阅知识库',
   knowledge_answer_verification: '正在核对回答依据',
+  read_skill_asset: '正在读取 Skill 附件',
   web_search: '正在搜索互联网',
   web_extractor: '正在读取网页',
   social_crawler: '正在搜索社交平台',

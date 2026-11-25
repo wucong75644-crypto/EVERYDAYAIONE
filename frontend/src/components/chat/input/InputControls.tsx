@@ -291,6 +291,9 @@ export default function InputControls(props: InputControlsProps) {
               onSelectionComplete={() => textareaRef.current?.focus()} />}
 
             {/* 深度思考按钮（仅支持的模型显示） */}
+            {selectedModel.capabilities.thinkingRequired && (
+              <span className="px-2 text-sm text-text-tertiary" title="当前模型接口不支持关闭思考">固定思考</span>
+            )}
             {supportsDeepThinking && onDeepThinkModeChange && (
               <button
                 onClick={() => onDeepThinkModeChange(!deepThinkMode)}
@@ -300,10 +303,12 @@ export default function InputControls(props: InputControlsProps) {
                     ? 'bg-accent-light text-accent hover:bg-accent-light/80'
                     : 'text-text-tertiary hover:text-text-primary hover:bg-hover',
                 )}
-                title={deepThinkMode ? '深度思考已开启' : '开启深度思考'}
+                title={selectedModel.capabilities.thinkingRequired
+                  ? '当前模型始终思考，此按钮切换标准与深度模式'
+                  : deepThinkMode ? '深度思考已开启' : '开启深度思考'}
               >
                 <Brain className="w-4 h-4" />
-                <span className="hidden sm:inline">深度思考</span>
+                <span className="hidden sm:inline">{selectedModel.capabilities.thinkingRequired && !deepThinkMode ? '标准思考' : '深度思考'}</span>
               </button>
             )}
 

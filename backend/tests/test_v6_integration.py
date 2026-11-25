@@ -415,6 +415,7 @@ class TestPartialArtifactTimeout:
             agent, "_dispatch", new=slow_dispatch,
         ):
             result = await agent.execute("查库存", dag_mode=True, params={
+                "doc_type":"stock",
                 "mode": "summary",
                 "time_range": "2026-04-01 ~ 2026-04-20",
             })
@@ -440,6 +441,7 @@ class TestPartialArtifactTimeout:
         ):
             with pytest.raises(asyncio.CancelledError):
                 await agent.execute("查库存", dag_mode=True, params={
+                    "doc_type":"stock",
                     "mode": "summary",
                     "time_range": "2026-04-01 ~ 2026-04-20",
                 })

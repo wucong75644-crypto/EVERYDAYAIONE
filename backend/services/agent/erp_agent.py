@@ -102,9 +102,9 @@ class ERPAgent(ERPChildFactoryMixin):
         await self._push_thinking("分析查询意图...")
         plan = await self._extract_plan(query)
         if plan is None:
-            return _error_result("无法理解您的请求，请更具体地描述您要查询的内容")
+            return _error_result("本次查询计划提取失败，尚未执行查询，请重试。")
 
-        if plan.degraded and any(s.params.get("order_scope") for s in plan.steps):
+        if plan.degraded and any(s.params.get('doc_type') in {'order','daily_stats'} or s.params.get("order_scope") for s in plan.steps):
             return _error_result("查询计划提取失败，无法保证指定统计口径；未执行降级查询，请重试")
 
         for step in plan.steps:
@@ -131,10 +131,10 @@ class ERPAgent(ERPChildFactoryMixin):
         return result
 
     async def _extract_plan(self, query: str) -> ExecutionPlan | None:
-        """三级降级链：LLM 多域提取 → 关键词单域 → abort。"""
+        """Only structured model extraction defines a plan; failed extraction executes nothing."""
         from services.agent.plan_builder import (
             _DOMAIN_DOC_TYPES, _DOMAIN_DEFAULT_DOC_TYPE,
-            _sanitize_params, fill_platform, quick_classify, _build_fallback_params,
+            _sanitize_params,
         )
 
         # L1: LLM
@@ -154,7 +154,6 @@ class ERPAgent(ERPChildFactoryMixin):
                     params["doc_type"] = default
                 from services.agent.order_scope import normalize_order_scope
                 normalize_order_scope(params, query)
-                fill_platform(params, query)
                 steps.append(PlanStep(domain=domain, params=params))
             return ExecutionPlan(
                 steps=steps, compute_hint=compute_hint,
@@ -162,20 +161,9 @@ class ERPAgent(ERPChildFactoryMixin):
             )
         except Exception as e:
             log_agent_event(
-                "warning", "ERPAgent plan fallback", self, "erp_agent",
-                "ERP_PLAN_FALLBACK", type(e).__name__,
+                "warning", "ERPAgent plan extraction unavailable", self, "erp_agent",
+                "ERP_PLAN_UNAVAILABLE", type(e).__name__,
             )
-
-        # L2: 关键词
-        domain = quick_classify(query)
-        if domain:
-            params = _build_fallback_params(query, self.request_ctx, domain=domain)
-            if domain == "trade":
-                params.setdefault("doc_type", "order")
-            from services.agent.order_scope import normalize_order_scope
-            normalize_order_scope(params, query)
-            fill_platform(params, query)
-            return ExecutionPlan(steps=[PlanStep(domain=domain, params=params)], degraded=True)
 
         return None
 
@@ -185,7 +173,6 @@ class ERPAgent(ERPChildFactoryMixin):
         from services.agent.plan_builder import build_multi_extract_prompt, parse_multi_extract_response
         from services.model_gateway import (
             ModelCallRequest,
-            _collect_stream_response,
             get_model_gateway,
         )
 
@@ -195,7 +182,7 @@ class ERPAgent(ERPChildFactoryMixin):
 
         prompt = build_multi_extract_prompt(query, now_str=now_str)
         messages = [
-            {"role": "system", "content": "你是参数提取器，只返回JSON。"},
+            {"role": "system", "content": "你是参数提取器，通过submit_query_plan返回查询参数，不执行查询。"},
             {"role": "user", "content": prompt},
         ]
         model_gateway = get_model_gateway().open_chat(
@@ -209,14 +196,26 @@ class ERPAgent(ERPChildFactoryMixin):
             )
         )
         try:
-            response = await _collect_stream_response(
-                model_gateway,
-                messages=messages,
-            )
-            self._tokens_used += getattr(response, "prompt_tokens", 0)
-            self._tokens_used += getattr(response, "completion_tokens", 0)
-            raw = getattr(response, "content", "") or ""
-            return parse_multi_extract_response(raw)
+            from services.agent.plan_builder import QUERY_PLAN_TOOL
+            calls={}
+            async for chunk in model_gateway.stream_chat(messages=messages,tools=[QUERY_PLAN_TOOL],
+                    tool_choice={'type':'function','function':{'name':'submit_query_plan'}}):
+                self._tokens_used+=(chunk.prompt_tokens or 0)+(chunk.completion_tokens or 0)
+                for delta in chunk.tool_calls or ():
+                    call=calls.setdefault(delta.index,{'name':'','arguments':''})
+                    if delta.name:call['name']=delta.name
+                    call['arguments']+=delta.arguments_delta or ''
+            if len(calls)!=1 or next(iter(calls.values()))['name']!='submit_query_plan':
+                raise ValueError('ERP_QUERY_PLAN_TOOL_REQUIRED')
+            result=parse_multi_extract_response(next(iter(calls.values()))['arguments'])
+            from services.agent.order_scope import ORDER_SCOPES
+            from services.agent.plan_builder import _DOMAIN_DOC_TYPES
+            for domain,params in result[0]:
+                if params.get('doc_type') not in _DOMAIN_DOC_TYPES.get(domain,()):
+                    raise ValueError('ERP_DOCUMENT_TYPE_REQUIRED')
+                if params.get('doc_type') == 'order' and params.get('order_scope') not in ORDER_SCOPES:
+                    raise ValueError('ERP_ORDER_SCOPE_REQUIRED')
+            return result
         finally:
             await model_gateway.close()
 
@@ -270,8 +269,10 @@ class ERPAgent(ERPChildFactoryMixin):
 
         plan = await self._extract_plan(query)
         if plan is None:
-            return _error_result("无法理解您的请求，请更具体地描述您要查询的内容")
+            return _error_result("本次查询计划提取失败，尚未执行查询，请重试。")
 
+        if plan.degraded and any(s.params.get('doc_type') in {'order','daily_stats'} or s.params.get('order_scope') for s in plan.steps):
+            return _error_result('查询计划提取失败，无法保证指定统计口径；未返回猜测的订单计划，请重试')
         return self._build_analyze_result(plan, query)
 
     def _build_analyze_result(self, plan: ExecutionPlan, query: str) -> AgentResult:

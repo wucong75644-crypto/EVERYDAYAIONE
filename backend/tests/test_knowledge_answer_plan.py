@@ -23,13 +23,17 @@ def fixture(r):
 def test_routing_keeps_complex_actions_erp_and_followups_out_of_fast_generation():
  assert eligible('拼多多漏发怎么处理，食品拆封适用吗？')
  for q in ['你好','比较全部售后规则','请详细查漏发规则','修改售后规则要求','查询昨天拼多多销售额','实时库存多少','创建售后目录']:
-  assert not eligible(q),q
+  assert eligible(q),q
 
 
 def test_combined_knowledge_and_delivery_keeps_normal_tools_available():
  for question in ('公司报销规则是什么？然后导出 Excel', '公司报销规则是什么？再生成一张流程图'):
-  assert not eligible(question)
-  assert not eligible(question, hierarchical=True)
+  assert eligible(question) and eligible(question, hierarchical=True)
+  from tests.semantic_fixtures import semantic_request
+  from schemas.message import TextPart
+  from services.knowledge_workspace.answer_plan import requires_delivery
+  request = semantic_request(SimpleNamespace(content=[TextPart(text=question)]), 'explain', continue_delivery=True)
+  assert requires_delivery(request)
 
 
 def test_program_reads_evidence_once_and_preserves_conditions_and_fixed_links(derived_db):
@@ -259,7 +263,7 @@ async def test_named_source_preparation_keeps_action_tool_loop_and_auth_policy(d
  from schemas.message import TextPart
  r=derived_db[0]();root=create(r,title='历史资料');named_document(r,root);run,_,_=start(derived_db[0],r,[ref(root)])
  req=replace(_request(),content=[TextPart(text='参考“查询失败：全量库存分组历史记录”，查询今天库存。')],user_id=r.scope.actor_user_id)
- assert not eligible(req.content[0].text)
+ assert eligible(req.content[0].text)
  handler=SimpleNamespace(_knowledge_run=run,org_id=r.scope.org_id,_personal_context_allowed=True)
  prepared=SimpleNamespace(execution_context=SimpleNamespace(context_scope='user',authorized_tool_names=None),messages=[])
  await prepare(handler,prepared,req)

@@ -239,8 +239,11 @@ async def test_http_adapter_overwrites_forged_internal_intent(monkeypatch, selec
     monkeypatch.setattr(route, "resolve_generation_context", AsyncMock(return_value=GenerationType.CHAT))
     monkeypatch.setattr(route, "get_handler", Mock(return_value=object()))
     monkeypatch.setattr(route, "get_conversation_service", Mock())
-    monkeypatch.setattr(route, "prepare_generation_request", AsyncMock(
-        return_value=(object(), {}, _make_message("input-1"))))
+    async def prepare_request(**kwargs):
+        if kwargs.get('before_message'):
+            await kwargs['before_message']()
+        return object(), {}, _make_message('input-1')
+    monkeypatch.setattr(route, 'prepare_generation_request', AsyncMock(side_effect=prepare_request))
     monkeypatch.setattr(route, "prepare_assistant_message", AsyncMock(
         return_value=("output-1", _make_message("output-1"))))
     start = AsyncMock(return_value="task-1")

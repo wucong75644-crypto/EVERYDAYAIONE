@@ -265,10 +265,10 @@ class SkillRepository:
                 (org_id, skill_key, revision, self.scope.actor_user_id))
             return [SkillCandidate.model_validate(row) for row in cursor.fetchall()]
 
-    def catalog_candidates(self) -> list[SkillCandidate]:
+    def catalog_candidates(self, *, skill_key: str | None = None) -> list[SkillCandidate]:
         """Only enabled, pinned, published revisions; never fetch content or paths."""
         with self._cursor() as cursor:
-            cursor.execute("""SELECT p.id AS package_id, p.skill_key,
+            query = """SELECT p.id AS package_id, p.skill_key,
                     p.org_id AS package_org_id,p.owner_user_id AS package_user_id,p.scope_kind,
                     a.org_id AS assignment_org_id,
                     (p.scope_kind='platform' AND a.org_id IS NULL AND a.package_id IS NOT NULL) AS global_assignment,
@@ -284,8 +284,14 @@ class SkillRepository:
                            WHERE latest.package_id=p.id AND latest.status='published'
                            ORDER BY latest.created_at DESC,latest.id DESC LIMIT 1))
                    OR (p.scope_kind IN ('org','platform') AND a.enabled AND a.revision_id=r.id
-                       AND (p.scope_kind='platform' OR p.org_id=a.org_id))""",
-                (self.scope.org_id,self.scope.actor_user_id))
+                       AND (p.scope_kind='platform' OR p.org_id=a.org_id))"""
+            params = (self.scope.org_id, self.scope.actor_user_id)
+            if skill_key is not None:
+                # Wrap both scope branches; a predicate attached only to the OR
+                # tail would leak unrelated personal candidates into selection.
+                query = "SELECT * FROM (" + query + ") selected_catalog WHERE skill_key=%s"
+                params += (skill_key,)
+            cursor.execute(query, params)
             try:
                 return [SkillCandidate.model_validate(row) for row in cursor.fetchall()]
             except ValidationError:

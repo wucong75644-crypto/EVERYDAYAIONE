@@ -84,3 +84,27 @@ describe('Skill attachments', () => {
     expect(screen.getAllByRole('button', { name: '移除附件' })[0]).toBeDisabled();
   });
 });
+
+describe('on-demand Skill reference controls', () => {
+  it('keeps old attachments eager and changes loading without rewriting the method', () => {
+    function Editor() {
+      const [content, setContent] = useState<DraftContent>({ body: '核心方法 [[asset:attachment-one]]。', assets: [uploaded] });
+      return <><SkillAssetEditor content={content} busy={false} onChange={setContent} /><output aria-label="saved lazy content">{JSON.stringify(content)}</output></>;
+    }
+    render(<Editor />);
+    expect(screen.getByLabelText('读取方式：日报.docx')).toHaveValue('eager');
+    expect(screen.getByLabelText('Skill 上下文体积')).toHaveTextContent('立即引用');
+    fireEvent.change(screen.getByLabelText('读取方式：日报.docx'), { target: { value: 'on_demand' } });
+    const saved = JSON.parse(screen.getByLabelText('saved lazy content').textContent!);
+    expect(saved.body).toBe('核心方法 [[asset:attachment-one]]。');
+    expect(saved.assets[0].loading).toBe('on_demand');
+    expect(screen.getByLabelText('Skill 上下文体积')).toHaveTextContent('立即引用 0.0 KiB');
+    expect(screen.getByText(/图片、视频和计划任务会完整加载/)).toBeInTheDocument();
+  });
+
+  it('shows on-demand mode in safe published summaries', () => {
+    render(<SkillAssets assets={[{ ...uploaded, loading: 'on_demand', bytes: 50 }]} />);
+    expect(screen.getByText(/按需读取/)).toBeInTheDocument();
+    expect(screen.queryByText(uploaded.content)).not.toBeInTheDocument();
+  });
+});

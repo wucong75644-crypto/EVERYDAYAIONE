@@ -37,7 +37,7 @@ class ImageBrief(MethodDocumentFact):
     title: str = Field(min_length=1, max_length=300)
     layout: str = Field(min_length=1, max_length=4000)
     prompt: str = Field(min_length=1, max_length=12000)
-    negative_prompt: str = Field(min_length=1, max_length=4000)
+    negative_prompt: str = Field(max_length=4000)
     aspect_ratio: str = Field(pattern=r'^[1-9]\d?:[1-9]\d?$')
     plan_source: PlanSource | None = None
 

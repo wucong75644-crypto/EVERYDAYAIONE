@@ -245,7 +245,9 @@ def params_to_filters(params: dict) -> tuple[list[dict], list[str]]:
         if doc_type:
             from services.kuaimai.erp_unified_schema import DOC_TYPE_DEFAULT_TIME_COL
             default_time_col = DOC_TYPE_DEFAULT_TIME_COL.get(doc_type, "doc_created_at")
-        time_col = params.get("time_col", default_time_col)
+        # Both existing public names denote the same time dimension. Compile once
+        # before creating bounds; otherwise default bounds override time_type later.
+        time_col = params.get("time_col") or params.get("time_type") or default_time_col
         parts = tr.split("~")
         if len(parts) == 2:
             start = parts[0].strip()

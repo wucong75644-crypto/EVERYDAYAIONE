@@ -137,6 +137,7 @@ export default function ChatImageControls({ taskId }: { taskId: string }) {
           </>}
         </div>
         {estimate && <p>服务器当前估算：每张 {estimate.per_image_credits} 积分。{estimate.acceptance_enabled ? '' : '暂未开放新任务。'}{estimate.within_budget ? '' : '超出本轮预算。'}新版本仍会重新校验原图权限和价格。</p>}
+        {details.result?.[0]?.quality_checks?.target?.approximate && <p>请求接近 {details.result[0].quality_checks.target.requested_width} × {details.result[0].quality_checks.target.requested_height}，已匹配 {details.result[0].quality_checks.target.aspect_ratio}、{details.result[0].quality_checks.target.resolution}；实际尺寸见下。</p>}
         {details.result?.[0]?.quality_checks?.actual && <p>实际画布：{details.result[0].quality_checks.actual.width} × {details.result[0].quality_checks.actual.height}（{details.result[0].quality_checks.actual.aspect_ratio}）{details.result[0].quality_checks.size_matches === false ? '，未满足尺寸要求' : ''}</p>}
         {details.result?.[0]?.has_transparency && <p>已校验保存结果含真实透明像素。</p>}
         {previous && <div className="grid grid-cols-2 gap-2">

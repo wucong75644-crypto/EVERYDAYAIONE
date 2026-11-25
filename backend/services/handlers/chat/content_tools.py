@@ -20,111 +20,46 @@ STATE = '_chat_content_tools'
 MISSING_IMAGE_PROMPT_QUESTION = (
     '这条对话里还没有你提到的原提示词。可以发给我原稿，或告诉我按当前素材重新写一版再生成吗？'
 )
-_IMAGE_ACTION = (r'(?:生图|出图|改图|做图|画一张|(?:生成|做成?|制作|绘制)[^。！？!?；;，,\n]{0,14}'
-                 r'(?:图片|图像|主图|封面图|一张图)|generate (?:an? |the )?image)')
-_NEGATED_IMAGE_ACTION = re.compile(
-    rf"(?:(?:不(?:要|用|必)?|别|无需|暂不)\s*(?:(?:实际|直接|立即|马上)\s*)?|(?:do not|don't)\s+){_IMAGE_ACTION}",
-    re.I,
-)
-_PROMPT_ONLY_ACTION = re.compile(
-    r'(?:只|仅)(?:需|要)?(?:写|修改|改写|整理|输出|提供|给我)[^。！？!?；;，,\n]{0,36}提示词',
-)
+
+def semantic_intent(request, runtime=None):
+    """One frozen workflow decision; consumers never reclassify its user words."""
+    projection = getattr(runtime, 'workflow_projection', None) or (getattr(request, 'params', None) or {}).get('_ecom_workflow')
+    if not isinstance(projection, dict):
+        return None
+    return projection.get('intent')
 
 
-_IMAGE_REGENERATION = re.compile(
-    r'(?:再|重新)\s*(?:帮我|给我|为我)?\s*(?:(?:把|将|用|按|照).{1,24}?)?'
-    r'(?:生图|出图|(?:生成|做|画)(?:出|成)?(?:一[次张版下]|(?:这|那)张图|图片|\s*$)'
-    r'|来一张)|重(?:(?:做|画)一次|来一张)',
-)
-_REGENERATION_NEGATED = re.compile(r'不要|别|不用|不必|不需要|无需|禁止|取消|只看|只给我看|不想|不打算|不准备|已经|如果|假如|不\s*$')
-_IMAGE_EXPLANATION = re.compile(r'怎么|如何|为什么|是什么意思|是否支持|怎样')
-_QUOTED_REQUEST = re.compile(r'[「」『』“”`"]|(?:这句话|这句提示|刚才说|之前说|上次说).{0,12}(?:什么|原文)')
-_IMAGE_PROMPT_ONLY = re.compile(r'(?:写|修改|改写|整理).{0,24}提示词[？?。！!\s]*$')
+def semantic_runtime(runtime):
+    return getattr(runtime, 'skill_coordination', False) is True
 
 
-def _regenerates_image(text):
-    if _QUOTED_REQUEST.search(text) or _IMAGE_EXPLANATION.search(text) or _IMAGE_PROMPT_ONLY.search(text):
-        return False
-    for clause in re.split(r'[。！？!?；;，,\n]', text):
-        action = _IMAGE_REGENERATION.search(clause)
-        if action and not _REGENERATION_NEGATED.search(clause[:action.start()]):
-            before = clause[:action.start()].rstrip()
-            if before.endswith('不能') and not (
-                    before.endswith('能不能') or before.endswith('你不能') and text.rstrip().endswith(('？', '?'))):
-                continue
-            return True
-    return False
 
 
-def _repeat_wording(text):
-    return (not _QUOTED_REQUEST.search(text) and not _IMAGE_EXPLANATION.search(text)
-            and not re.search(
-                r'不要|别|不用|不必|不需要|无需|禁止|取消|只看|只给我看|已经|过吗|过没有|(?:do not|don.t|cannot|can.t|should not|if you)',
-                text, re.I)
-            and bool(re.search(
-                r'(?:再出一版|另外(?:生成|做|画)|换一张新的|重来一张|'
-                r'(?:generate|make|create|draw) .{0,20}(?:another|again)|(?:redo|regenerate) (?:it|the image))',
-                text, re.I)))
 
 
-def _changes_image(text):
-    return bool(re.search(r'(?:改成|改为|改一下|编辑|调整|换成|替换|去掉|移除|擦掉|加上|调亮|调暗|调浅|调深)', text))
 
 
-def requests_generated_image_edit(request, *, allow_named_output=False):
-    """Recognize a change to a generated image even when its object is implicit."""
-    text = ' '.join(getattr(part, 'text', '') for part in getattr(request, 'content', ()) or ())
-    if (_QUOTED_REQUEST.search(text) or _IMAGE_EXPLANATION.search(text)
-            or _IMAGE_PROMPT_ONLY.search(text) or _PROMPT_ONLY_ACTION.search(text)
-            or _previous_item_pointer(text)):
-        return False
-    source = re.search(r'(?:刚才|刚|上次|上一轮|之前)(?:你)?(?:生成|做|画|出)(?:好|成)?的(?:那张|这张)?(?:图|图片|图像)', text)
-    if not source and allow_named_output:
-        source = re.search(r'(?:生成|做|画|出)(?:过|好|成)?的第[0-9一二三四五六七八九十百]+张(?:图|图片|图像)', text)
-    if not source:
-        return False
-    changes = re.sub(r'(?:不要|别|不用|无需|不必|不)\s*(?:改成|改为|改一下|编辑|调整|换成|替换|去掉|移除|擦掉|加上|调亮|调暗|调浅|调深)', '', text)
-    return _changes_image(changes)
+def requests_generated_image_edit(request, *, allow_named_output=False, runtime=None):
+    """The existing semantic decision owns the action, including implicit edits."""
+    return semantic_intent(request, runtime) == 'edit'
 
 
-def is_single_generated_image_edit(request):
-    from services.handlers.image_size_requirements import ImageSizeError, user_size_intent
-
-    if not requests_generated_image_edit(request, allow_named_output=True) or any(
-            part.type != 'text' for part in request.content):
-        return False
-    text = ' '.join(part.text for part in request.content)
-    # Keep the existing entry for combined work, variants and unstructured size requests.
-    if (requested_delivery_tools(request) or waits_for_video_confirmation(request) or re.search(
-            r'另外|顺便|同时|分别|各自|每张|两张|多张|多版|备选|'
-            r'(?<![第0-9一二两三四五六七八九十])(?:[2-9]|[1-9]\d+|十[一二三四五六七八九]?|[二两三四五六七八九])\s*(?:张|幅|版)'
-            r'|(?:再|还|接着|然后|并且|并)\s*(?:帮我|给我)?\s*(?:生成|做|画|出|编辑|修改)'
-            r'|(?:生成|做成|导出|写|制作).{0,10}(?:短片|视频|文档|脚本|文案|表格|提示词)',
-            text)):
-        return False
-    try:
-        size = user_size_intent(text)
-    except ImageSizeError:
-        return False
-    return not (size.get('orientation') and 'aspect_ratio' not in size and size.get('mode') != 'auto')
+def is_single_generated_image_edit(request, runtime=None):
+    return semantic_intent(request, runtime) == 'edit' and not any(
+        part.type != 'text' for part in request.content)
 
 
-def repeats_saved_image(request):
-    text = ' '.join(part.text for part in request.content if part.type == 'text')
-    return not _changes_image(text) and (_regenerates_image(text) or _repeat_wording(text))
+def repeats_saved_image(request, runtime=None):
+    return semantic_intent(request, runtime) == 'repeat'
 
 
-def image_regeneration_variant(request, evidence=None):
-    """Bind a paid repeat to the current authenticated message, excluding historical quotes."""
+def image_regeneration_variant(request, evidence=None, runtime=None):
+    """Bind a semantic repeat to the authenticated input, never to matching words."""
     text = ' '.join(part.text for part in request.content if part.type == 'text').strip()
-    if evidence is not None:
-        if not isinstance(evidence, str) or evidence.strip() != text:
-            raise ValueError('CONTENT_IMAGE_REGENERATION_UNCONFIRMED')
-        # Reject a model-supplied action accompanying an explanation, quoted
-        # request, or instruction that explicitly withdraws generation.
-        if not repeats_saved_image(request):
-            raise ValueError('CONTENT_IMAGE_REGENERATION_UNCONFIRMED')
-    elif _changes_image(text) or not _regenerates_image(text):
+    if evidence is not None and (not isinstance(evidence, str) or evidence.strip() != text
+                                 or not repeats_saved_image(request, runtime)):
+        raise ValueError('CONTENT_IMAGE_REGENERATION_UNCONFIRMED')
+    if not repeats_saved_image(request, runtime):
         return None
     try:
         message_id = UUID(str(image_input_id(request)))
@@ -169,80 +104,45 @@ def bind_image_selection(runtime, request, state, reference):
         if evidence is not None:
             raise ValueError('CONTENT_IMAGE_REGENERATION_UNCONFIRMED')
         return reference, {}
-    variant = image_regeneration_variant(request, evidence)
+    variant = image_regeneration_variant(request, evidence, runtime)
     if variant is None:
         return reference, {}
     selected = selection.model_dump(mode='json', exclude={'regenerate'}, exclude_none=True)
     return content_objects.repeat_image_reference(state, selected), {'variant_id': variant}
 
 
-def requests_existing_image(request):
-    text = ' '.join(part.text for part in request.content if part.type == 'text')
-    return bool(re.search(r'(?:看|发|展示|找|打开).{0,18}(?:旧图|历史图|(?:之前|上次|原来|刚才)生(?:成|好)的图|已有图片)'
-                          r'|(?:旧图|历史图|已有图片).{0,8}(?:发我|给我看)', text)
-                and not image_execution_request(request) and not repeats_saved_image(request) and not _changes_image(text))
 
 
-def action_clauses(text):
-    return [clause for clause in re.split(r'[。！？!?；;，,\n]', text)
-            if not _IMAGE_EXPLANATION.search(clause)]
 
 
 def image_execution_request(request, runtime=None):
-    """Hold execution narration until there is a receipt. This never starts a task."""
-    text = ' '.join(getattr(part, 'text', '') for part in (getattr(request, 'content', None) or ()))
-    if _IMAGE_PROMPT_ONLY.search(text):
-        return False
-    # Remove only the explicitly non-executing phrases. A positive request
-    # elsewhere in the same message can still request a different image.
-    actions = _PROMPT_ONLY_ACTION.sub(' ', _NEGATED_IMAGE_ACTION.sub(' ', '\n'.join(action_clauses(text))))
-    if runtime and re.search(r'(?:剩余|剩下|其他|其余).{0,10}(?:也|一起|继续).{0,6}(?:做|生成)', actions):
-        state = getattr(runtime, 'task_execution_state', None)
-        prior = getattr(runtime, 'task_followup_candidate', None) or {}
-        if (state and any(op.capability == 'platform.generate_image' for op in state.operations)
-                or any(op.get('capability') == 'platform.generate_image' for op in prior.get('state', {}).get('operations', ()))):
-            return True
-    return requests_generated_image_edit(request) or bool(re.search(_IMAGE_ACTION, actions, re.I)) or (
-        _previous_item_pointer(text) and repeats_saved_image(request)
-    )
+    """Hold execution narration until a receipt; this never starts a task."""
+    return semantic_intent(request, runtime) in {
+        'write_then_submit_images', 'execute_saved', 'generate', 'edit', 'repeat'}
 
 
-def requested_delivery_tools(request):
-    from schemas.message import TextPart
-
-    texts = []
-    for part in request.content or ():
-        if isinstance(part, TextPart):
-            texts.append(part.text)
-        elif isinstance(part, dict) and part.get('type') == 'text' and isinstance(part.get('text'), str):
-            texts.append(part['text'])
-    text = ' '.join(texts)
-    actions = re.sub(r'(?:不要|不用|别|无需|不必|暂不|(?<!能)(?<!可)不)(?:实际|立即|直接)?(?:生成|制作|做成|转成|整理成|导出)[^，。！？；,!?;\n]*',
-                     '', '\n'.join(action_clauses(text)))
-    requested = {}
-    if _VIDEO_ACTION.search(actions):
-        requested['generate_video'] = '视频'
-    if re.search(r'(?:导出|做成|保存为|转成|整理成|生成)[^，。！？；,!?;\n]{0,14}(?:文件|文档|Word|PDF|Excel|CSV|PPT|docx|xlsx)(?!内容|示例)', actions, re.I):
-        requested['code_execute'] = '文件'
-    if waits_for_video_confirmation(request):
-        requested.pop('generate_video', None)
-    return requested
+def image_writing_only_request(request, runtime=None):
+    return semantic_intent(request, runtime) in {'write', 'explain'}
 
 
-_VIDEO_ACTION = re.compile(
-    r'(?:生成|制作|做成?|转成?|产出)[^，。！？；,!?;\n]{0,12}(?:视频|短片)(?!脚本|文案|提示词)',
-)
-_VIDEO_WAIT = re.compile(
-    r'(?:等(?:到)?|待)(?:我|用户).{0,12}(?:确认|同意|满意)(?:了|之后|以后|后)?[，,、\s]*再'
-    r'[^。！？!?；;，,\n]{0,8}' + _VIDEO_ACTION.pattern,
-)
+def requested_delivery_tools(request, runtime=None):
+    projection = getattr(runtime, 'workflow_projection', None) or (getattr(request, 'params', None) or {}).get('_ecom_workflow') or {}
+    context = projection.get('request_context') or {}
+    labels = {'generate_video': '视频', 'code_execute': '文件'}
+    return {tool: labels[tool] for tool in context.get('deliveries', ()) if tool in labels}
 
 
-def waits_for_video_confirmation(request):
-    text = ' '.join(getattr(part, 'text', '') for part in request.content or ())
-    condition = _VIDEO_WAIT.search(text)
-    # A separate video request in the same turn requires per-item planning.
-    return bool(condition and not _VIDEO_ACTION.search(text[:condition.start()]))
+def requires_continued_delivery(request, runtime=None):
+    projection = getattr(runtime, 'workflow_projection', None) or (getattr(request, 'params', None) or {}).get('_ecom_workflow') or {}
+    context = projection.get('request_context') or {}
+    return bool(context.get('continue_delivery') or requested_delivery_tools(request, runtime))
+
+
+
+def waits_for_video_confirmation(request, runtime=None):
+    projection = getattr(runtime, 'workflow_projection', None) or (getattr(request, 'params', None) or {}).get('_ecom_workflow') or {}
+    media = (projection.get('request_context') or {}).get('media') or {}
+    return media.get('tool') == 'generate_video' and bool(media.get('wait_for') or media.get('wait_all'))
 
 
 def delivery_status(runtime, prepared, blocks, tool):
@@ -271,19 +171,6 @@ def video_receipt_kind(result):
     return 'new' if metadata.get('outcome') == 'accepted' else None
 
 
-def verified_video_status_text(text, *, fresh=False, confirmed_item=None):
-    if fresh:
-        from services.task_execution.item_confirmation import referenced_items
-
-        parts = re.split(r'([。！？；\n])', text)
-        for index in range(0, len(parts), 2):
-            mentioned = referenced_items(parts[index])
-            if not mentioned or confirmed_item is None or mentioned == {confirmed_item}:
-                parts[index] = re.sub(r'(?:此前|先前|之前|早前|早已)\s*(?:就\s*)?(?:已经|已)?\s*受理',
-                                      '本轮已受理', parts[index])
-        text = ''.join(parts)
-    return re.sub(r'(?:视频|短片)(?:任务)?(?:已经|已)(?:成功)?(?:生成(?:完成)?|制作完成|完成|发布)',
-                  '视频任务已受理', text)
 
 
 def delivery_notice(deliveries, attempted):
@@ -294,80 +181,76 @@ def delivery_notice(deliveries, attempted):
     )
 
 
-def visual_author_request(request, indexed):
+def visual_author_request(request, indexed, runtime=None):
     text = '\n'.join(part.text for part in request.content if part.type == 'text')
-    if indexed or '提示词' in text or image_execution_request(request) or re.search(
-            r'(?:参考|用).{0,8}(?:原图|这张图).{0,12}(?:改|生成|出图)', text):
-        return text
-    return None
+    return text if indexed or semantic_intent(request, runtime) in {
+        'write', 'write_then_submit_images', 'generate', 'edit'} else None
 
 
-def _previous_item_pointer(text, *, implicit_author=True):
-    number = r'[零〇一二两三四五六七八九十百0-9]+'
-    item = r'(?:方案|稿件|提示词|脚本|文案|条目)'
-    author = r'(?:你|助手)(?:给我|帮我)?(?:写|拟|生成|整理|提供|给|做|出)'
-    author_time = r'(?:之前|刚才|刚|上次|上一轮|先前)'
-    prior_author = (
-        rf'(?:你|助手){author_time}(?:给我|帮我)?(?:写|拟|生成|整理|提供|给|做|出)(?:过)?的(?:那[条份版个])?'
-        + (rf'|{author}(?:过)?的(?:那[条份版个])?' if implicit_author else rf'|{author}(?:过的(?:那[条份版个])?|的那[条份版个])')
-    )
-    # A bare ordinal is a pointer only when the following words concern execution.
-    # “第二条鱼” and “第一张图” are not saved documents.
-    pointer = re.search(
-        rf'第\s*{number}\s*(?:个|条|项|版|套)(?:{item}|(?=\s*(?:和原图|带原图|帮我|做|生成|出图|执行|$)))'
-        rf'|{item}\s*[#＃]?\s*{number}'
-        rf'|(?:之前|刚才|上面|旧|原来|上一轮|上次|已保存)的?{item}'
-        rf'|(?:{prior_author})\s*{item}', text)
-    if not pointer:
+def authored_text_request(request, runtime=None):
+    """Ordinary numbered answers are not execution artifacts."""
+    return semantic_intent(request, runtime) in {'write', 'write_then_submit_images'}
+
+
+REFERENCE_TEXT_INSTRUCTION = (
+    '[Reference prompt delivery]\n'
+    '直接按已激活方法要求流式输出完整 Markdown 正文。保留参考图判断、各方案的方案内容、'
+    '视觉设定、参考图使用方式，以及完整生图提示词和负面提示词；保留原版编号和全部限制。'
+    '后台在正文完成后校验、保存并生成可引用编号，本轮无需调用保存工具，也不要把正文改写成保存参数。'
+    '例外：用户对新稿设置后续确认条件时，用save_task_text的confirmation结构化保存整组及条件，不适用此正文快路径。'
+)
+
+PLAIN_IMAGE_TEXT_INSTRUCTION = (
+    '[Image prompt delivery]\n'
+    '按用户要求交付方案，用同级编号标题分开各项。每项最终生图提示词及其全部执行限制'
+    '写在一个独立的 ```prompt 代码块中；方案说明放在块外。整组比较、总结或追问放在'
+    '单独同级的无编号标题下，避免混入最后一项提示词。后台保存正文和原编号，无需调用保存工具。'
+    '若用户设置了后续确认条件，改用save_task_text的confirmation保存整组，不适用此正文快路径。'
+)
+
+
+def prefers_reference_text(request, runtime, *, saved_source_available=False, server_image_plan=False):
+    """Only a verified, fresh writing phase may use host text registration."""
+    from services.task_execution.direct_loop import active_image_methods
+    from services.task_execution.methods import REFERENCE_PROMPTS_PROFILE
+
+    if (server_image_plan or saved_source_available or image_execution_request(request, runtime)
+            or requires_continued_delivery(request, runtime) or getattr(runtime, 'task_image_completion', None) is not None
+            or getattr(getattr(runtime, 'task_user_changes', None), 'items', ())
+            or getattr(runtime, '_steer_messages', ())):
         return False
-    if (re.search(r'(?:不用|别用|不要用|舍弃|忽略|取消)\s*$', text[:pointer.start()])
-            or re.match(r'\s*(?:不要了|不用了|先不做)', text[pointer.end():])):
+    methods = active_image_methods(runtime)
+    return len(methods) == 1 and next(iter(methods.values()))[0] == REFERENCE_PROMPTS_PROFILE
+
+
+def prefers_plain_image_text(request, runtime, *, saved_source_available=False, server_image_plan=False):
+    """Fresh prompt writing is host-registered using the frozen semantic intent."""
+    from services.task_execution.direct_loop import active_image_methods
+    from services.task_execution import item_confirmation
+    if (server_image_plan or saved_source_available or selects_previous_item(request, runtime) or active_image_methods(runtime)
+            or requires_continued_delivery(request, runtime)
+            or getattr(runtime, 'task_image_completion', None) is not None):
         return False
-    # Pasted text explicitly identified as the source is already in the current input.
-    if re.search(r'提示词(?:原文)?(?:如下)?\s*[：:]\s*\S', text):
-        return False
-    # Revising/authoring and then executing is a compound task. Keep both actions available.
-    if re.search(rf'(?:写|设计|拟|整理|列出).{{0,24}}{item}', text[:pointer.start()]):
-        return False
-    return True
+    media = item_confirmation.directive(request, runtime)
+    return semantic_intent(request, runtime) == 'write' and not (media.wait_for or media.wait_all)
 
 
-def selects_previous_item(request):
-    """An explicit pointer in an execution request cannot authorize a fresh draft."""
-    text = ' '.join(part.text for part in request.content if part.type == 'text')
-    previous_item = _previous_item_pointer(text)
-    image_action = image_execution_request(request)
-    if (previous_item and image_action
-            and getattr(getattr(request, 'context_anchor', None), 'base_revision', None) == 0
-            and not _previous_item_pointer(text, implicit_author=False)):
-        from services.task_execution.content_objects import current_source_images
-        if len(current_source_images(request)) == 1:
-            return False
-    return previous_item and (image_action or bool(re.search(
-        r'(?:导出|做成|制成|生成|转成)(?:一份|一个|一段)?(?:视频|文件|文档|Word|PDF)', text, re.I)))
 
 
-def is_single_image_source_request(request):
-    """Use the early question only when it will not interrupt an independent request."""
-    text = ' '.join(part.text for part in request.content if part.type == 'text').strip()
-    text = re.sub(r'^(?:这个|这张|这|这是)(?:是)?(?:图片|图|参考图)[。！!，,]\s*', '', text)
-    clauses = [part for part in re.split(r'[。！？!?；;，,\n]', text) if part.strip()]
-    return (len(clauses) == 1 and not re.search(r'另外|顺便|同时|并且|以及|然后', clauses[0])
-            and image_execution_request(request))
+
+
+def selects_previous_item(request, runtime=None):
+    return semantic_intent(request, runtime) in {'execute_saved', 'repeat'}
+
+
 
 
 def unconfirmed_image_reply(text, has_calls):
     if has_calls:
         return ''
-    # A genuine clarification or failure can accompany a status. A free-form
-    # promise is never a substitute for the worker's acceptance event.
-    notice = IMAGE_NOT_SUBMITTED
-    if text.strip() and (text.rstrip().endswith(('？', '?')) or re.search(r'无法|缺少|失败|请(?:选择|指定|上传|确认)', text)):
-        if not re.search(r'已(?:经)?(?:成功)?(?:提交|受理|派发|生成)|提交成功|正在(?:生成|排队)', text):
-            if text.rstrip().endswith(('？', '?')):
-                return text
-            return text + '\n\n' + notice
-    return notice
+    # Preserve authored content independently of punctuation. Acceptance is a
+    # server receipt, not a claim inferred from the model's prose.
+    return text + '\n\n' + IMAGE_NOT_SUBMITTED if text.strip() else IMAGE_NOT_SUBMITTED
 
 
 def checkpoint_state(runtime):
@@ -473,13 +356,30 @@ SCHEMAS = (
     READ_SCHEMA,
 )
 
-def model_tools(tools, *, selectable_source_images=False, server_image_plan=False, reuse_source=False, first_delivery=False, current_images=(), inline_image=False, generated_image_edit=False, single_image_edit=False):
+def model_tools(tools, *, selectable_source_images=False, saved_text_available=False, server_image_plan=False, reuse_source=False, first_delivery=False, current_images=(), inline_image=False, generated_image_edit=False, single_image_edit=False, inline_only=False, previous_result=False, planned_image_count=None):
     """Project the one entry contract selected by the current workflow."""
     from services.task_execution.content_objects import ContentReference, ImageContentReference, selection_parameters
     from services.handlers.image_size_requirements import SIZE_GUIDANCE
     result=[]
     for original in tools:
         name=original.get('function',{}).get('name')
+        if name == 'plan_ecommerce_images':
+            tool = copy.deepcopy(original)
+            parameters = tool['function']['parameters']
+            if planned_image_count is not None:
+                parameters['properties'].pop('image_count', None)
+                tool['function']['description'] += f' 本轮逐图方案项总数已由后台按用户要求确定为{planned_image_count}，不要重复填写image_count。'
+            else:
+                parameters['oneOf'] = [{**form, 'required': [*form['required'], 'image_count']}
+                    if 'references' in form.get('required', ()) else form for form in parameters['oneOf']]
+            result.append(tool)
+            continue
+        if server_image_plan and name == 'save_task_text':
+            # This workflow's native planner owns authoring and publication.
+            continue
+        if inline_only and name == 'save_task_text':
+            # The inline entry already saves its draft atomically.
+            continue
         if name == 'save_task_text' and not server_image_plan and (reuse_source or first_delivery or current_images):
             # Project the same backend action. The first turn has no historical
             # source to recover; an explicit follow-up already has its source.
@@ -500,10 +400,13 @@ def model_tools(tools, *, selectable_source_images=False, server_image_plan=Fals
                                            'continue_execution=true；修订用base和updates。')
             elif first_delivery:
                 # Preserve authoring Skill presentation requirements in the prefix.
-                from services.task_execution.content_objects import SCHEMA
+                from services.task_execution.content_objects import SCHEMA, MIXED_TEXT_GUIDANCE
                 description = function['description'].removesuffix(SCHEMA['function']['description'])
-                function['description'] = description + (
-                    '写方案、提示词或脚本时只交付一次document。每条body保留完整原文和限制，'
+                function['description'] = description + MIXED_TEXT_GUIDANCE + (
+                    '普通新写方案、提示词或脚本可直接用编号标题及完整正文回复，由后台登记。'
+                    '用户设置后续确认条件时，必须通过本工具一次交付document和confirmation（tool及wait_for或wait_all），'
+                    '方案说明可放document.display_prefix，整组正文放items，不把等待条件当成批准。'
+                    '结构化保存优先一次document，每条body保留完整原文和限制；分次写稿时前几次delivery_complete=false，最后一次才为true，'
                     '只交付文字时页面直接展示正文，后台保留当前原图待选。还要求执行时设continue_execution=true，'
                     '有上传图片则在每条的materials中绑定所用图片，保存后再调用目标工具。')
             if current_images and not reuse_source:
@@ -532,6 +435,8 @@ def model_tools(tools, *, selectable_source_images=False, server_image_plan=Fals
             continue
         if name=='image_agent':continue
         if name not in INPUT_TOOLS:
+            result.append(original);continue
+        if name == 'code_execute' and not saved_text_available:
             result.append(original);continue
         tool=copy.deepcopy(original);parameters=tool['function']['parameters']
         if name == 'generate_image' and server_image_plan:
@@ -579,13 +484,23 @@ def model_tools(tools, *, selectable_source_images=False, server_image_plan=Fals
                 if single_image_edit:
                     tool['function']['parameters'] = SingleImageEdit.model_json_schema()
                     tool['function']['description'] = (
-                        '编辑一张已生成的图。按用户指代找到确切的成图，'
+                        '编辑用户明确指定的图片（本轮附件底图或已有成图）。按用户指代找到确切的图片，'
                         '从该图的 reference 原样复制 message_id 和 content_index 到对应字段。'
                         '第一张指会话中的成图顺序。content_index 是消息内的位置。'
                         '定位缺失时先读取会话图片，定位不唯一时请用户选择。'
                         'edit_instruction 写明本轮修改和保留的要求，画布规格由后台依据用户消息与底图确定。'
+                        '“刚才生成的图”“再改”沿用最近已完成的相关结果；明确说原图或指定较早图片时按该指代选图，不混用上一轮输入和输出。'
+                        '本轮明确指定附件底图时，可整理为直接执行的修改指令，不凭空补商品身份、材质、功能或营销参数；后台核验图片绑定，不覆盖你的编辑指令。'
                         '本工具保存编辑要求并提交一次。'
                     )
+                    if previous_result:
+                        from services.task_execution.inline_image_action import PreviousResultEdit
+                        parameters = tool['function']['parameters']
+                        selected_required = parameters.pop('required')
+                        parameters['properties']['previous_result_edit'] = PreviousResultEdit.model_json_schema()['properties']['previous_result_edit']
+                        parameters['oneOf'] = [{'required': selected_required}, {'required': ['previous_result_edit']}]
+                        tool['function']['description'] += (' 继续上一轮唯一图片结果时，只填previous_result_edit，后台绑定真实输出；'
+                            '用户明确指向其他成图时才填写该图的source_message_id、source_content_index和edit_instruction。')
                     result.append(tool)
                     continue
                 projected = tool['function']['parameters']
@@ -594,8 +509,8 @@ def model_tools(tools, *, selectable_source_images=False, server_image_plan=Fals
                     projected['properties'] = {'draft': draft}
                     projected['required'] = ['draft']
                     tool['function']['description'] = (
-                        '编辑本轮用户指定的已生成图片。使用 draft.body 写清本轮修改和保留要求，'
-                        '在 draft.materials 以 usage=input 绑定选中的成图。'
+                        '编辑本轮用户指定的图片。使用 draft.body 写清本轮修改、保留要求及每张输入图的作用，'
+                        '在 draft.materials 按输入顺序以 usage=input 绑定实际使用的图片。'
                         '直接复制会话中真实的 message_id 与 content_index；定位缺失时先查会话图片。'
                         '本工具保存编辑稿并提交一次。' + SIZE_GUIDANCE
                     )
@@ -610,9 +525,21 @@ def model_tools(tools, *, selectable_source_images=False, server_image_plan=Fals
                         ' 用户要求创作单张新图或编辑一张已选图时，单独调用本工具传draft。'
                         '用户指定已有提示词时先定位原稿，找不到就请用户补充。'
                         '填写完整编辑要求body，并按draft.materials的字段说明绑定所用图片。'
+                        '画布与分辨率由后台依据用户明确要求、编辑底图和默认规则确定；'
+                        '用户未明确规格时，不在body或options自行声明比例、像素或分辨率。'
                         '系统保存原稿并提交，不需要先调用save_task_text。'
                         '只改提示词时使用保存工具；多张图或已有策划继续用content_source。'
                     )
+                if previous_result:
+                    from services.task_execution.inline_image_action import PreviousResultEdit
+                    projected['properties']['previous_result_edit'] = PreviousResultEdit.model_json_schema()['properties']['previous_result_edit']
+                    forms = projected.pop('oneOf', None)
+                    if forms is None:
+                        forms = [{'required': projected.pop('required', ['draft'])}]
+                    projected['oneOf'] = [*forms, {'required': ['previous_result_edit']}]
+                    tool['function']['description'] += (
+                        ' 继续编辑上一轮唯一图片结果时，传previous_result_edit，仅写修改与保留要求，后台绑定实际成图。'
+                        '更换颜色等画面修改属于编辑，不能用content_source.regenerate重跑原稿。')
         else:
             if constraints:
                 parameters['anyOf']=[constraints,{'required':['content_source',*[key for key in constraints.get('required',[]) if key!='prompt']]}]
@@ -786,6 +713,17 @@ def visual_budget_remaining(messages):
         for part in (message['content'] if isinstance(message.get('content'), list) else ())
     )
     return max(0, get_settings().chat_context_max_images - count)
+
+
+def visual_context_notice(messages):
+    count = sum(isinstance(part, dict) and part.get('type') == 'image_url'
+                for message in messages
+                for part in (message['content'] if isinstance(message.get('content'), list) else ()))
+    if not count:
+        return ''
+    return (f'[Current visual input]\n本次模型请求已附带{count}个图片输入。'
+            '可以直接依据当前图像内容判断；追加读取的预算只限制额外图片，不表示已有图片不可见。'
+            '图像分辨率低或内容不清时如实说明，不将其编造为视觉额度耗尽。')
 
 
 def read_image_task_status(runtime, db, context, value):
@@ -1003,7 +941,7 @@ def prepare_message_content(db, task_id, context, source, observed):
     parts = [m for m in messages if m['role'] == 'assistant'
              and (source.content_index is None or m['content_index'] == source.content_index)]
     if len(parts) > 1 and not source.items:
-        parts = [m for m in parts if index_document(m['text']) is not None]
+        parts = [m for m in parts if index_document(m['text'], allow_plain=True) is not None]
     if len(parts) != 1:
         raise ValueError('CONTENT_MESSAGE_SOURCE_BOUNDARIES_REQUIRED')
     part = parts[0]
@@ -1023,7 +961,7 @@ def prepare_message_content(db, task_id, context, source, observed):
             items.append({'title': item.title, 'body': text[start:end]})
         document = ContentDocument.model_validate({'title': source.title, 'items': items})
     else:
-        group = index_document(text)
+        group = index_document(text, allow_plain=True)
         if group is None:
             raise ValueError('CONTENT_MESSAGE_SOURCE_BOUNDARIES_REQUIRED')
         document, ranges, gaps = group.document, group.ranges, group.gaps
@@ -1055,3 +993,26 @@ def inject_source_code(code, text):
             break
     lines.insert(offset, f"\nchat_source_text = {text!r}\n")
     return ''.join(lines)
+
+
+def verified_video_status_text(text, *, fresh=False, confirmed_item=None):
+    if fresh:
+
+        parts = re.split(r'([。！？；\n])', text)
+        for index in range(0, len(parts), 2):
+            mentioned = {int(value) for value in re.findall(r'第\s*([1-9][0-9]?)\s*(?:条|项|个|段)', parts[index])}
+            if not mentioned or confirmed_item is None or mentioned == {confirmed_item}:
+                parts[index] = re.sub(r'(?:此前|先前|之前|早前|早已)\s*(?:就\s*)?(?:已经|已)?\s*受理',
+                                      '本轮已受理', parts[index])
+        text = ''.join(parts)
+    return re.sub(r'(?:视频|短片)(?:任务)?(?:已经|已)(?:成功)?(?:生成(?:完成)?|制作完成|完成|发布)',
+                  '视频任务已受理', text)
+
+
+def semantic_context(request, runtime=None):
+    projection = getattr(runtime, 'workflow_projection', None) or (getattr(request, 'params', None) or {}).get('_ecom_workflow') or {}
+    raw = projection.get('request_context')
+    if raw is None:
+        return None
+    from services.agent.image.ecommerce_planner.workflow import ImageRequestContext
+    return ImageRequestContext.model_validate(raw)

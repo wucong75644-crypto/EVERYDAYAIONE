@@ -5,22 +5,16 @@ import re
 
 from services.handlers.image_dimensions import ratio_for
 
-RATIO = re.compile(r"(?<![\d:：])([+-]?\d{1,3})\s*[:：]\s*([+-]?\d{1,3})(?![\d:：])")
-PIXELS = re.compile(r"(?<!\d)([+-]?\d+)\s*[xX×＊*]\s*([+-]?\d+)(?!\d)")
-RESOLUTION = re.compile(r"(?<![\d])(\d+)\s*[kK](?![A-Za-z0-9_])")
-AUTO_RATIO = re.compile(
-    r"比例\s*(?:由你(?:来)?(?:决定|定)|你(?:来)?(?:决定|定)|随你|自动(?:选择|决定)|用auto)"
-    r"|(?:你(?:来)?(?:决定|定)|自动(?:选择|决定))\s*(?:输出|画布)?比例",
-    re.I,
-)
 IMAGE_SIZE_OPTIONS = ('aspect_ratio', 'resolution', 'size_requirement')
 IMAGE_DRAFT_OPTIONS = (*IMAGE_SIZE_OPTIONS, 'output_format')
 
 SIZE_GUIDANCE = (
-    "图片输出尺寸以平台图片工具规格为准。未指定时默认1K，无参考图默认1:1；"
-    "有选定参考图时后台把真实整图画布匹配到最接近的支持比例，省略aspect_ratio或使用inherit_reference。"
-    "多张参考图画布不同时，按用户意图选择画布来源；reference_index是执行参考图中的零基索引。"
-    "只有用户明确把比例交给系统选择时才用auto。只改比例保留已选图的分辨率档，只改分辨率保留比例。"
+    "图片输出尺寸以平台图片工具规格为准。用户未指定的新创作默认auto、1K，上传参考图不等于要求沿用其比例；"
+    "修改图片时继承实际编辑目标的画布，把真实宽高匹配到最接近的支持比例。"
+    "明确指定画布时用size_requirement={mode:inherit_reference,reference_index:零基索引}；"
+    "inherit_reference是size_requirement.mode，不是aspect_ratio的取值。"
+    "参考图可有不同尺寸；画布来源与其他执行参考独立，不能为确定比例删除风格参考。reference_index是执行参考图中的零基索引。"
+    "auto是新创作的正常缺省策略，无需额外授权；用户明确尺寸和编辑目标画布优先。只改比例保留已选图的分辨率档，只改分辨率保留比例。"
     "用户给出的比例填aspect_ratio（如1:1），分辨率档填resolution（如1K）。产品比例只描述主体造型。"
     "原图宽高仅是素材事实，不能写成输出像素。仅用户确实要求精确像素时用size_requirement.width/height，"
     "发现不支持或冲突时在提交前说明。用画面正文描述构图，尺寸规格仅在已确定后使用单独参数。"
@@ -37,7 +31,7 @@ def image_draft_options_schema(native_properties=None):
     ratios = dict.fromkeys(ratio for mode in ('text_to_image', 'image_to_image')
                           for ratio in IMAGE_MODEL_CONFIGS[default_chat_image_model(mode)]['supported_sizes'])
     fields = {key: deepcopy(native_properties[key]) for key in IMAGE_DRAFT_OPTIONS}
-    fields['aspect_ratio'].update(enum=list(ratios), description='输出画布比例；参考图默认省略，由后台匹配。auto仅用于本轮用户明确授权。')
+    fields['aspect_ratio'].update(enum=list(ratios), description='输出画布比例；新创作未指定时用auto，编辑继承目标图。参考图片之间无需统一比例。')
     fields['resolution']['description'] = '输出清晰度档位，默认1K。使用已选成图修改时可沿用其已确认档位。'
     fields['size_requirement']['dependentRequired'] = {'width': ['height'], 'height': ['width']}
     return {'type': 'object', 'additionalProperties': False, 'properties': fields, 'description': SIZE_GUIDANCE}
@@ -60,105 +54,48 @@ def nearest_reference_ratio(reference, supported):
     return min(same_direction or candidates, key=lambda item: abs(log(width / height) - log(item[1] / item[2])))[0]
 
 
+def normalize_approximate_pixels(intent, config):
+    """Map explicitly approximate user pixels to native ratio/K parameters."""
+    if not intent.get('approximate_pixels') or 'width' not in intent:
+        return intent
+    value=dict(intent)
+    width,height=value.pop('width'),value.pop('height')
+    value.update(requested_width=width,requested_height=height,
+        aspect_ratio=value.get('aspect_ratio') or nearest_reference_ratio(
+            {'width':width,'height':height},config['supported_sizes']))
+    if not value.get('resolution') and config.get('supports_resolution'):
+        value['resolution']=min(config['supported_resolutions'],
+            key=lambda tier:abs(log(max(width,height))-log(int(tier[:-1])*1024)))
+    return value
+
+
 
 class ImageSizeError(ValueError):
     def __init__(self, code, guidance):
         super().__init__(code)
+        self.code = code
         self.guidance = guidance
 
 
-def user_size_intent(text: str) -> dict:
-    """Read literal dimensions only from user text, never attachments or assistant plans.
-
-    Natural-language intent remains the model's job; literal conflicts cannot be
-    bypassed by a model-supplied mode or approximate resolution.
-    """
-    text = re.sub(r"```[\s\S]*?```", "", text or "")
-    text = re.sub(r"(\d{1,3})\s*比\s*(\d{1,3})", r"\1:\2", text)
-    numerals = {"一":1,"二":2,"三":3,"四":4,"五":5,"六":6,"七":7,"八":8,"九":9,"十":10}
-    def number(value):
-        if "十" in value and len(value) > 1:
-            before, after = value.split("十")
-            return numerals.get(before, 1) * 10 + numerals.get(after, 0)
-        return numerals.get(value, 0)
-    text = re.sub(r"([一二三四五六七八九]?十[一二三四五六七八九]?|[一二三四五六七八九])比([一二三四五六七八九]?十[一二三四五六七八九]?|[一二三四五六七八九])",
-                  lambda match: f"{number(match[1])}:{number(match[2])}", text)
-    # Descriptions of an object's shape or the source file do not specify the
-    # output canvas. Only retain their dimensions when explicitly used as output.
-    segments = re.split(r"[，。；;\n]", text)
-    text = "，".join(segment for segment in segments if not (
-        re.search(r"(?:产品|主体|笔记本|包装盒).{0,8}(?:比例|尺寸)|(?:原图|参考图).{0,8}(?:是|为|尺寸)", segment)
-        and not re.search(r"生成|输出|画布|改成|改为|沿用|保持", segment)))
-    # '原来1:1，改成3:4' is a replacement, not two simultaneous requirements.
-    changed = re.split(r"改成|改为|调整为|换成", text)
-    if len(changed) > 1:
-        text = changed[-1]
-    if any(int(w) <= 0 or int(h) <= 0 for w, h in RATIO.findall(text)):
-        raise ImageSizeError("IMAGE_SIZE_INVALID", "比例宽高必须为正整数。")
-    ratios = {ratio_for(int(w), int(h)) for w, h in RATIO.findall(text) if int(w) and int(h)}
-    pixels = {(int(w), int(h)) for w, h in PIXELS.findall(text)}
-    pixels.update((int(w), int(h)) for w, h in re.findall(r"宽(?:度)?\s*[:：]?\s*(\d+)\s*(?:像素|px)?\s*[,，、]?\s*高(?:度)?\s*[:：]?\s*(\d+)", text, re.I))
-    resolutions = {f"{k}K" for k in RESOLUTION.findall(text)}
-    if len(ratios) > 1 or len(pixels) > 1 or len(resolutions) > 1:
-        raise ImageSizeError("IMAGE_SIZE_AMBIGUOUS", "本次有多个尺寸要求，请明确这张图片使用哪一个；不自动选择。")
-    intent = {}
-    if pixels:
-        width, height = pixels.pop()
-        if width < 1 or height < 1:
-            raise ImageSizeError("IMAGE_SIZE_INVALID", "像素宽高必须是正整数。")
-        intent.update(width=width, height=height)
-        if ratios and next(iter(ratios)) != ratio_for(width, height):
-            raise ImageSizeError("IMAGE_SIZE_CONFLICT", "精确像素与宽高比冲突，请明确目标规格。")
-    if ratios:
-        intent["aspect_ratio"] = ratios.pop()
-    if resolutions:
-        intent["resolution"] = resolutions.pop()
-    if re.search(r"(?:正方形|方图|方形画布)", text) and "aspect_ratio" not in intent:
-        intent["aspect_ratio"] = "1:1"
-    if AUTO_RATIO.search(text):
-        if ratios or "aspect_ratio" in intent or pixels or "width" in intent:
-            raise ImageSizeError("IMAGE_SIZE_CONFLICT", "自动比例与固定尺寸同时出现，请明确本次使用哪一种。")
-        intent["mode"] = "auto"
-    elif re.search(r"(?:保持|沿用|保留|不改).{0,8}(?:原图|参考图)|(?:原图|参考图).{0,8}(?:比例|尺寸)", text):
-        intent["mode"] = "inherit_reference"
-    elif re.search(r"(?:保持|沿用|保留|不改).{0,8}比例", text):
-        intent["keep_aspect_ratio"] = True
-    elif re.search(r"(?<!\d)\d{3,5}\s*(?:尺寸|像素|px)(?!\w)", text, re.I) and not pixels and "width" not in intent:
-        raise ImageSizeError("IMAGE_SIZE_AMBIGUOUS", "请明确是正方形像素尺寸，还是长边尺寸。")
-    if re.search(r"(?<!\d)\d{3,5}[pP](?![A-Za-z0-9_])", text):
-        raise ImageSizeError("IMAGE_EXACT_SIZE_UNSUPPORTED", "当前图片接口不保证指定像素高度，请选择支持的比例与分辨率档位，不自动近似。")
-    if re.search(r"(?:长边|短边)\s*[：:]?\s*\d+", text):
-        raise ImageSizeError("IMAGE_EXACT_SIZE_UNSUPPORTED", "当前接口不保证精确长边或短边像素，请选择支持的比例与分辨率档位，不自动换算。")
-    if re.search(r"(?:尺寸\s*[：:]?\s*\d{3,5}|(?:做|生成)\s*\d{3,5}\s*$)", text) and "width" not in intent:
-        raise ImageSizeError("IMAGE_SIZE_AMBIGUOUS", "请明确是正方形像素尺寸，还是长边尺寸。")
-    if re.search(r"竖(?:版|图|向(?:画布|封面|海报|图片))|纵向画布", text):
-        intent["orientation"] = "portrait"
-    elif re.search(r"横(?:版|图|向(?:画布|封面|海报|图片))|宽屏", text):
-        intent["orientation"] = "landscape"
-    return intent
 
 
-def selected_source_size(prompt: str) -> dict:
-    """Explicit output declarations in verified selected content, excluding product geometry."""
-    declarations = [match[1] for match in re.finditer(
-        r'(?:输出(?:比例|尺寸|分辨率)|画布(?:比例|尺寸)|aspect[_ ]ratio|(?<!\w)--ar)'
-        r'\s*[:：=为是]?\s*(\d+\s*[:：xX×]\s*\d+|\d+[kK])', prompt, re.I)
-        if not source_canvas_fact(prompt, match.start())]
-    return user_size_intent('，'.join(declarations))
 
 
-def source_canvas_fact(text, start):
-    """Source-image metadata is data, not a competing output requirement."""
-    prefix = text[max(0, start - 20):start]
-    return bool(re.search(r'(?:原图|参考图)(?:的)?(?:画布)?\s*$', prefix)
-                and not re.search(r'(?:保持|沿用|保留|输出).{0,8}$', prefix))
 
 
-def resolve_size_requirement(args: dict, references: list[dict], *, intent=None, previous=None) -> tuple[dict, dict]:
+
+
+
+
+
+
+
+
+def resolve_size_requirement(args: dict, references: list[dict], *, intent=None, previous=None, action=None) -> tuple[dict, dict]:
     """Return normalized execution specs plus immutable provenance.
 
-    Missing mode on legacy tools does not grant a model permission to change a
-    reference canvas. Explicit user ratios override inheritance.
+    New creations may use auto; edits inherit the selected actual canvas.
+    Legacy single-reference tools retain inheritance. User sizes take priority.
     """
     from services.adapters.kie.configs import IMAGE_MODEL_CONFIGS
     from services.handlers.chat_image_request import default_chat_image_model
@@ -175,6 +112,9 @@ def resolve_size_requirement(args: dict, references: list[dict], *, intent=None,
     config = IMAGE_MODEL_CONFIGS.get(model)
     if not config:
         raise ValueError("IMAGE_MODEL_UNAVAILABLE")
+    intent=normalize_approximate_pixels(intent,config)
+    if intent.get('approximate_pixels'):
+        request.pop('width',None);request.pop('height',None)
     if any(key in request or key in intent for key in ("width", "height")):
         width, height = intent.get("width", request.get("width")), intent.get("height", request.get("height"))
         if type(width) is not int or type(height) is not int or width < 1 or height < 1:
@@ -202,25 +142,44 @@ def resolve_size_requirement(args: dict, references: list[dict], *, intent=None,
             raise ImageSizeError("IMAGE_SIZE_INVALID", "画布比例格式无效。")
         if (intent["orientation"] == "portrait" and w >= h) or (intent["orientation"] == "landscape" and w <= h):
             raise ImageSizeError("IMAGE_SIZE_CONFLICT", "工具比例与用户指定的横竖方向冲突，请纠正参数。")
-    elif mode == "auto" or args.get("aspect_ratio") == "auto":
-        raise ImageSizeError("IMAGE_SIZE_INTENT_REQUIRED", "只有用户明确把比例交给系统选择时才用auto；否则按参考图或默认比例执行。")
     elif previous.get("aspect_ratio") and previous["aspect_ratio"] != "auto" and mode != "inherit_reference":
         mode, ratio, source = previous.get("mode", "explicit"), previous["aspect_ratio"], "task"
-    elif references:
+    elif mode == 'inherit_reference' or action == 'edit' and references:
+        mode, ratio, source = 'inherit_reference', None, 'reference'
+    elif mode == "auto" or args.get("aspect_ratio") == "auto" or previous.get('aspect_ratio') == 'auto':
+        mode, ratio, source = "auto", "auto", "task" if previous.get('aspect_ratio') == 'auto' else "model"
+    elif mode == 'explicit' and args.get('aspect_ratio'):
+        mode, ratio, source = 'explicit', args['aspect_ratio'], 'model'
+    elif references and (mode == 'inherit_reference' or action == 'edit' or action is None and len(references) == 1):
         mode, ratio, source = "inherit_reference", None, "reference"
+    elif args.get('aspect_ratio') and (not references or action in {'generate', 'write', 'write_then_submit_images'}):
+        mode, ratio, source = 'explicit', args['aspect_ratio'], 'model'
     else:
-        mode, ratio, source = "explicit", args.get("aspect_ratio", "1:1"), "model"
+        mode, ratio, source = "auto", "auto", "default"
     reference_index = None
     if mode == "inherit_reference" and ratio is None:
         if not references:
             raise ImageSizeError("IMAGE_CANVAS_REFERENCE_REQUIRED", "沿用参考图需要先选定真实原图。")
         reference_index = request.get("reference_index")
+        if locator := intent.get('canvas_reference'):
+            def matches(ref):
+                if 'workspace_path' in locator:
+                    return all(ref.get(key)==value for key,value in locator.items())
+                candidates = [ref, {'message_id': ref.get('source_message_id'),
+                                    'content_index': ref.get('source_content_index')},
+                              *ref.get('occurrences', ())]
+                return any(str(value.get('message_id')) == locator['message_id']
+                           and value.get('content_index') == locator['content_index'] for value in candidates)
+            selected = [index for index, ref in enumerate(references) if matches(ref)]
+            if len(selected) != 1:
+                raise ImageSizeError('IMAGE_CANVAS_REFERENCE_REQUIRED', '请在执行素材中绑定用户明确指定的编辑底图；保留其余风格参考。')
+            reference_index = selected[0]
         if reference_index is None:
             ratios = {ref.get("aspect_ratio") for ref in references}
             if None in ratios:
                 raise ImageSizeError("IMAGE_DIMENSIONS_UNAVAILABLE", "原图尺寸未读取成功；请指定比例或重新选择图片，不根据目测推断。")
             if len(ratios) > 1:
-                raise ImageSizeError("IMAGE_CANVAS_REFERENCE_REQUIRED", "多张参考图画布比例不同，请明确哪张作为画布来源；风格参考不自动决定尺寸。")
+                raise ImageSizeError("IMAGE_CANVAS_REFERENCE_REQUIRED", "尚未确定要沿用哪张图片的画布，请绑定实际编辑目标；其余参考图继续保留。")
             reference_index = 0
         if type(reference_index) is not int or not 0 <= reference_index < len(references):
             raise ImageSizeError("IMAGE_CANVAS_REFERENCE_REQUIRED", "画布来源索引无效，请从选定参考图中明确选择。")
@@ -254,6 +213,9 @@ def resolve_size_requirement(args: dict, references: list[dict], *, intent=None,
         raise ImageSizeError("IMAGE_SIZE_PROMPT_CONFLICT", f"服务器已确定分辨率{effective_resolution}；请在系统内纠正提示词声明，不重复询问已明确的用户要求。")
     target = {"mode": mode, "aspect_ratio": ratio, "source": source,
               "resolution_source": "user" if intent.get("resolution") else "task" if previous.get("resolution") else "model"}
+    if intent.get('approximate_pixels'):
+        target.update(approximate=True,requested_width=intent['requested_width'],
+            requested_height=intent['requested_height'],resolution=resolution)
     if source == "task" or target["resolution_source"] == "task":
         target.update({key: previous[key] for key in ("source_message_id", "source_task_id") if previous.get(key)})
     if reference_index is not None:
@@ -263,35 +225,12 @@ def resolve_size_requirement(args: dict, references: list[dict], *, intent=None,
     return args, target
 
 
-def size_preflight_notice(text: str, sources: list[dict]) -> str:
-    """Preflight an explicitly requested output size with the native resolver.
-
-    No task, provider IO or debit. Unselected, mixed canvases are not collapsed.
-    Historical fixed specs remain in history when this message changes one axis.
-    """
-    import json
-    try:
-        intent = user_size_intent(text)
-        if not intent:
-            return ""
-        available = [source for source in sources if source.get("available")]
-        if not available:
-            # A resolution-only update depends on the existing task canvas.
-            if set(intent) <= {"resolution", "keep_aspect_ratio"}:
-                return "服务器尺寸意图：" + json.dumps(intent, ensure_ascii=False) + "；保留当前任务已确定的比例。"
-            _, target = resolve_size_requirement({"mode":"text_to_image","prompt":"size preflight"}, [], intent=intent)
-        else:
-            refs = [{**source.get("canvas", {}), "role":"reference"} for source in available]
-            _, target = resolve_size_requirement({"mode":"image_to_image","prompt":"size preflight"}, refs, intent=intent)
-        target["resolution"] = intent.get("resolution") or "沿用当前任务分辨率；无既定规格时使用模型默认分辨率"
-        return "服务器目标尺寸预检（方案与提示词须一致，正式执行时重新校验选定引用）：" + json.dumps(target, ensure_ascii=False)
-    except ImageSizeError as error:
-        return "服务器尺寸预检未通过：" + error.guidance + " 未创建图片任务或预扣图片积分。"
 
 
-def is_size_instruction(text: str) -> bool:
-    """Do not turn historic size questions/examples into persistent task rules."""
-    if re.search(r"如果|例如|为什么|是什么意思|解释|区别", text):
-        return False
-    return bool(re.search(r"生成|输出|改成|改为|调整|保持|沿用|统一|设成|设为|设置|提高|比例.{0,5}(?:你决定|自动)", text)
-                or re.fullmatch(r"[\d\s:：×xXkK、，,。.]+", text.strip()))
+
+
+def source_canvas_fact(text, start):
+    """Source-image metadata is data, not a competing output requirement."""
+    prefix = text[max(0, start - 20):start]
+    return bool(re.search(r'(?:原图|参考图)(?:的)?(?:画布)?\s*$', prefix)
+                and not re.search(r'(?:保持|沿用|保留|输出).{0,8}$', prefix))

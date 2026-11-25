@@ -204,6 +204,7 @@ class TestCrossMetricDispatch:
         result = await agent.execute(
             "库存周转天数", dag_mode=True,
             params={
+                "doc_type":"daily_stats",
                 "query_type": "cross",
                 "metrics": ["inventory_turnover"],
             },
@@ -285,7 +286,7 @@ class TestAlertAllTypes:
         agent = _make_warehouse(self._make_alert_db())
         result = await agent.execute(
             "缺货预警", dag_mode=True,
-            params={"query_type": "alert", "alert_type": "low_stock"},
+            params={"doc_type":"daily_stats","query_type": "alert", "alert_type": "low_stock"},
         )
         assert result.status in ("success", "empty"), f"{result.status}: {result.summary}"
         assert result.metadata.get("alert_type") == "low_stock"
@@ -295,7 +296,7 @@ class TestAlertAllTypes:
         agent = _make_warehouse(self._make_alert_db())
         result = await agent.execute(
             "滞销商品", dag_mode=True,
-            params={"query_type": "alert", "alert_type": "slow_moving"},
+            params={"doc_type":"daily_stats","query_type": "alert", "alert_type": "slow_moving"},
         )
         assert result.status in ("success", "empty"), f"{result.status}: {result.summary}"
         assert result.metadata.get("alert_type") == "slow_moving"
@@ -305,7 +306,7 @@ class TestAlertAllTypes:
         agent = _make_warehouse(self._make_alert_db())
         result = await agent.execute(
             "积压预警", dag_mode=True,
-            params={"query_type": "alert", "alert_type": "overstock"},
+            params={"doc_type":"daily_stats","query_type": "alert", "alert_type": "overstock"},
         )
         assert result.status in ("success", "empty"), f"{result.status}: {result.summary}"
         assert result.metadata.get("alert_type") == "overstock"
@@ -315,7 +316,7 @@ class TestAlertAllTypes:
         agent = _make_warehouse(self._make_alert_db())
         result = await agent.execute(
             "热销断货", dag_mode=True,
-            params={"query_type": "alert", "alert_type": "out_of_stock"},
+            params={"doc_type":"daily_stats","query_type": "alert", "alert_type": "out_of_stock"},
         )
         assert result.status in ("success", "empty"), f"{result.status}: {result.summary}"
         assert result.metadata.get("alert_type") == "out_of_stock"
@@ -325,7 +326,7 @@ class TestAlertAllTypes:
         agent = _make_warehouse(self._make_alert_db())
         result = await agent.execute(
             "采购超期", dag_mode=True,
-            params={"query_type": "alert", "alert_type": "purchase_overdue"},
+            params={"doc_type":"daily_stats","query_type": "alert", "alert_type": "purchase_overdue"},
         )
         assert result.status in ("success", "empty"), f"{result.status}: {result.summary}"
         assert result.metadata.get("alert_type") == "purchase_overdue"
@@ -335,7 +336,7 @@ class TestAlertAllTypes:
         agent = _make_warehouse(self._make_alert_db())
         result = await agent.execute(
             "xxx预警", dag_mode=True,
-            params={"query_type": "alert", "alert_type": "nonexistent"},
+            params={"doc_type":"daily_stats","query_type": "alert", "alert_type": "nonexistent"},
         )
         assert result.status in ("error", "ERROR")
 
@@ -442,6 +443,7 @@ class TestAutoInferWithAgent:
         result = await agent.execute(
             "缺货了", dag_mode=True,
             params={
+                "doc_type":"daily_stats",
                 "alert_type": "low_stock",
                 # 没有 query_type
             },

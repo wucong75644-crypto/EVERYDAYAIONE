@@ -49,6 +49,11 @@ def prepare_input(resolver,args,*,scoped,workflow,settings,composition=None,entr
             item=next((entry for entry in plan.get("items",[]) if entry.get("item_id")==item_id),None)
             if not item or not item.get("request_text") or not item.get("request_text_sha256"):
                 raise ValueError("ECOM_PLAN_ITEM_UNAVAILABLE")
+            media = getattr(getattr(workflow,'request_context',None),'media',None)
+            if media is not None and media.tool=='generate_image':
+                position=item.get('position')
+                if (media.wait_all or position in media.wait_for) and not (media.confirmation_only and position in media.approved):
+                    raise ChatImageNotAcceptedError('CHAT_MEDIA_AWAITING_USER')
             if (not isinstance(plan.get("target_size"),dict)
                     or item.get("aspect_ratio") != plan["target_size"].get("aspect_ratio")):
                 raise ValueError("ECOM_PLAN_SIZE_SNAPSHOT_INVALID")
@@ -105,47 +110,73 @@ def prepare_input(resolver,args,*,scoped,workflow,settings,composition=None,entr
                     or expected["file_version"]!=reference["file_version"]
                     or expected["workspace_path"]!=reference["workspace_path"]):
                 raise ValueError("ECOM_PLAN_REFERENCE_CHANGED")
-    from services.handlers.image_size_requirements import resolve_size_requirement, selected_source_size
+    from services.handlers.image_size_requirements import resolve_size_requirement
     size_fields = {'aspect_ratio', 'mode', 'width', 'height', 'orientation'}
     source = normalized.get('source_prompt')
     bound_specs = {}
     legacy_options = {}
     fresh_draft = False
+    semantic_context = getattr(workflow, 'request_context', None)
+    action = getattr(workflow, 'intent', None)
     if source and 'content_object' in source:
-        intent, previous = resolver.size_context(use_previous=False, infer_attachment_canvas=False)
+        intent, previous = resolver.size_context(use_previous=False, infer_attachment_canvas=False,
+            **({'semantic_context': semantic_context} if semantic_context is not None else {}))
         artifact, item = resolver.content_image_item(source['content_object'])
         legacy_options = item.options if {'width', 'height'} <= item.options.keys() else {}
         # A fresh inline draft has no prior user-approved output settings.
         fresh_draft = (artifact.source_call_id.startswith('inline-save-')
                        and str(artifact.source_task_id) == owner.task_id)
         if fresh_draft:
-            normalized.pop('resolution', None)
-            if not intent.get('orientation') and normalized.get('aspect_ratio') != 'auto':
+            # A frozen semantic frame owns user overrides. Keep valid model
+            # options when the frame has no replacement; legacy calls without
+            # a frame retain their established native defaults.
+            if semantic_context is None or intent.get('resolution'):
+                normalized.pop('resolution', None)
+            if ((semantic_context is None or any(intent.get(key) is not None for key in
+                    ('aspect_ratio','width','height','orientation','mode','canvas_reference')))
+                    and not intent.get('orientation') and normalized.get('aspect_ratio') != 'auto'):
                 normalized.pop('aspect_ratio', None)
         spec_fields = ('output_format',) if fresh_draft else ('aspect_ratio', 'resolution', 'output_format')
         bound_specs = {key: normalized[key] for key in spec_fields if key in normalized}
     else:
-        intent, previous = resolver.size_context()
-    if not plan_proof and len(refs) == 1 and refs[0].get('source') == 'generated':
+        intent, previous = resolver.size_context(**({'semantic_context': semantic_context,
+            'use_previous': action not in {'write','generate','write_then_submit_images'}} if semantic_context is not None else {}))
+    if not plan_proof and len(refs) == 1 and (refs[0].get('source') == 'generated'
+            or refs[0].get('source') == 'quoted' and refs[0].get('quoted_task_id')):
         previous = resolver.selected_image_size(refs[0]) or previous
+        if (fresh_draft and previous.get('aspect_ratio') and not any(k in intent for k in ('width','height'))
+                and not any(k in previous for k in ('width','height'))):
+            # A new edit draft cannot turn an inherited native canvas into an
+            # invented exact-pixel requirement. Explicit user pixels still win.
+            size=normalized.get('size_requirement')
+            if isinstance(size,dict):
+                size.pop('width',None);size.pop('height',None)
+    if (legacy_options and (intent.get('aspect_ratio') or intent.get('mode') in {'auto','inherit_reference'})
+            and not any(k in intent for k in ('width','height'))):
+        # An explicit replacement canvas supersedes retired stored pixel metadata.
+        requested = normalized.get('size_requirement')
+        if isinstance(requested, dict):
+            requested.pop('width', None)
+            requested.pop('height', None)
+        normalized.pop('aspect_ratio', None)
+        bound_specs.pop('aspect_ratio', None)
     structured_size = normalized.get('size_requirement', {})
     if legacy_options and structured_size and 'width' not in structured_size:
         normalized['prompt'] = _adapt_legacy_canvas(normalized['prompt'], legacy_options, normalized.get('aspect_ratio'))
-    if (source and not fresh_draft and not structured_size and not size_fields.intersection(intent)
-            and not size_fields.intersection(previous)):
-        selected_size = selected_source_size(normalized['prompt'])
-        if selected_size:
-            provenance = {f'source_{key}': source[key] for key in ('message_id', 'task_id') if key in source}
-            previous = {**selected_size, 'mode': 'explicit', **previous, **provenance}
-            intent = {**{key: selected_size[key] for key in ('width', 'height') if key in selected_size}, **intent}
     if plan_proof:
+        if intent.get('approximate_pixels'):
+            from services.handlers.image_size_requirements import normalize_approximate_pixels
+            from services.adapters.kie.configs import IMAGE_MODEL_CONFIGS
+            from services.handlers.chat_image_request import default_chat_image_model
+            intent=normalize_approximate_pixels(intent,IMAGE_MODEL_CONFIGS[
+                normalized.get('model') or default_chat_image_model(normalized.get('mode'))])
         locked_size = plan["target_size"]
         ratio = locked_size["aspect_ratio"]
-        ratio_width, ratio_height = map(int, ratio.split(":"))
+        ratio_width, ratio_height = (map(int, ratio.split(":")) if ratio != 'auto' else (0, 0))
         if (any(key in intent for key in ("width", "height"))
                 or (intent.get("aspect_ratio") and intent["aspect_ratio"] != ratio)
                 or (intent.get("resolution") and intent["resolution"] != locked_size.get("resolution"))
-                or intent.get("mode") == "auto"
+                or intent.get("mode") == "auto" and ratio != 'auto'
                 or (intent.get("mode") == "inherit_reference"
                     and locked_size.get("mode") != "inherit_reference")
                 or (intent.get("orientation") == "portrait" and ratio_width >= ratio_height)
@@ -154,13 +185,16 @@ def prepare_input(resolver,args,*,scoped,workflow,settings,composition=None,entr
                 "当前尺寸要求与已保存方案不同，请先按新尺寸重新策划后再生成。")
         normalized, _resolved_size = resolve_size_requirement(
             normalized, refs, intent={}, previous=locked_size)
-        target_size = locked_size
+        target_size = dict(locked_size)
+        if intent.get('approximate_pixels'):
+            target_size.update(approximate=True,requested_width=intent['requested_width'],
+                requested_height=intent['requested_height'])
     else:
         previous.update({key: bound_specs[key] for key in ('aspect_ratio', 'resolution')
                          if key in bound_specs})
         if 'aspect_ratio' in bound_specs:
             previous['mode'] = 'auto' if bound_specs['aspect_ratio'] == 'auto' else 'explicit'
-        normalized, target_size = resolve_size_requirement(normalized, refs, intent=intent, previous=previous)
+        normalized, target_size = resolve_size_requirement(normalized, refs, intent=intent, previous=previous, action=action)
         if any(normalized.get(key) != value for key, value in bound_specs.items()):
             raise ChatImageNotAcceptedError('IMAGE_SIZE_CONFLICT', '当前规格与已保存方案不同，请先更新方案再执行。')
     if "source_task_id" in normalized:

@@ -8,7 +8,7 @@
 - time_str / weekdays / day_of_month / run_at: 频率字段
 
 新面板：一次模型提取 → ToolSpec 字段校验；失败保留已有表单供用户修正。
-旧 parse_task_nl 调用保留关键词兜底，旧 parse_task_request 保留来源片段校验。
+旧表单和新结构化入口均不使用关键词兜底；旧 parse_task_request 保留来源片段校验。
 新聊天入口直接接收主模型工具参数，不调用本模块做第二次解析。
 
 设计文档: docs/document/UI_定时任务面板设计.md §AI 解析
@@ -23,11 +23,9 @@ from zoneinfo import ZoneInfo
 from loguru import logger
 
 from core.config import settings
-from services.dashscope_client import DashScopeClient
+from services.model_gateway import ModelCallRequest, get_model_gateway
 
 
-# 模块级 HTTP 客户端
-_ds_client = DashScopeClient("task_nl_parser_timeout", default_timeout=5.0)
 
 NL_PARSER_SYSTEM_PROMPT = """你是定时任务解析器。把用户的自然语言转成 JSON 对象。
 
@@ -87,7 +85,7 @@ def _extract_json(text: str) -> Optional[Dict[str, Any]]:
 
 
 async def _call_llm(text: str, tz: str, *, system_prompt: str | None = None) -> Optional[Dict[str, Any]]:
-    """调 qwen-turbo 解析，失败返回 None"""
+    """通过现有网关和配置的轻量语义模型解析；失败保留原表单。"""
     if not settings.dashscope_api_key:
         return None
 
@@ -98,58 +96,32 @@ async def _call_llm(text: str, tz: str, *, system_prompt: str | None = None) -> 
         f"输入: {text.strip()}"
     )
 
+    session = get_model_gateway().open_chat(ModelCallRequest(
+        model_id=settings.intent_router_fallback_model,
+        timeout=settings.intent_router_timeout,
+    ))
     try:
-        client = await _ds_client.get()
-        response = await client.post(
-            "/chat/completions",
-            json={
-                "model": "qwen-turbo",
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                "temperature": 0.0,
-                "max_tokens": 1200 if system_prompt != NL_PARSER_SYSTEM_PROMPT else 300,
-            },
-        )
-        response.raise_for_status()
-        data = response.json()
-        content = data["choices"][0]["message"]["content"]
-        parsed = _extract_json(content)
-        if parsed:
-            logger.info(f"task_nl_parser LLM ok | input={text[:30]} | type={parsed.get('schedule_type')}")
-        return parsed
-    except Exception as e:
-        logger.warning(f"task_nl_parser LLM failed | error={e}")
+        content = ''
+        async for chunk in session.stream_chat(
+            messages=[{"role": "system", "content": system_prompt},
+                      {"role": "user", "content": user_prompt}],
+            thinking_mode='disabled', temperature=0.0,
+            max_tokens=1200 if system_prompt != NL_PARSER_SYSTEM_PROMPT else 300,
+        ):
+            content += chunk.content or ''
+        return _extract_json(content)
+    except Exception as exc:
+        logger.warning('task_nl_parser model failed | model={} | error_type={}',
+                       session.model_id, type(exc).__name__)
         return None
+    finally:
+        await session.close()
 
 
 def _fallback(text: str) -> Dict[str, Any]:
-    """关键词兜底：LLM 不可用时给一个最低限度的解析"""
-    schedule_type = "daily"
-    time_str = "09:00"
-    name = "新建任务"
-
-    if "每周" in text or "周一" in text:
-        schedule_type = "weekly"
-        name = "周报推送"
-    elif "每月" in text or "1日" in text or "1号" in text:
-        schedule_type = "monthly"
-        name = "月报推送"
-    elif "今天" in text or "今晚" in text or "明天" in text:
-        schedule_type = "once"
-
-    if "日报" in text:
-        name = "每日报表"
-    elif "预警" in text or "警报" in text:
-        name = "数据预警"
-
-    return {
-        "name": name,
-        "prompt": text,
-        "schedule_type": schedule_type,
-        "time_str": time_str,
-    }
+    """Retired compatibility boundary: a failed model parse must not invent a schedule."""
+    from .task_definition_input import TaskDefinitionInputError
+    raise TaskDefinitionInputError('未能解析任务安排，请重试或在表单中填写；已有内容已保留。')
 
 
 async def parse_task_nl(text: str, tz: str = "Asia/Shanghai") -> Dict[str, Any]:
@@ -157,7 +129,7 @@ async def parse_task_nl(text: str, tz: str = "Asia/Shanghai") -> Dict[str, Any]:
     解析用户自然语言为结构化任务字段。
 
     Returns:
-        永远返回有效 dict（LLM 失败时走关键词兜底）。
+        成功返回模型字段；失败使用现有输入错误协议，保留用户表单。
         前端只需用返回字段填表单即可。
     """
     text = (text or "").strip()

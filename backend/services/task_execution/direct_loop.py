@@ -252,8 +252,8 @@ def schemas(runtime,controller=None):
     if controller is not None:
         for schema in controller.schemas():
             if schema['function']['name'] in READ_CONTROLS:
-                result.append({**schema,'function':{**schema['function'],'description':
-                    '只读查看已保存的真实成果或原操作结果，不重跑原操作。宿主自动登记已核实的原生回执，无需另行导入或标记完成。'}})
+                result.append({**schema,'function':{**schema['function'],'description': schema['function'].get('description', '') +
+                    ' 只读查看，不重跑原操作。宿主自动登记已核实的原生回执，无需另行导入或标记完成。'}})
     return result
 
 
@@ -348,7 +348,12 @@ def stage_native_calls(runtime,prepared,calls,registry,*,server_image_plan=False
             if decision.operation in {'read','analysis'} and call['name']!='code_execute':continue
             try:candidate=record_calls(candidate,runtime.task_bootstrap,[parsed],registry,
                 input_sha256=digest(sorted(getattr(runtime,'task_direct_seen',()))), media_slots=media_slots)
-            except TaskError as error:errors[call['id']]=(str(error),'本次调用未派发：'+str(error)+'。先读取原结果或核实已有操作，不能重复执行。')
+            except TaskError as error:
+                guidance = ('原操作尚未核实，当前调用未派发。已受理图片由宿主回执接续；说明等待并保留本轮要求，'
+                            '不要用read_task_result轮询图片或重发未决操作。'
+                            if str(error) == 'TASK_DIRECT_EFFECT_UNRESOLVED' else
+                            '本次调用未派发：'+str(error)+'。核实已有操作，不能重复执行。')
+                errors[call['id']] = (str(error), guidance)
         except (ValueError,TypeError):continue  # Native argument validation keeps its original correction path.
     if candidate is not None and runtime.task_execution_state is None:
         candidate=TaskState.model_validate({**candidate.model_dump(),

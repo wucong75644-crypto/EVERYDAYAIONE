@@ -124,3 +124,12 @@ def test_metadata_migration_is_discoverable_with_rollback():
     from scripts.migration_runner import discover_migrations
     migration = next(item for item in discover_migrations() if item.identity == METADATA_UP.name)
     assert migration.rollback_identity == METADATA_DOWN.name
+
+
+def test_selected_key_query_preserves_scope_and_excludes_other_keys(published):
+    _, repository, a, b, package, revision, _ = published
+    repository(a).set_assignment(package.id, revision.id, enabled=True)
+    reader = repository(a, DatabaseAccessKind.PROJECTION)
+    assert reader.catalog_candidates(skill_key='report') == reader.catalog_candidates()
+    assert reader.catalog_candidates(skill_key='not-present') == []
+    assert repository(b, DatabaseAccessKind.PROJECTION).catalog_candidates(skill_key='report') == []

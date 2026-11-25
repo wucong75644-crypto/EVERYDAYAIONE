@@ -246,7 +246,7 @@ def test_program_navigation_opens_layers_without_reading_or_answering(staged_db,
  with r.cursor() as cursor:
   cursor.execute("SELECT count(*) AS n FROM kb_read_receipts WHERE snapshot_id=%s AND state IN ('body_partial','body_complete')",(run.id,));assert cursor.fetchone()['n']==0
  assert eligible('上传失败教学里有什么步骤？',hierarchical=True)
- assert not eligible('能帮我下载这份资料吗？',hierarchical=True)
+ assert eligible('能帮我下载这份资料吗？',hierarchical=True)  # Wording does not decide tool availability.
 
 
 def test_route_does_not_combine_unrelated_words_from_a_large_branch():

@@ -8,7 +8,7 @@ from uuid import uuid4
 
 import pytest
 
-from services.agent.image.ecommerce_planner.workflow import EcommerceWorkflow, WorkflowBinding, classify_workflow
+from services.agent.image.ecommerce_planner.workflow import EcommerceWorkflow, WorkflowBinding, ImageRequestContext, classify_workflow
 from tests.test_skill_runtime import Source, item, state, activate
 from tests.tool_context_test_utils import parse_json_tool_content
 
@@ -95,7 +95,9 @@ async def test_router_prompt_distinguishes_product_content_from_planning(monkeyp
     settings = SimpleNamespace(intent_router_enabled=True, dashscope_api_key='offline',
         intent_router_model='offline', intent_router_timeout=5)
     monkeypatch.setattr('core.config.get_settings', lambda: settings)
-    answer = {'kind': 'ordinary_image', 'mode': 'new', 'reuse_through_stage': 0}
+    answer = {'kind': 'ordinary_image', 'mode': 'new', 'reuse_through_stage': 0,
+              'intent': 'execute_saved', 'image_count': None,
+              'request_context': ImageRequestContext().model_dump(mode='json', exclude_none=True)}
     router = SimpleNamespace(close=AsyncMock(), call_tool_model=AsyncMock(return_value={'choices': [
         {'message': {'tool_calls': [{'function': {'name': 'select_image_workflow',
          'arguments': json.dumps(answer)}}]}}]}))

@@ -140,6 +140,19 @@ class ActorWebSink:
         )
 
     async def on_block(self, block: dict[str, Any]) -> None:
+        replacement = block.get('content_replaces_text')
+        text_index = next((i for i in range(len(self._blocks) - 1, -1, -1)
+                           if self._blocks[i].get('type') == 'text'), None)
+        if (block.get('content_artifact_id') and replacement and text_index is not None
+                and not self._blocks[text_index].get('content_artifact_id')
+                and self._blocks[text_index].get('text') == replacement
+                and block['text'].startswith(replacement + '\n\n')):
+            self._blocks.pop(text_index)
+        if block.get('content_artifact_id'):
+            if replacement and self._text.endswith(replacement):
+                self._text = self._text[:-len(replacement)] + block['text']
+            elif not self._text.endswith(block['text']):
+                self._text += block['text']
         self._blocks.append(block)
         delivery_seq = await self._append_event(
             "content_block_add", {"block": block},

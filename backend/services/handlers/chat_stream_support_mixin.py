@@ -134,12 +134,21 @@ class ChatStreamSupportMixin:
             except Exception as error:
                 logger.warning(f"Failed to update task model | task_id={task_id} | error={error}")
 
+        async def route_retry(context):
+            if params.get('thinking_mode') != 'disabled':
+                return await self._route_retry(context)
+            from services.adapters.factory import MODEL_REGISTRY
+            from services.model_reasoning import supports_off
+            excluded = [model_id for model_id, config in MODEL_REGISTRY.items()
+                        if not supports_off(model_id, config.provider)]
+            return await self._route_retry(context, excluded_models=excluded)
+
         return ModelRetryPolicy(
             build_context=lambda model_id, error, existing: self._build_retry_context(
                 params=params, content=content, model_id=model_id,
                 error=str(error), existing_ctx=existing,
             ),
-            route=self._route_retry,
+            route=route_retry,
             record_breaker=self._record_breaker_result,
             on_retry=notify_retry,
             context=retry_context,

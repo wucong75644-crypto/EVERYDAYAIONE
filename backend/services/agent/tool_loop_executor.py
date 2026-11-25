@@ -54,10 +54,12 @@ class ToolLoopExecutor:
         strategy: LoopStrategy,
         hooks: List[LoopHook] = None,
         file_registry: Any = None,
+        skill_context: bool = False,
     ) -> None:
         # 兼容旧的构造参数名；生产调用方传入的是 ModelGatewaySession。
         self.adapter = adapter
         self.model_gateway = adapter
+        self.skill_context = skill_context
         self.executor = executor
         self.all_tools = all_tools
         self.config = config
@@ -300,6 +302,7 @@ class ToolLoopExecutor:
                 messages=hook_ctx.messages,
                 emit_payloads=self._emit_payloads,
                 reason=synthesis_reason,
+                **({"skill_context": True} if self.skill_context else {}),
             )
             if synthesis:
                 accumulated_text = synthesis
@@ -481,6 +484,7 @@ class ToolLoopExecutor:
 
         async for chunk in self.model_gateway.stream_chat(
             messages=messages, tools=selected_tools, temperature=0.1,
+            **({"skill_context": True} if self.skill_context else {}),
             thinking_mode=self.config.thinking_mode,
             enable_builtin_tools=True,
         ):

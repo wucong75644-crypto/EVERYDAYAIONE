@@ -138,6 +138,7 @@ async def test_real_acceptance_preparation_uses_default_and_preserves_uncertain_
     scoped=MagicMock()
     scoped.rpc.return_value.execute.return_value.data={"outcome":"accepted","task_id":"child","message_id":"child-message","submission_state":"queued"}
     scoped.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value.data={"content":[]}
+    scoped.table.return_value.select.return_value.eq.return_value.eq.return_value.eq.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data=[]
     monkeypatch.setattr("core.db_scope.ScopedDatabaseClient",lambda *_:scoped)
     resolver=MagicMock()
     resolver.size_context.return_value=(None, {})

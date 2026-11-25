@@ -183,3 +183,23 @@ async def test_runtime_preserves_current_creation_across_time_clarification(monk
     fields = {f['name']: f.get('default_value') for f in result.form['fields']}
     assert fields['prompt'] == "按平台统计昨天A店付款订单数"
     assert fields['time_str'] == "08:00"
+
+
+async def test_creation_source_is_current_raw_text_without_lexical_history_reconstruction(monkeypatch):
+    from core.config import get_settings
+    monkeypatch.setattr(get_settings(), "scheduled_task_direct_enabled", True)
+    executor = ToolExecutor(IdentityDB(), "u1", "c1", "o1", tool_entrypoint="model", task_id="task1")
+    executor._parent_messages = [
+        {"role": "user", "content": "创建A店日报"},
+        {"role": "assistant", "content": "请确认时间和店铺"},
+        {"role": "user", "content": "改成下午三点，内容还是前面说的"},
+    ]
+    definition = {"name": "A店日报", "prompt": "读取A店销售", "schedule_type": "daily", "time_str": "15:00"}
+    args = {"action": "create", "description": "模型整理的多轮描述", "definition": definition}
+    with patch("services.scheduler.task_request_context.current_creation_text", side_effect=AssertionError("lexical reconstruction")), \
+         patch.object(ChatTaskManager, "handle", AsyncMock(return_value={"type": "text", "text": "test"})) as handle:
+        await executor.execute("manage_scheduled_task", args, call_id="current-raw-source")
+    actual = handle.await_args.args[1]
+    assert actual["description"] == "改成下午三点，内容还是前面说的"
+    assert actual["definition"] == definition
+    assert args["description"] == "模型整理的多轮描述"

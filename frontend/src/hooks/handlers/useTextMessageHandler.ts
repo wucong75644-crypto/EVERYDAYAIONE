@@ -92,7 +92,8 @@ export function useTextMessageHandler({
         knowledgeRefs: knowledgeRefs as KnowledgeReference[] | undefined,
         params: {
           thinking_effort: thinkingEffort,
-          thinking_mode: deepThinkMode ? 'deep_think' : undefined,
+          thinking_mode: deepThinkMode ? 'deep_think'
+            : selectedModel.capabilities.thinkingRequired ? 'default' : 'disabled',
           permission_mode: permissionMode || 'auto',
           temperature,
           top_p: topP,

@@ -35,6 +35,9 @@ def chat_handler(mock_db):
     from services.handlers.chat_handler import ChatHandler
 
     handler = ChatHandler(db=mock_db)
+    # Context projection tests do not own a live analytics database/pool.
+    # Keep the fire-and-forget completion metric inside this test's boundary.
+    handler._record_knowledge_metric = AsyncMock()
     return handler
 
 
@@ -468,6 +471,34 @@ class TestExtractUserQuery:
 
 class TestBuildContextMessages:
     """构建对话历史上下文"""
+
+    async def test_legacy_current_input_is_removed_before_source_annotations(self, chat_handler, mock_db):
+        current = {**_make_msg('user', '当前问题'), 'id': 'current-input'}
+        older = {**_make_msg('assistant', '已完成的结果'), 'id': 'older-answer'}
+        mock_db.set_table_data('messages', [current, older])
+        result = await chat_handler._build_context_messages('conv1', '当前问题')
+        assert '当前问题' not in json.dumps(result, ensure_ascii=False)
+        assert 'current-input' not in json.dumps(result, ensure_ascii=False)
+        assert '已完成的结果' in json.dumps(result, ensure_ascii=False)
+
+    async def test_legacy_dedup_removes_only_the_current_occurrence(self, chat_handler, mock_db):
+        mock_db.set_table_data('messages', [
+            {**_make_msg('user', '继续'), 'id': 'current-input'},
+            {**_make_msg('user', '继续'), 'id': 'earlier-input'},
+        ])
+        result = await chat_handler._build_context_messages('conv1', '继续')
+        assert len(result) == 1
+        assert 'earlier-input' in json.dumps(result, ensure_ascii=False)
+        assert 'current-input' not in json.dumps(result, ensure_ascii=False)
+
+    async def test_fixed_revision_keeps_identical_historical_request(self, mock_db):
+        from services.handlers.chat_context.history_loader import build_context_messages
+        mock_db.set_table_data('messages', [
+            {**_make_msg('user', '继续'), 'id': 'earlier-input', 'context_revision': 1, 'message_kind': 'conversation'},
+        ])
+        result = await build_context_messages(mock_db, 'conv1', '继续', base_revision=1, strict=True)
+        assert len(result) == 1
+        assert 'earlier-input' in json.dumps(result, ensure_ascii=False)
 
     @pytest.mark.asyncio
     async def test_normal_history(self, chat_handler, mock_db):

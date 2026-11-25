@@ -446,6 +446,7 @@ class BaseHandler(TaskMixin, CreditMixin, MessageMixin, ABC):
     async def _route_retry(
         self,
         retry_ctx: "RetryContext",
+        *, excluded_models=(),
     ) -> Optional["RoutingDecision"]:
         """调用千问大脑重新路由，选择替代模型"""
         from services.intent_router import IntentRouter, RoutingDecision
@@ -457,6 +458,7 @@ class BaseHandler(TaskMixin, CreditMixin, MessageMixin, ABC):
                 generation_type=retry_ctx.generation_type,
                 failed_models=retry_ctx.failed_models,
                 error_message=retry_ctx.failed_attempts[-1]["error"],
+                **({"excluded_models": list(excluded_models)} if excluded_models else {}),
             )
         except Exception as e:
             logger.warning(f"Retry routing failed | error={e}")

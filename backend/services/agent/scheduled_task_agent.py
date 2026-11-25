@@ -368,6 +368,7 @@ class ScheduledTaskAgent:
         tool_loop = ToolLoopExecutor(
             adapter=model_gateway,
             executor=executor,
+            skill_context=self.skill_runtime is not None,
             all_tools=all_tools,
             config=LoopConfig(
                 max_turns=MAX_SCHEDULED_TURNS,

@@ -35,29 +35,29 @@ from services.agent.plan_builder import (
 class TestQuickClassify:
 
     def test_warehouse_keywords(self):
-        assert quick_classify("查一下A001库存") == "warehouse"
-        assert quick_classify("哪些缺货") == "warehouse"
-        assert quick_classify("仓库列表") == "warehouse"
+        assert quick_classify("查一下A001库存") is None
+        assert quick_classify("哪些缺货") is None
+        assert quick_classify("仓库列表") is None
 
     def test_purchase_keywords(self):
-        assert quick_classify("采购单到货了吗") == "purchase"
-        assert quick_classify("供应商列表") == "purchase"
+        assert quick_classify("采购单到货了吗") is None
+        assert quick_classify("供应商列表") is None
 
     def test_trade_keywords(self):
-        assert quick_classify("今天多少订单") == "trade"
-        assert quick_classify("发货情况") == "trade"
-        assert quick_classify("物流查询") == "trade"
+        assert quick_classify("今天多少订单") is None
+        assert quick_classify("发货情况") is None
+        assert quick_classify("物流查询") is None
 
     def test_aftersale_keywords(self):
-        assert quick_classify("退货率多少") == "aftersale"
-        assert quick_classify("售后单查询") == "aftersale"
+        assert quick_classify("退货率多少") is None
+        assert quick_classify("售后单查询") is None
 
     def test_no_match(self):
         assert quick_classify("hello world") is None
         assert quick_classify("天气怎么样") is None
 
     def test_highest_score_wins(self):
-        assert quick_classify("订单退货退款") == "trade"
+        assert quick_classify("订单退货退款") is None
 
     def test_ambiguous_tie_returns_none(self):
         assert quick_classify("采购入库") is None
@@ -154,28 +154,26 @@ class TestBuildFallbackParams:
     def test_default_summary_today(self):
         from services.agent.plan_builder import _build_fallback_params
         params = _build_fallback_params("查订单")
-        assert params["mode"] == "summary"
-        assert "~" in params["time_range"]
-        assert params["_degraded"] is True
+        assert params == {}
 
     def test_detail_keywords_override_mode(self):
         from services.agent.plan_builder import _build_fallback_params
         for kw in ("明细", "列表", "详情"):
             params = _build_fallback_params(f"查订单{kw}")
-            assert params["mode"] == "export", f"'{kw}' should trigger export"
+            assert params == {}, kw
 
     def test_export_keywords_override_mode(self):
         from services.agent.plan_builder import _build_fallback_params
         for kw in ("导出", "Excel", "表格文件"):
             params = _build_fallback_params(f"查订单{kw}")
-            assert params["mode"] == "export", f"'{kw}' should trigger export"
+            assert params == {}, kw
 
     def test_domain_time_col_mapping(self):
         from services.agent.plan_builder import _build_fallback_params
-        assert _build_fallback_params("x", domain="trade")["time_col"] == "pay_time"
-        assert _build_fallback_params("x", domain="purchase")["time_col"] == "doc_created_at"
-        assert _build_fallback_params("x", domain="warehouse")["time_col"] == "doc_created_at"
-        assert _build_fallback_params("x", domain="aftersale")["time_col"] == "doc_created_at"
+        assert _build_fallback_params("x", domain="trade") == {}
+        assert _build_fallback_params("x", domain="purchase") == {}
+        assert _build_fallback_params("x", domain="warehouse") == {}
+        assert _build_fallback_params("x", domain="aftersale") == {}
 
 
 # ============================================================

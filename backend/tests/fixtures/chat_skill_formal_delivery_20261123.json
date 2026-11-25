@@ -1,0 +1,355 @@
+{
+  "provenance": {
+    "source": "formal HTTP → Actor → real qwen3.8-flash → ActorWebSink, manual17 2026-11-23",
+    "redactions": "Signed resource references replaced in text; no tool payload or credentials retained.",
+    "visual_review": "The final two-image output contains an unrequested strap. These fixtures test delivery, not product-fidelity acceptance."
+  },
+  "plan": {
+    "type": "ecom_plan",
+    "plan_id": "9cd4076f-8447-4d19-8e07-960f5b678afd",
+    "revision": 1,
+    "status": "ready",
+    "images": [
+      {
+        "position": 1,
+        "item_id": "04ed8bd3-d453-4a6d-95ef-618e33c2dbf3",
+        "name": "经典还原·标准密度波点展示",
+        "purpose": "建立商品识别与视觉第一印象，通过真实还原产品外观与标准波点密度，展现复古设计感。"
+      },
+      {
+        "position": 2,
+        "item_id": "bc325665-44e8-48e7-bdcc-a25f78889383",
+        "name": "密集波点·饱满视觉冲击",
+        "purpose": "通过增加波点密度，强化图案设计的丰富性与视觉冲击力，吸引追求精致细节的买家。"
+      },
+      {
+        "position": 3,
+        "item_id": "eef38ef6-6e99-438f-a036-59addb6ec125",
+        "name": "稀疏波点·轻盈极简留白",
+        "purpose": "减少波点数量并增大间距，营造更高级的极简主义氛围，突出文字设计与透气感。"
+      }
+    ]
+  },
+  "canonical_text": "## 1. 经典还原·标准密度波点展示\n\n【生成任务与画布】\n生成一张电商主图。目标平台：京东；新增文字语言：跟随用户要求；画布比例：16:9；清晰度参数：2K。\n本张任务：建立商品识别与视觉第一印象，通过真实还原产品外观与标准波点密度，展现复古设计感。。\n\n【参考图身份与用途】\n输入图片1—fid_8d3feea7—product—作为目标商品本体参考，严格保留封面印刷内容、波点图案、皮质搭扣结构及文字排版。\n输入图片2—resource-reference-redacted—style_reference—作为风格与光影参考，确认浅米灰背景氛围及柔和的漫射光效。\n\n【背景、桌面与配色】\n极简静物摄影棚场景。背景为统一的浅米灰色哑光平面（模拟细腻纸张或布面质感），无景深虚化，依靠柔和光影塑造空间立体感。\n\n【主体与辅助视图布局】\n俯视微侧构图。活页笔记本主体位于画面中央偏下位置，占据约60%的画面高度，保持完整形态。上方边缘处自然摆放黑白格纹卡片，形成视觉层次但不遮挡笔记本主体。\n\n【道具与装饰】\n仅使用商品自带的黑白格纹装饰卡片，置于画面上方。无新增外部道具。\n\n【光影与构图配合】\n左上角柔和漫射光，模拟自然窗边光线。光源均匀覆盖商品表面，在笔记本右侧及下方形成极淡的接触阴影，避免高光过曝导致白色封面细节丢失。\n\n【文字内容与排版】\n无新增文案。画面完全依赖商品自带的“Bleeding Heart”、“Needle”等英文花体字进行视觉传达，不做后期重排。\n\n【商品保真与比例】\n严格保留商品原有外形比例、部件关系（搭扣、按扣）、固有配色（白底灰点黑字）及所有印刷文字。允许调整主体大小和背景替换。\n商品按参考图真实比例等比例缩放，排版围绕实际商品形状安排，不拉伸、压扁、增厚或改变部件比例。\n\n【执行约束】\n禁止改变商品底色；禁止添加杂乱的彩色文具道具；保持16:9画幅。\n整套共同边界（第二阶段原文）：\n- **商品必须保留**：笔记本外形、皮质搭扣、金属按扣、封面所有印刷文字、右上角灰色标签。\n- **整套共同遵循**：浅米灰背景、16:9画幅、高清晰度、无多余文案。\n- **设计建议与适用条件**：建议将商品置于画面中心或黄金分割点。\n- **逐图可以变化**：波点的疏密程度、商品摆放角度（正放/微侧）、景别大小。\n- **本组需要避免的设计**：避免改变商品底色，避免添加杂乱的彩色道具。\n\n---\n\n### 京东主图生图提示词方案 (16:9, 2K)\n\n#### 方案 1：标准还原·经典视角\n**设计思路**：忠实还原参考图的商品形态，采用标准的俯视微侧角度，波点密度适中，展现最真实的商品样貌。\n\n**正向提示词 (Positive Prompt)**:\n> High-quality product photography, a white loose-leaf notebook lying flat on a light beige-grey matte surface, 16:9 aspect ratio. The notebook cover features grey polka dots with standard density, elegant black script text \"Bleeding Heart\" and \"Needle\", a white leather strap closure with a silver snap button, and a small grey rectangular label in the top right corner. A black and white checkered card is partially visible at the top edge of the notebook. Soft natural lighting from the upper left, creating gentle shadows to the bottom right. Minimalist composition, clean background, sharp focus on the texture of the paper and leather, 2K resolution, realistic details, e-commerce main image style. --ar 16:9 --q 2\n\n**负面提示词 (Negative Prompt)**:\n> Colorful background, messy desk, other stationery items, plastic texture, distorted text, blurry image, low resolution, harsh shadows, overexposed highlights, cartoon style, illustration, watermark, extra objects, dense polka dots, sparse polka dots.\n\n#### 方案 2：密集波点·视觉冲击\n**设计思路**：保持背景和构图不变，增加封面波点的密度，使视觉效果更加饱满，适合吸引追求丰富设计感的买家。\n\n**正向提示词 (Positive Prompt)**:\n> Top-down view of a stylish white journal on a smooth light beige-grey background, 16:9 format. The cover design includes high-density grey polka dots covering most of the white space, contrasting with the large black cursive typography \"Bleeding Heart\" and \"Needle\". Details include a white leather buckle strap, metal snap fastener, and a grey sticker on the top right. A checkered patterned bookmark or card sits above the notebook. Bright, soft studio lighting, uniform color temperature, highlighting the busy yet organized pattern. Professional product shot, 2K definition, highly detailed texture. --ar 16:9 --q 2\n\n**负面提示词 (Negative Prompt)**:\n> Sparse dots, empty background, dark room, cluttered props, wrong colors, blue tint, green tint, wooden table, fabric wrinkles, cropped text, illegible font, bad anatomy, noise, grainy, abstract art.\n\n#### 方案 3：稀疏波点·极简留白\n**设计思路**：减少波点数量，增大波点间距，营造更高级的极简主义氛围，突出文字设计，适合喜欢清爽风格的受众。\n\n**正向提示词 (Positive Prompt)**:\n> Elegant stationery product photo, a white notebook placed centrally on a vast light beige-grey surface, 16:9 ratio. The cover features widely spaced, sparse grey polka dots, emphasizing the negative space. Prominent black calligraphy text \"Bleeding Heart\" and \"Needle\" stands out clearly. White leather strap with silver button on the right side, grey label on the top right corner. Soft, diffused daylight casting very subtle shadows, airy and clean atmosphere. Minimalist aesthetic, high-end look, crisp focus, 2K resolution. --ar 16:9 --q 2\n\n**负面提示词 (Negative Prompt)**:\n> Dense patterns, heavy textures, strong contrast, dark shadows, colorful accessories, pen, pencil, coffee cup, hand holding book, complex scene, dirty background, pixelated, blurred edges, oversaturated.\n在这些共同原则内执行本张已确定的画面；可选建议与变化范围不表示添加全部元素或重新策划。\n只按本稿已确定的画面要求执行；不得新增文案或重新策划。\n\n负面提示词：排除商品拉伸、压扁、增厚、部件比例改变及透视失真；不得编造商品结构、原印刷、材质性能或附赠销售内容。\n\n## 2. 密集波点·饱满视觉冲击\n\n【生成任务与画布】\n生成一张电商主图。目标平台：京东；新增文字语言：跟随用户要求；画布比例：16:9；清晰度参数：2K。\n本张任务：通过增加波点密度，强化图案设计的丰富性与视觉冲击力，吸引追求精致细节的买家。。\n\n【参考图身份与用途】\n输入图片1—fid_8d3feea7—product—提供商品基础结构与文字位置参考，依据本张任务调整波点分布密度。\n输入图片2—resource-reference-redacted—style_reference—继承整套视觉规范中的背景色调与照明气质。\n\n【背景、桌面与配色】\n延续浅米灰色哑光背景，保持高亮洁净的视觉基调，突出白色封面上的密集纹理。\n\n【主体与辅助视图布局】\n正俯视构图。笔记本主体居中放大，占据画面主要区域。封面波点调整为高密度排列（间距缩小，数量增多），填满文字周围的留白区域，形成强烈的图案感。\n\n【道具与装饰】\n无新增道具。聚焦于笔记本本身的图案变化。\n\n【光影与构图配合】\n均匀的影棚柔光，减弱侧面投影，使密集排列的波点图案清晰可辨，确保黑色花体字不被背景纹理淹没。\n\n【文字内容与排版】\n无新增文案。商品自带文字保持不变，作为密集图案中的视觉锚点。\n\n【商品保真与比例】\n保留商品外形、搭扣、文字内容及颜色。波点密度属于允许的装饰性调整范围，但不得改变波点原本的颜色（灰色）。\n商品按参考图真实比例等比例缩放，排版围绕实际商品形状安排，不拉伸、压扁、增厚或改变部件比例。\n\n【执行约束】\n波点必须保持圆润规则；文字清晰度优先于图案密度；禁止拉伸变形。\n整套共同边界（第二阶段原文）：\n- **商品必须保留**：笔记本外形、皮质搭扣、金属按扣、封面所有印刷文字、右上角灰色标签。\n- **整套共同遵循**：浅米灰背景、16:9画幅、高清晰度、无多余文案。\n- **设计建议与适用条件**：建议将商品置于画面中心或黄金分割点。\n- **逐图可以变化**：波点的疏密程度、商品摆放角度（正放/微侧）、景别大小。\n- **本组需要避免的设计**：避免改变商品底色，避免添加杂乱的彩色道具。\n\n---\n\n### 京东主图生图提示词方案 (16:9, 2K)\n\n#### 方案 1：标准还原·经典视角\n**设计思路**：忠实还原参考图的商品形态，采用标准的俯视微侧角度，波点密度适中，展现最真实的商品样貌。\n\n**正向提示词 (Positive Prompt)**:\n> High-quality product photography, a white loose-leaf notebook lying flat on a light beige-grey matte surface, 16:9 aspect ratio. The notebook cover features grey polka dots with standard density, elegant black script text \"Bleeding Heart\" and \"Needle\", a white leather strap closure with a silver snap button, and a small grey rectangular label in the top right corner. A black and white checkered card is partially visible at the top edge of the notebook. Soft natural lighting from the upper left, creating gentle shadows to the bottom right. Minimalist composition, clean background, sharp focus on the texture of the paper and leather, 2K resolution, realistic details, e-commerce main image style. --ar 16:9 --q 2\n\n**负面提示词 (Negative Prompt)**:\n> Colorful background, messy desk, other stationery items, plastic texture, distorted text, blurry image, low resolution, harsh shadows, overexposed highlights, cartoon style, illustration, watermark, extra objects, dense polka dots, sparse polka dots.\n\n#### 方案 2：密集波点·视觉冲击\n**设计思路**：保持背景和构图不变，增加封面波点的密度，使视觉效果更加饱满，适合吸引追求丰富设计感的买家。\n\n**正向提示词 (Positive Prompt)**:\n> Top-down view of a stylish white journal on a smooth light beige-grey background, 16:9 format. The cover design includes high-density grey polka dots covering most of the white space, contrasting with the large black cursive typography \"Bleeding Heart\" and \"Needle\". Details include a white leather buckle strap, metal snap fastener, and a grey sticker on the top right. A checkered patterned bookmark or card sits above the notebook. Bright, soft studio lighting, uniform color temperature, highlighting the busy yet organized pattern. Professional product shot, 2K definition, highly detailed texture. --ar 16:9 --q 2\n\n**负面提示词 (Negative Prompt)**:\n> Sparse dots, empty background, dark room, cluttered props, wrong colors, blue tint, green tint, wooden table, fabric wrinkles, cropped text, illegible font, bad anatomy, noise, grainy, abstract art.\n\n#### 方案 3：稀疏波点·极简留白\n**设计思路**：减少波点数量，增大波点间距，营造更高级的极简主义氛围，突出文字设计，适合喜欢清爽风格的受众。\n\n**正向提示词 (Positive Prompt)**:\n> Elegant stationery product photo, a white notebook placed centrally on a vast light beige-grey surface, 16:9 ratio. The cover features widely spaced, sparse grey polka dots, emphasizing the negative space. Prominent black calligraphy text \"Bleeding Heart\" and \"Needle\" stands out clearly. White leather strap with silver button on the right side, grey label on the top right corner. Soft, diffused daylight casting very subtle shadows, airy and clean atmosphere. Minimalist aesthetic, high-end look, crisp focus, 2K resolution. --ar 16:9 --q 2\n\n**负面提示词 (Negative Prompt)**:\n> Dense patterns, heavy textures, strong contrast, dark shadows, colorful accessories, pen, pencil, coffee cup, hand holding book, complex scene, dirty background, pixelated, blurred edges, oversaturated.\n在这些共同原则内执行本张已确定的画面；可选建议与变化范围不表示添加全部元素或重新策划。\n只按本稿已确定的画面要求执行；不得新增文案或重新策划。\n\n负面提示词：排除商品拉伸、压扁、增厚、部件比例改变及透视失真；不得编造商品结构、原印刷、材质性能或附赠销售内容。\n\n## 3. 稀疏波点·轻盈极简留白\n\n【生成任务与画布】\n生成一张电商主图。目标平台：京东；新增文字语言：跟随用户要求；画布比例：16:9；清晰度参数：2K。\n本张任务：减少波点数量并增大间距，营造更高级的极简主义氛围，突出文字设计与透气感。。\n\n【参考图身份与用途】\n输入图片1—fid_8d3feea7—product—提供商品基础视图，依据本张任务调整波点分布，使其呈现稀疏状态。\n输入图片2—resource-reference-redacted—style_reference—维持整套方案一致的浅米灰背景色值与光影逻辑。\n\n【背景、桌面与配色】\n大面积浅米灰色背景，强调空间的开阔感与商品的纯净度。\n\n【主体与辅助视图布局】\n斜侧45度构图。笔记本略微倾斜放置，占据画面中心。封面波点调整为低密度排列（间距拉大，数量减少），大量露出白色底色，视觉上更显轻盈。\n\n【道具与装饰】\n无新增道具。利用商品自身的倾斜角度产生动态平衡。\n\n【光影与构图配合】\n侧逆光结合柔和补光，勾勒出笔记本的边缘轮廓，使稀疏的波点和纤细的文字在明亮背景下显得通透。\n\n【文字内容与排版】\n无新增文案。重点展示“Needle”等大字标题的笔触细节。\n\n【商品保真与比例】\n保留商品所有物理特征与原印刷文字。波点的稀疏化处理是唯一的视觉变量。\n商品按参考图真实比例等比例缩放，排版围绕实际商品形状安排，不拉伸、压扁、增厚或改变部件比例。\n\n【执行约束】\n保持透视关系的准确性；避免阴影过重破坏轻盈感；背景必须统一为浅米灰色。\n整套共同边界（第二阶段原文）：\n- **商品必须保留**：笔记本外形、皮质搭扣、金属按扣、封面所有印刷文字、右上角灰色标签。\n- **整套共同遵循**：浅米灰背景、16:9画幅、高清晰度、无多余文案。\n- **设计建议与适用条件**：建议将商品置于画面中心或黄金分割点。\n- **逐图可以变化**：波点的疏密程度、商品摆放角度（正放/微侧）、景别大小。\n- **本组需要避免的设计**：避免改变商品底色，避免添加杂乱的彩色道具。\n\n---\n\n### 京东主图生图提示词方案 (16:9, 2K)\n\n#### 方案 1：标准还原·经典视角\n**设计思路**：忠实还原参考图的商品形态，采用标准的俯视微侧角度，波点密度适中，展现最真实的商品样貌。\n\n**正向提示词 (Positive Prompt)**:\n> High-quality product photography, a white loose-leaf notebook lying flat on a light beige-grey matte surface, 16:9 aspect ratio. The notebook cover features grey polka dots with standard density, elegant black script text \"Bleeding Heart\" and \"Needle\", a white leather strap closure with a silver snap button, and a small grey rectangular label in the top right corner. A black and white checkered card is partially visible at the top edge of the notebook. Soft natural lighting from the upper left, creating gentle shadows to the bottom right. Minimalist composition, clean background, sharp focus on the texture of the paper and leather, 2K resolution, realistic details, e-commerce main image style. --ar 16:9 --q 2\n\n**负面提示词 (Negative Prompt)**:\n> Colorful background, messy desk, other stationery items, plastic texture, distorted text, blurry image, low resolution, harsh shadows, overexposed highlights, cartoon style, illustration, watermark, extra objects, dense polka dots, sparse polka dots.\n\n#### 方案 2：密集波点·视觉冲击\n**设计思路**：保持背景和构图不变，增加封面波点的密度，使视觉效果更加饱满，适合吸引追求丰富设计感的买家。\n\n**正向提示词 (Positive Prompt)**:\n> Top-down view of a stylish white journal on a smooth light beige-grey background, 16:9 format. The cover design includes high-density grey polka dots covering most of the white space, contrasting with the large black cursive typography \"Bleeding Heart\" and \"Needle\". Details include a white leather buckle strap, metal snap fastener, and a grey sticker on the top right. A checkered patterned bookmark or card sits above the notebook. Bright, soft studio lighting, uniform color temperature, highlighting the busy yet organized pattern. Professional product shot, 2K definition, highly detailed texture. --ar 16:9 --q 2\n\n**负面提示词 (Negative Prompt)**:\n> Sparse dots, empty background, dark room, cluttered props, wrong colors, blue tint, green tint, wooden table, fabric wrinkles, cropped text, illegible font, bad anatomy, noise, grainy, abstract art.\n\n#### 方案 3：稀疏波点·极简留白\n**设计思路**：减少波点数量，增大波点间距，营造更高级的极简主义氛围，突出文字设计，适合喜欢清爽风格的受众。\n\n**正向提示词 (Positive Prompt)**:\n> Elegant stationery product photo, a white notebook placed centrally on a vast light beige-grey surface, 16:9 ratio. The cover features widely spaced, sparse grey polka dots, emphasizing the negative space. Prominent black calligraphy text \"Bleeding Heart\" and \"Needle\" stands out clearly. White leather strap with silver button on the right side, grey label on the top right corner. Soft, diffused daylight casting very subtle shadows, airy and clean atmosphere. Minimalist aesthetic, high-end look, crisp focus, 2K resolution. --ar 16:9 --q 2\n\n**负面提示词 (Negative Prompt)**:\n> Dense patterns, heavy textures, strong contrast, dark shadows, colorful accessories, pen, pencil, coffee cup, hand holding book, complex scene, dirty background, pixelated, blurred edges, oversaturated.\n在这些共同原则内执行本张已确定的画面；可选建议与变化范围不表示添加全部元素或重新策划。\n只按本稿已确定的画面要求执行；不得新增文案或重新策划。\n\n负面提示词：排除商品拉伸、压扁、增厚、部件比例改变及透视失真；不得编造商品结构、原印刷、材质性能或附赠销售内容。",
+  "events": [
+    {
+      "event_type": "content_block_add",
+      "payload": {
+        "block": {
+          "type": "ecom_plan",
+          "plan_id": "9cd4076f-8447-4d19-8e07-960f5b678afd",
+          "revision": 1,
+          "status": "ready",
+          "product_insight": "商品分析已完成",
+          "visual_strategy": "# 整套视觉方案｜复古波点静物主图\n\n## 1. 视觉定位\n- **商品与适用范围**：京东电商主图（3张），活页笔记本/手账本。强调快速识别商品外观，传达复古、简约的设计感。\n- **素材身份与角色**：\n  - `image_1` (product)：商品本体实拍图，提供商品结构、波点图案、文字排版及皮质搭扣细节。\n  - `image_2` (style_reference)：风格参考图，与商品图内容一致，用于确认整体色调与构图氛围。\n- **本组视觉主题**：浅米灰背景下的复古文具静物展示。\n- **主要视觉特征**：白色封面、灰色波点疏密变化、黑色英文花体字、极简桌面环境。\n- **选择依据**：基于商品“复古设计感”卖点，利用纯色背景突出封面的波点与文字细节，符合京东主图清晰展示商品的要求。\n- **用户要求与参考来源**：保留商品结构与原有文字；背景统一为浅米灰色；调整波点疏密作为三套方案的区分点。\n\n## 2. 背景与场景体系\n- **主要场景**：极简静物摄影棚风格，无复杂道具干扰。\n- **桌面或承托面**：浅米灰色哑光平面（模拟纸张或细布纹理，但保持低对比度）。\n- **背景颜色、材质与空间层次**：纯浅米灰色，无明显景深虚化，依靠光影塑造立体感。\n- **商品与背景的区分方式**：通过商品自身的白色高光边缘和底部的柔和投影与背景拉开距离。\n- **各张允许的背景变化**：背景色值保持一致，仅根据构图微调留白比例。\n\n## 3. 色彩配套\n- **商品原色与保留要求**：严格保留白色封面、灰色波点、黑色文字及金属配件色泽。\n- **背景主色及用途**：浅米灰色（Light Beige-Grey），用于衬托白色商品，营造柔和氛围。\n- **辅助色及用途**：无额外辅助色，依赖光影的明暗过渡。\n- **强调色及用途**：无高饱和强调色，保持整体低饱和度的高级感。\n- **标题、辅助文字与标签颜色**：不涉及新增文案，完全依赖商品自带印刷文字。\n- **道具与装饰配色**：无额外道具。\n- **整体呼应与对比关系**：冷暖中性调，明度高，对比度适中。\n\n## 4. 字体与文案视觉体系\n- **本组文案语气与表达特征**：无新增营销文案。画面完全依赖商品自带的“Bleeding Heart”、“Needle”等英文花体字进行视觉传达，体现文艺、精致感。\n- **图像与文字的分工原则**：图像负责展示质感与设计全貌，商品自带文字作为设计元素的一部分参与构图。\n- **文案事实边界与适用条件**：不添加任何未经证实的功能性描述，避免破坏画面的纯净度。\n- **本组造型字语言**：继承商品原有的衬线体/花体风格，笔画纤细优雅。\n- **各处文字的共同设计与变化**：文字随商品角度自然呈现，不做后期重排。\n- **信息层级**：第一层级为商品整体轮廓，第二层级为封面核心图案（波点+大字）。\n- **允许的文字强调与装饰**：无外部装饰，保持极简。\n- **字形与构图的配合及变化范围**：文字位于封面中下部，构图时需确保这部分不被裁切。\n- **文字、留白与商品的关系**：大量留白以突显商品的精致感。\n\n## 5. 场景道具配套\n- **场景活动或展示关系**：静态陈列，模拟书桌一角的整洁状态。\n- **主要道具及各自作用**：无额外实体道具。\n- **道具组合与场景完整性**：依靠商品本身（包括其上的格纹卡片装饰）构成完整画面。\n- **颜色、材质与造型配套**：商品自带的黑白格纹小册子/卡片作为画面点缀，保留在构图中（视具体裁剪而定）。\n- **各张允许的选择、补充与省略**：建议保留商品上方的格纹卡片以增加层次感，或者只聚焦笔记本主体。\n- **尺度、空间与销售内容限制**：不暗示赠品，仅展示实物可见部分。\n\n## 6. 画面装饰体系\n- **主要图形语言**：波点（Dots）。这是本组方案的核心变量。\n- **色彩、线条与质感**：灰色实心圆点。\n- **边缘及层叠表现**：平面印刷效果，无凸起。\n- **承接空位、连接画面与引导视线的方式**：波点的排列密度引导视线流动。\n- **使用分量与叠压原则**：根据三套方案调整疏密。\n- **各张允许的装饰变化**：\n  - 方案A：标准疏密（还原图片）。\n  - 方案B：密集模式（波点更紧凑，视觉冲击力更强）。\n  - 方案C：稀疏模式（波点间距拉大，更显轻盈透气）。\n\n## 7. 照明与空间表现\n- **共同照明气质**：柔和漫射光，模拟自然窗边光感。\n- **光质、明暗层次与冷暖**：偏冷中性光，阴影柔和不生硬。\n- **商品、道具与承托面的受光关系**：左上角或正上方来光，物体右侧产生轻微投影。\n- **商品原色及细节保留**：确保白色不过曝，灰色波点清晰可辨。\n- **各张允许的照明变化**：光源方向微调以适应不同角度构图。\n- **需要避免的光影冲突**：避免强反光导致看不清文字，避免死黑阴影。\n\n## 8. 统一规则与变化范围\n- **商品必须保留**：笔记本外形、皮质搭扣、金属按扣、封面所有印刷文字、右上角灰色标签。\n- **整套共同遵循**：浅米灰背景、16:9画幅、高清晰度、无多余文案。\n- **设计建议与适用条件**：建议将商品置于画面中心或黄金分割点。\n- **逐图可以变化**：波点的疏密程度、商品摆放角度（正放/微侧）、景别大小。\n- **本组需要避免的设计**：避免改变商品底色，避免添加杂乱的彩色道具。\n\n---\n\n### 京东主图生图提示词方案 (16:9, 2K)\n\n#### 方案 1：标准还原·经典视角\n**设计思路**：忠实还原参考图的商品形态，采用标准的俯视微侧角度，波点密度适中，展现最真实的商品样貌。\n\n**正向提示词 (Positive Prompt)**:\n> High-quality product photography, a white loose-leaf notebook lying flat on a light beige-grey matte surface, 16:9 aspect ratio. The notebook cover features grey polka dots with standard density, elegant black script text \"Bleeding Heart\" and \"Needle\", a white leather strap closure with a silver snap button, and a small grey rectangular label in the top right corner. A black and white checkered card is partially visible at the top edge of the notebook. Soft natural lighting from the upper left, creating gentle shadows to the bottom right. Minimalist composition, clean background, sharp focus on the texture of the paper and leather, 2K resolution, realistic details, e-commerce main image style. --ar 16:9 --q 2\n\n**负面提示词 (Negative Prompt)**:\n> Colorful background, messy desk, other stationery items, plastic texture, distorted text, blurry image, low resolution, harsh shadows, overexposed highlights, cartoon style, illustration, watermark, extra objects, dense polka dots, sparse polka dots.\n\n#### 方案 2：密集波点·视觉冲击\n**设计思路**：保持背景和构图不变，增加封面波点的密度，使视觉效果更加饱满，适合吸引追求丰富设计感的买家。\n\n**正向提示词 (Positive Prompt)**:\n> Top-down view of a stylish white journal on a smooth light beige-grey background, 16:9 format. The cover design includes high-density grey polka dots covering most of the white space, contrasting with the large black cursive typography \"Bleeding Heart\" and \"Needle\". Details include a white leather buckle strap, metal snap fastener, and a grey sticker on the top right. A checkered patterned bookmark or card sits above the notebook. Bright, soft studio lighting, uniform color temperature, highlighting the busy yet organized pattern. Professional product shot, 2K definition, highly detailed texture. --ar 16:9 --q 2\n\n**负面提示词 (Negative Prompt)**:\n> Sparse dots, empty background, dark room, cluttered props, wrong colors, blue tint, green tint, wooden table, fabric wrinkles, cropped text, illegible font, bad anatomy, noise, grainy, abstract art.\n\n#### 方案 3：稀疏波点·极简留白\n**设计思路**：减少波点数量，增大波点间距，营造更高级的极简主义氛围，突出文字设计，适合喜欢清爽风格的受众。\n\n**正向提示词 (Positive Prompt)**:\n> Elegant stationery product photo, a white notebook placed centrally on a vast light beige-grey surface, 16:9 ratio. The cover features widely spaced, sparse grey polka dots, emphasizing the negative space. Prominent black calligraphy text \"Bleeding Heart\" and \"Needle\" stands out clearly. White leather strap with silver button on the right side, grey label on the top right corner. Soft, diffused daylight casting very subtle shadows, airy and clean atmosphere. Minimalist aesthetic, high-end look, crisp focus, 2K resolution. --ar 16:9 --q 2\n\n**负面提示词 (Negative Prompt)**:\n> Dense patterns, heavy textures, strong contrast, dark shadows, colorful accessories, pen, pencil, coffee cup, hand holding book, complex scene, dirty background, pixelated, blurred edges, oversaturated.",
+          "images": [
+            {
+              "item_id": "04ed8bd3-d453-4a6d-95ef-618e33c2dbf3",
+              "position": 1,
+              "name": "经典还原·标准密度波点展示",
+              "purpose": "建立商品识别与视觉第一印象，通过真实还原产品外观与标准波点密度，展现复古设计感。"
+            },
+            {
+              "item_id": "bc325665-44e8-48e7-bdcc-a25f78889383",
+              "position": 2,
+              "name": "密集波点·饱满视觉冲击",
+              "purpose": "通过增加波点密度，强化图案设计的丰富性与视觉冲击力，吸引追求精致细节的买家。"
+            },
+            {
+              "item_id": "eef38ef6-6e99-438f-a036-59addb6ec125",
+              "position": 3,
+              "name": "稀疏波点·轻盈极简留白",
+              "purpose": "减少波点数量并增大间距，营造更高级的极简主义氛围，突出文字设计与透气感。"
+            }
+          ]
+        }
+      },
+      "delivery_seq": 6
+    },
+    {
+      "event_type": "content_block_add",
+      "payload": {
+        "block": {
+          "type": "text",
+          "text": "## 1. 经典还原·标准密度波点展示\n\n【生成任务与画布】\n生成一张电商主图。目标平台：京东；新增文字语言：跟随用户要求；画布比例：16:9；清晰度参数：2K。\n本张任务：建立商品识别与视觉第一印象，通过真实还原产品外观与标准波点密度，展现复古设计感。。\n\n【参考图身份与用途】\n输入图片1—fid_8d3feea7—product—作为目标商品本体参考，严格保留封面印刷内容、波点图案、皮质搭扣结构及文字排版。\n输入图片2—resource-reference-redacted—style_reference—作为风格与光影参考，确认浅米灰背景氛围及柔和的漫射光效。\n\n【背景、桌面与配色】\n极简静物摄影棚场景。背景为统一的浅米灰色哑光平面（模拟细腻纸张或布面质感），无景深虚化，依靠柔和光影塑造空间立体感。\n\n【主体与辅助视图布局】\n俯视微侧构图。活页笔记本主体位于画面中央偏下位置，占据约60%的画面高度，保持完整形态。上方边缘处自然摆放黑白格纹卡片，形成视觉层次但不遮挡笔记本主体。\n\n【道具与装饰】\n仅使用商品自带的黑白格纹装饰卡片，置于画面上方。无新增外部道具。\n\n【光影与构图配合】\n左上角柔和漫射光，模拟自然窗边光线。光源均匀覆盖商品表面，在笔记本右侧及下方形成极淡的接触阴影，避免高光过曝导致白色封面细节丢失。\n\n【文字内容与排版】\n无新增文案。画面完全依赖商品自带的“Bleeding Heart”、“Needle”等英文花体字进行视觉传达，不做后期重排。\n\n【商品保真与比例】\n严格保留商品原有外形比例、部件关系（搭扣、按扣）、固有配色（白底灰点黑字）及所有印刷文字。允许调整主体大小和背景替换。\n商品按参考图真实比例等比例缩放，排版围绕实际商品形状安排，不拉伸、压扁、增厚或改变部件比例。\n\n【执行约束】\n禁止改变商品底色；禁止添加杂乱的彩色文具道具；保持16:9画幅。\n整套共同边界（第二阶段原文）：\n- **商品必须保留**：笔记本外形、皮质搭扣、金属按扣、封面所有印刷文字、右上角灰色标签。\n- **整套共同遵循**：浅米灰背景、16:9画幅、高清晰度、无多余文案。\n- **设计建议与适用条件**：建议将商品置于画面中心或黄金分割点。\n- **逐图可以变化**：波点的疏密程度、商品摆放角度（正放/微侧）、景别大小。\n- **本组需要避免的设计**：避免改变商品底色，避免添加杂乱的彩色道具。\n\n---\n\n### 京东主图生图提示词方案 (16:9, 2K)\n\n#### 方案 1：标准还原·经典视角\n**设计思路**：忠实还原参考图的商品形态，采用标准的俯视微侧角度，波点密度适中，展现最真实的商品样貌。\n\n**正向提示词 (Positive Prompt)**:\n> High-quality product photography, a white loose-leaf notebook lying flat on a light beige-grey matte surface, 16:9 aspect ratio. The notebook cover features grey polka dots with standard density, elegant black script text \"Bleeding Heart\" and \"Needle\", a white leather strap closure with a silver snap button, and a small grey rectangular label in the top right corner. A black and white checkered card is partially visible at the top edge of the notebook. Soft natural lighting from the upper left, creating gentle shadows to the bottom right. Minimalist composition, clean background, sharp focus on the texture of the paper and leather, 2K resolution, realistic details, e-commerce main image style. --ar 16:9 --q 2\n\n**负面提示词 (Negative Prompt)**:\n> Colorful background, messy desk, other stationery items, plastic texture, distorted text, blurry image, low resolution, harsh shadows, overexposed highlights, cartoon style, illustration, watermark, extra objects, dense polka dots, sparse polka dots.\n\n#### 方案 2：密集波点·视觉冲击\n**设计思路**：保持背景和构图不变，增加封面波点的密度，使视觉效果更加饱满，适合吸引追求丰富设计感的买家。\n\n**正向提示词 (Positive Prompt)**:\n> Top-down view of a stylish white journal on a smooth light beige-grey background, 16:9 format. The cover design includes high-density grey polka dots covering most of the white space, contrasting with the large black cursive typography \"Bleeding Heart\" and \"Needle\". Details include a white leather buckle strap, metal snap fastener, and a grey sticker on the top right. A checkered patterned bookmark or card sits above the notebook. Bright, soft studio lighting, uniform color temperature, highlighting the busy yet organized pattern. Professional product shot, 2K definition, highly detailed texture. --ar 16:9 --q 2\n\n**负面提示词 (Negative Prompt)**:\n> Sparse dots, empty background, dark room, cluttered props, wrong colors, blue tint, green tint, wooden table, fabric wrinkles, cropped text, illegible font, bad anatomy, noise, grainy, abstract art.\n\n#### 方案 3：稀疏波点·极简留白\n**设计思路**：减少波点数量，增大波点间距，营造更高级的极简主义氛围，突出文字设计，适合喜欢清爽风格的受众。\n\n**正向提示词 (Positive Prompt)**:\n> Elegant stationery product photo, a white notebook placed centrally on a vast light beige-grey surface, 16:9 ratio. The cover features widely spaced, sparse grey polka dots, emphasizing the negative space. Prominent black calligraphy text \"Bleeding Heart\" and \"Needle\" stands out clearly. White leather strap with silver button on the right side, grey label on the top right corner. Soft, diffused daylight casting very subtle shadows, airy and clean atmosphere. Minimalist aesthetic, high-end look, crisp focus, 2K resolution. --ar 16:9 --q 2\n\n**负面提示词 (Negative Prompt)**:\n> Dense patterns, heavy textures, strong contrast, dark shadows, colorful accessories, pen, pencil, coffee cup, hand holding book, complex scene, dirty background, pixelated, blurred edges, oversaturated.\n在这些共同原则内执行本张已确定的画面；可选建议与变化范围不表示添加全部元素或重新策划。\n只按本稿已确定的画面要求执行；不得新增文案或重新策划。\n\n负面提示词：排除商品拉伸、压扁、增厚、部件比例改变及透视失真；不得编造商品结构、原印刷、材质性能或附赠销售内容。\n\n## 2. 密集波点·饱满视觉冲击\n\n【生成任务与画布】\n生成一张电商主图。目标平台：京东；新增文字语言：跟随用户要求；画布比例：16:9；清晰度参数：2K。\n本张任务：通过增加波点密度，强化图案设计的丰富性与视觉冲击力，吸引追求精致细节的买家。。\n\n【参考图身份与用途】\n输入图片1—fid_8d3feea7—product—提供商品基础结构与文字位置参考，依据本张任务调整波点分布密度。\n输入图片2—resource-reference-redacted—style_reference—继承整套视觉规范中的背景色调与照明气质。\n\n【背景、桌面与配色】\n延续浅米灰色哑光背景，保持高亮洁净的视觉基调，突出白色封面上的密集纹理。\n\n【主体与辅助视图布局】\n正俯视构图。笔记本主体居中放大，占据画面主要区域。封面波点调整为高密度排列（间距缩小，数量增多），填满文字周围的留白区域，形成强烈的图案感。\n\n【道具与装饰】\n无新增道具。聚焦于笔记本本身的图案变化。\n\n【光影与构图配合】\n均匀的影棚柔光，减弱侧面投影，使密集排列的波点图案清晰可辨，确保黑色花体字不被背景纹理淹没。\n\n【文字内容与排版】\n无新增文案。商品自带文字保持不变，作为密集图案中的视觉锚点。\n\n【商品保真与比例】\n保留商品外形、搭扣、文字内容及颜色。波点密度属于允许的装饰性调整范围，但不得改变波点原本的颜色（灰色）。\n商品按参考图真实比例等比例缩放，排版围绕实际商品形状安排，不拉伸、压扁、增厚或改变部件比例。\n\n【执行约束】\n波点必须保持圆润规则；文字清晰度优先于图案密度；禁止拉伸变形。\n整套共同边界（第二阶段原文）：\n- **商品必须保留**：笔记本外形、皮质搭扣、金属按扣、封面所有印刷文字、右上角灰色标签。\n- **整套共同遵循**：浅米灰背景、16:9画幅、高清晰度、无多余文案。\n- **设计建议与适用条件**：建议将商品置于画面中心或黄金分割点。\n- **逐图可以变化**：波点的疏密程度、商品摆放角度（正放/微侧）、景别大小。\n- **本组需要避免的设计**：避免改变商品底色，避免添加杂乱的彩色道具。\n\n---\n\n### 京东主图生图提示词方案 (16:9, 2K)\n\n#### 方案 1：标准还原·经典视角\n**设计思路**：忠实还原参考图的商品形态，采用标准的俯视微侧角度，波点密度适中，展现最真实的商品样貌。\n\n**正向提示词 (Positive Prompt)**:\n> High-quality product photography, a white loose-leaf notebook lying flat on a light beige-grey matte surface, 16:9 aspect ratio. The notebook cover features grey polka dots with standard density, elegant black script text \"Bleeding Heart\" and \"Needle\", a white leather strap closure with a silver snap button, and a small grey rectangular label in the top right corner. A black and white checkered card is partially visible at the top edge of the notebook. Soft natural lighting from the upper left, creating gentle shadows to the bottom right. Minimalist composition, clean background, sharp focus on the texture of the paper and leather, 2K resolution, realistic details, e-commerce main image style. --ar 16:9 --q 2\n\n**负面提示词 (Negative Prompt)**:\n> Colorful background, messy desk, other stationery items, plastic texture, distorted text, blurry image, low resolution, harsh shadows, overexposed highlights, cartoon style, illustration, watermark, extra objects, dense polka dots, sparse polka dots.\n\n#### 方案 2：密集波点·视觉冲击\n**设计思路**：保持背景和构图不变，增加封面波点的密度，使视觉效果更加饱满，适合吸引追求丰富设计感的买家。\n\n**正向提示词 (Positive Prompt)**:\n> Top-down view of a stylish white journal on a smooth light beige-grey background, 16:9 format. The cover design includes high-density grey polka dots covering most of the white space, contrasting with the large black cursive typography \"Bleeding Heart\" and \"Needle\". Details include a white leather buckle strap, metal snap fastener, and a grey sticker on the top right. A checkered patterned bookmark or card sits above the notebook. Bright, soft studio lighting, uniform color temperature, highlighting the busy yet organized pattern. Professional product shot, 2K definition, highly detailed texture. --ar 16:9 --q 2\n\n**负面提示词 (Negative Prompt)**:\n> Sparse dots, empty background, dark room, cluttered props, wrong colors, blue tint, green tint, wooden table, fabric wrinkles, cropped text, illegible font, bad anatomy, noise, grainy, abstract art.\n\n#### 方案 3：稀疏波点·极简留白\n**设计思路**：减少波点数量，增大波点间距，营造更高级的极简主义氛围，突出文字设计，适合喜欢清爽风格的受众。\n\n**正向提示词 (Positive Prompt)**:\n> Elegant stationery product photo, a white notebook placed centrally on a vast light beige-grey surface, 16:9 ratio. The cover features widely spaced, sparse grey polka dots, emphasizing the negative space. Prominent black calligraphy text \"Bleeding Heart\" and \"Needle\" stands out clearly. White leather strap with silver button on the right side, grey label on the top right corner. Soft, diffused daylight casting very subtle shadows, airy and clean atmosphere. Minimalist aesthetic, high-end look, crisp focus, 2K resolution. --ar 16:9 --q 2\n\n**负面提示词 (Negative Prompt)**:\n> Dense patterns, heavy textures, strong contrast, dark shadows, colorful accessories, pen, pencil, coffee cup, hand holding book, complex scene, dirty background, pixelated, blurred edges, oversaturated.\n在这些共同原则内执行本张已确定的画面；可选建议与变化范围不表示添加全部元素或重新策划。\n只按本稿已确定的画面要求执行；不得新增文案或重新策划。\n\n负面提示词：排除商品拉伸、压扁、增厚、部件比例改变及透视失真；不得编造商品结构、原印刷、材质性能或附赠销售内容。\n\n## 3. 稀疏波点·轻盈极简留白\n\n【生成任务与画布】\n生成一张电商主图。目标平台：京东；新增文字语言：跟随用户要求；画布比例：16:9；清晰度参数：2K。\n本张任务：减少波点数量并增大间距，营造更高级的极简主义氛围，突出文字设计与透气感。。\n\n【参考图身份与用途】\n输入图片1—fid_8d3feea7—product—提供商品基础视图，依据本张任务调整波点分布，使其呈现稀疏状态。\n输入图片2—resource-reference-redacted—style_reference—维持整套方案一致的浅米灰背景色值与光影逻辑。\n\n【背景、桌面与配色】\n大面积浅米灰色背景，强调空间的开阔感与商品的纯净度。\n\n【主体与辅助视图布局】\n斜侧45度构图。笔记本略微倾斜放置，占据画面中心。封面波点调整为低密度排列（间距拉大，数量减少），大量露出白色底色，视觉上更显轻盈。\n\n【道具与装饰】\n无新增道具。利用商品自身的倾斜角度产生动态平衡。\n\n【光影与构图配合】\n侧逆光结合柔和补光，勾勒出笔记本的边缘轮廓，使稀疏的波点和纤细的文字在明亮背景下显得通透。\n\n【文字内容与排版】\n无新增文案。重点展示“Needle”等大字标题的笔触细节。\n\n【商品保真与比例】\n保留商品所有物理特征与原印刷文字。波点的稀疏化处理是唯一的视觉变量。\n商品按参考图真实比例等比例缩放，排版围绕实际商品形状安排，不拉伸、压扁、增厚或改变部件比例。\n\n【执行约束】\n保持透视关系的准确性；避免阴影过重破坏轻盈感；背景必须统一为浅米灰色。\n整套共同边界（第二阶段原文）：\n- **商品必须保留**：笔记本外形、皮质搭扣、金属按扣、封面所有印刷文字、右上角灰色标签。\n- **整套共同遵循**：浅米灰背景、16:9画幅、高清晰度、无多余文案。\n- **设计建议与适用条件**：建议将商品置于画面中心或黄金分割点。\n- **逐图可以变化**：波点的疏密程度、商品摆放角度（正放/微侧）、景别大小。\n- **本组需要避免的设计**：避免改变商品底色，避免添加杂乱的彩色道具。\n\n---\n\n### 京东主图生图提示词方案 (16:9, 2K)\n\n#### 方案 1：标准还原·经典视角\n**设计思路**：忠实还原参考图的商品形态，采用标准的俯视微侧角度，波点密度适中，展现最真实的商品样貌。\n\n**正向提示词 (Positive Prompt)**:\n> High-quality product photography, a white loose-leaf notebook lying flat on a light beige-grey matte surface, 16:9 aspect ratio. The notebook cover features grey polka dots with standard density, elegant black script text \"Bleeding Heart\" and \"Needle\", a white leather strap closure with a silver snap button, and a small grey rectangular label in the top right corner. A black and white checkered card is partially visible at the top edge of the notebook. Soft natural lighting from the upper left, creating gentle shadows to the bottom right. Minimalist composition, clean background, sharp focus on the texture of the paper and leather, 2K resolution, realistic details, e-commerce main image style. --ar 16:9 --q 2\n\n**负面提示词 (Negative Prompt)**:\n> Colorful background, messy desk, other stationery items, plastic texture, distorted text, blurry image, low resolution, harsh shadows, overexposed highlights, cartoon style, illustration, watermark, extra objects, dense polka dots, sparse polka dots.\n\n#### 方案 2：密集波点·视觉冲击\n**设计思路**：保持背景和构图不变，增加封面波点的密度，使视觉效果更加饱满，适合吸引追求丰富设计感的买家。\n\n**正向提示词 (Positive Prompt)**:\n> Top-down view of a stylish white journal on a smooth light beige-grey background, 16:9 format. The cover design includes high-density grey polka dots covering most of the white space, contrasting with the large black cursive typography \"Bleeding Heart\" and \"Needle\". Details include a white leather buckle strap, metal snap fastener, and a grey sticker on the top right. A checkered patterned bookmark or card sits above the notebook. Bright, soft studio lighting, uniform color temperature, highlighting the busy yet organized pattern. Professional product shot, 2K definition, highly detailed texture. --ar 16:9 --q 2\n\n**负面提示词 (Negative Prompt)**:\n> Sparse dots, empty background, dark room, cluttered props, wrong colors, blue tint, green tint, wooden table, fabric wrinkles, cropped text, illegible font, bad anatomy, noise, grainy, abstract art.\n\n#### 方案 3：稀疏波点·极简留白\n**设计思路**：减少波点数量，增大波点间距，营造更高级的极简主义氛围，突出文字设计，适合喜欢清爽风格的受众。\n\n**正向提示词 (Positive Prompt)**:\n> Elegant stationery product photo, a white notebook placed centrally on a vast light beige-grey surface, 16:9 ratio. The cover features widely spaced, sparse grey polka dots, emphasizing the negative space. Prominent black calligraphy text \"Bleeding Heart\" and \"Needle\" stands out clearly. White leather strap with silver button on the right side, grey label on the top right corner. Soft, diffused daylight casting very subtle shadows, airy and clean atmosphere. Minimalist aesthetic, high-end look, crisp focus, 2K resolution. --ar 16:9 --q 2\n\n**负面提示词 (Negative Prompt)**:\n> Dense patterns, heavy textures, strong contrast, dark shadows, colorful accessories, pen, pencil, coffee cup, hand holding book, complex scene, dirty background, pixelated, blurred edges, oversaturated.\n在这些共同原则内执行本张已确定的画面；可选建议与变化范围不表示添加全部元素或重新策划。\n只按本稿已确定的画面要求执行；不得新增文案或重新策划。\n\n负面提示词：排除商品拉伸、压扁、增厚、部件比例改变及透视失真；不得编造商品结构、原印刷、材质性能或附赠销售内容。",
+          "content_delivery_final": true
+        }
+      },
+      "delivery_seq": 8
+    }
+  ],
+  "image_cases": [
+    {
+      "label": "ordinal-1",
+      "actual_width": 2736,
+      "actual_height": 1536,
+      "expected_url": "https://cdn.everydayai.com.cn/workspace/personal/cf19e02a/%E4%B8%8B%E8%BD%BD/AI%E5%9B%BE%E7%89%87/IMG_20261123_122601_03ed09_001.png",
+      "content_sha256": "4ce038cdf67677af0daf6d47a4371492451b3981bbd1aa7ecc368c827d818ede",
+      "done": {
+        "payload": {
+          "message": {
+            "id": "9cfa7a23-3abc-496f-be0d-ea8134c68359",
+            "role": "assistant",
+            "status": "completed",
+            "content": [
+              {
+                "url": "https://cdn.everydayai.com.cn/workspace/personal/cf19e02a/%E4%B8%8B%E8%BD%BD/AI%E5%9B%BE%E7%89%87/IMG_20261123_122601_03ed09_001.png",
+                "name": "IMG_20261123_122601_03ed09_001.png",
+                "size": 7429275,
+                "type": "image",
+                "width": 2736,
+                "height": 1536,
+                "task_id": "99321668-0fb3-4f0a-9a1c-7b62693d4edc",
+                "asset_id": "dc025a7c-d2de-4ba0-afda-bd2f143941a9",
+                "mime_type": "image/png",
+                "preview_url": "https://cdn.everydayai.com.cn/workspace/personal/cf19e02a/%E4%B8%8B%E8%BD%BD/AI%E5%9B%BE%E7%89%87/IMG_20261123_122601_03ed09_001.png",
+                "download_url": "https://cdn.everydayai.com.cn/workspace/personal/cf19e02a/%E4%B8%8B%E8%BD%BD/AI%E5%9B%BE%E7%89%87/IMG_20261123_122601_03ed09_001.png",
+                "original_url": "https://cdn.everydayai.com.cn/workspace/personal/cf19e02a/%E4%B8%8B%E8%BD%BD/AI%E5%9B%BE%E7%89%87/IMG_20261123_122601_03ed09_001.png",
+                "thumbnail_url": "https://cdn.everydayai.com.cn/workspace-thumbnails/personal/cf19e02a/%E4%B8%8B%E8%BD%BD/AI%E5%9B%BE%E7%89%87/IMG_20261123_122601_03ed09_001.w360.webp",
+                "quality_checks": {
+                  "actual": {
+                    "width": 2736,
+                    "height": 1536,
+                    "aspect_ratio": "57:32"
+                  },
+                  "target": {
+                    "mode": "explicit",
+                    "source": "user",
+                    "resolution": "2K",
+                    "approximate": true,
+                    "aspect_ratio": "16:9",
+                    "requested_width": 1920,
+                    "requested_height": 1080,
+                    "resolution_source": "user"
+                  },
+                  "size_matches": true
+                },
+                "source_task_id": null,
+                "workspace_path": "下载/AI图片/IMG_20261123_122601_03ed09_001.png"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "label": "ordinal-2",
+      "actual_width": 2736,
+      "actual_height": 1536,
+      "expected_url": "https://cdn.everydayai.com.cn/workspace/personal/cf19e02a/%E4%B8%8B%E8%BD%BD/AI%E5%9B%BE%E7%89%87/IMG_20261123_122700_2a375e_001.png",
+      "content_sha256": "c82bfcfdba73036e13e67bf4554a5ba984a36bac827fb86f70c9984d25e17ed6",
+      "done": {
+        "payload": {
+          "message": {
+            "id": "6bba8bb7-3f9e-4df9-964b-5323094445cb",
+            "role": "assistant",
+            "status": "completed",
+            "content": [
+              {
+                "url": "https://cdn.everydayai.com.cn/workspace/personal/cf19e02a/%E4%B8%8B%E8%BD%BD/AI%E5%9B%BE%E7%89%87/IMG_20261123_122700_2a375e_001.png",
+                "name": "IMG_20261123_122700_2a375e_001.png",
+                "size": 6233547,
+                "type": "image",
+                "width": 2736,
+                "height": 1536,
+                "task_id": "325221a5-ae31-4670-b35f-57a77b58b56b",
+                "asset_id": "227d232a-3319-467f-98ab-dab4ec8aea38",
+                "mime_type": "image/png",
+                "preview_url": "https://cdn.everydayai.com.cn/workspace/personal/cf19e02a/%E4%B8%8B%E8%BD%BD/AI%E5%9B%BE%E7%89%87/IMG_20261123_122700_2a375e_001.png",
+                "download_url": "https://cdn.everydayai.com.cn/workspace/personal/cf19e02a/%E4%B8%8B%E8%BD%BD/AI%E5%9B%BE%E7%89%87/IMG_20261123_122700_2a375e_001.png",
+                "original_url": "https://cdn.everydayai.com.cn/workspace/personal/cf19e02a/%E4%B8%8B%E8%BD%BD/AI%E5%9B%BE%E7%89%87/IMG_20261123_122700_2a375e_001.png",
+                "thumbnail_url": "https://cdn.everydayai.com.cn/workspace-thumbnails/personal/cf19e02a/%E4%B8%8B%E8%BD%BD/AI%E5%9B%BE%E7%89%87/IMG_20261123_122700_2a375e_001.w360.webp",
+                "quality_checks": {
+                  "actual": {
+                    "width": 2736,
+                    "height": 1536,
+                    "aspect_ratio": "57:32"
+                  },
+                  "target": {
+                    "mode": "explicit",
+                    "source": "user",
+                    "resolution": "2K",
+                    "approximate": true,
+                    "aspect_ratio": "16:9",
+                    "requested_width": 1920,
+                    "requested_height": 1080,
+                    "resolution_source": "user"
+                  },
+                  "size_matches": true
+                },
+                "source_task_id": null,
+                "workspace_path": "下载/AI图片/IMG_20261123_122700_2a375e_001.png"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "label": "edit-blue-1",
+      "actual_width": 2736,
+      "actual_height": 1536,
+      "expected_url": "https://cdn.everydayai.com.cn/workspace/personal/cf19e02a/%E4%B8%8B%E8%BD%BD/AI%E5%9B%BE%E7%89%87/IMG_20261123_122808_8e3d16_001.png",
+      "content_sha256": "66e6fb2b20cb2a751d2b9faf3da9d7ca1ede32460cbe5aec9619e3e078e32cc1",
+      "done": {
+        "payload": {
+          "message": {
+            "id": "527c7f15-7e9f-4677-8e1a-9a4ac7f6c368",
+            "role": "assistant",
+            "status": "completed",
+            "content": [
+              {
+                "url": "https://cdn.everydayai.com.cn/workspace/personal/cf19e02a/%E4%B8%8B%E8%BD%BD/AI%E5%9B%BE%E7%89%87/IMG_20261123_122808_8e3d16_001.png",
+                "name": "IMG_20261123_122808_8e3d16_001.png",
+                "size": 5048101,
+                "type": "image",
+                "width": 2736,
+                "height": 1536,
+                "task_id": "aa123b5f-1a4a-4eb6-aaae-0e291505bdb6",
+                "asset_id": "0be02389-4a22-4347-8651-847dc989b540",
+                "mime_type": "image/png",
+                "preview_url": "https://cdn.everydayai.com.cn/workspace/personal/cf19e02a/%E4%B8%8B%E8%BD%BD/AI%E5%9B%BE%E7%89%87/IMG_20261123_122808_8e3d16_001.png",
+                "download_url": "https://cdn.everydayai.com.cn/workspace/personal/cf19e02a/%E4%B8%8B%E8%BD%BD/AI%E5%9B%BE%E7%89%87/IMG_20261123_122808_8e3d16_001.png",
+                "original_url": "https://cdn.everydayai.com.cn/workspace/personal/cf19e02a/%E4%B8%8B%E8%BD%BD/AI%E5%9B%BE%E7%89%87/IMG_20261123_122808_8e3d16_001.png",
+                "thumbnail_url": "https://cdn.everydayai.com.cn/workspace-thumbnails/personal/cf19e02a/%E4%B8%8B%E8%BD%BD/AI%E5%9B%BE%E7%89%87/IMG_20261123_122808_8e3d16_001.w360.webp",
+                "quality_checks": {
+                  "actual": {
+                    "width": 2736,
+                    "height": 1536,
+                    "aspect_ratio": "57:32"
+                  },
+                  "target": {
+                    "mode": "inherit_reference",
+                    "source": "reference",
+                    "resolution": "2K",
+                    "aspect_ratio": "16:9",
+                    "original_width": 2736,
+                    "source_task_id": "325221a5-ae31-4670-b35f-57a77b58b56b",
+                    "original_height": 1536,
+                    "reference_index": 0,
+                    "reference_sha256": "c82bfcfdba73036e13e67bf4554a5ba984a36bac827fb86f70c9984d25e17ed6",
+                    "resolution_source": "task",
+                    "source_message_id": "6bba8bb7-3f9e-4df9-964b-5323094445cb"
+                  },
+                  "size_matches": true
+                },
+                "source_task_id": null,
+                "workspace_path": "下载/AI图片/IMG_20261123_122808_8e3d16_001.png"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "label": "edit-gray-1",
+      "actual_width": 2736,
+      "actual_height": 1536,
+      "expected_url": "https://cdn.everydayai.com.cn/workspace/personal/cf19e02a/%E4%B8%8B%E8%BD%BD/AI%E5%9B%BE%E7%89%87/IMG_20261123_122924_5a1a94_001.png",
+      "content_sha256": "18a95690b12e375a15c215c80e73fd2bc84444b2ee94abe790bb4797bc1c6c0d",
+      "done": {
+        "payload": {
+          "message": {
+            "id": "4a49a3f6-452c-4a2b-b54d-f22726220bb7",
+            "role": "assistant",
+            "status": "completed",
+            "content": [
+              {
+                "url": "https://cdn.everydayai.com.cn/workspace/personal/cf19e02a/%E4%B8%8B%E8%BD%BD/AI%E5%9B%BE%E7%89%87/IMG_20261123_122924_5a1a94_001.png",
+                "name": "IMG_20261123_122924_5a1a94_001.png",
+                "size": 3331073,
+                "type": "image",
+                "width": 2736,
+                "height": 1536,
+                "task_id": "01a69b6f-815c-46d6-bde8-da9582806e11",
+                "asset_id": "050bf2b0-f757-44b5-91b2-72de5f41156e",
+                "mime_type": "image/png",
+                "preview_url": "https://cdn.everydayai.com.cn/workspace/personal/cf19e02a/%E4%B8%8B%E8%BD%BD/AI%E5%9B%BE%E7%89%87/IMG_20261123_122924_5a1a94_001.png",
+                "download_url": "https://cdn.everydayai.com.cn/workspace/personal/cf19e02a/%E4%B8%8B%E8%BD%BD/AI%E5%9B%BE%E7%89%87/IMG_20261123_122924_5a1a94_001.png",
+                "original_url": "https://cdn.everydayai.com.cn/workspace/personal/cf19e02a/%E4%B8%8B%E8%BD%BD/AI%E5%9B%BE%E7%89%87/IMG_20261123_122924_5a1a94_001.png",
+                "thumbnail_url": "https://cdn.everydayai.com.cn/workspace-thumbnails/personal/cf19e02a/%E4%B8%8B%E8%BD%BD/AI%E5%9B%BE%E7%89%87/IMG_20261123_122924_5a1a94_001.w360.webp",
+                "quality_checks": {
+                  "actual": {
+                    "width": 2736,
+                    "height": 1536,
+                    "aspect_ratio": "57:32"
+                  },
+                  "target": {
+                    "mode": "inherit_reference",
+                    "source": "reference",
+                    "resolution": "2K",
+                    "aspect_ratio": "16:9",
+                    "original_width": 2736,
+                    "source_task_id": "aa123b5f-1a4a-4eb6-aaae-0e291505bdb6",
+                    "original_height": 1536,
+                    "reference_index": 0,
+                    "reference_sha256": "66e6fb2b20cb2a751d2b9faf3da9d7ca1ede32460cbe5aec9619e3e078e32cc1",
+                    "resolution_source": "task",
+                    "source_message_id": "527c7f15-7e9f-4677-8e1a-9a4ac7f6c368"
+                  },
+                  "size_matches": true
+                },
+                "source_task_id": null,
+                "workspace_path": "下载/AI图片/IMG_20261123_122924_5a1a94_001.png"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "label": "original-two-image-failure-1",
+      "actual_width": 1086,
+      "actual_height": 1448,
+      "expected_url": "https://cdn.everydayai.com.cn/workspace/personal/cf19e02a/%E4%B8%8B%E8%BD%BD/AI%E5%9B%BE%E7%89%87/IMG_20261123_123053_e07179_001.png",
+      "content_sha256": "9faabcccbab57200ae036d1a28f8deb538cefc0f26a408e7efb292424877855a",
+      "done": {
+        "payload": {
+          "message": {
+            "id": "bb6a0523-0efc-4e05-b30b-3df162cb81a2",
+            "role": "assistant",
+            "status": "completed",
+            "content": [
+              {
+                "url": "https://cdn.everydayai.com.cn/workspace/personal/cf19e02a/%E4%B8%8B%E8%BD%BD/AI%E5%9B%BE%E7%89%87/IMG_20261123_123053_e07179_001.png",
+                "name": "IMG_20261123_123053_e07179_001.png",
+                "size": 2886414,
+                "type": "image",
+                "width": 1086,
+                "height": 1448,
+                "task_id": "d4b96ed9-7d9b-44cf-a655-183f404d7b3c",
+                "asset_id": "b203741f-b8e3-4d6b-aae4-f46926f17873",
+                "mime_type": "image/png",
+                "preview_url": "https://cdn.everydayai.com.cn/workspace/personal/cf19e02a/%E4%B8%8B%E8%BD%BD/AI%E5%9B%BE%E7%89%87/IMG_20261123_123053_e07179_001.png",
+                "download_url": "https://cdn.everydayai.com.cn/workspace/personal/cf19e02a/%E4%B8%8B%E8%BD%BD/AI%E5%9B%BE%E7%89%87/IMG_20261123_123053_e07179_001.png",
+                "original_url": "https://cdn.everydayai.com.cn/workspace/personal/cf19e02a/%E4%B8%8B%E8%BD%BD/AI%E5%9B%BE%E7%89%87/IMG_20261123_123053_e07179_001.png",
+                "thumbnail_url": "https://cdn.everydayai.com.cn/workspace-thumbnails/personal/cf19e02a/%E4%B8%8B%E8%BD%BD/AI%E5%9B%BE%E7%89%87/IMG_20261123_123053_e07179_001.w360.webp",
+                "quality_checks": {
+                  "actual": {
+                    "width": 1086,
+                    "height": 1448,
+                    "aspect_ratio": "3:4"
+                  },
+                  "target": {
+                    "mode": "inherit_reference",
+                    "source": "user",
+                    "resolution": "1K",
+                    "aspect_ratio": "3:4",
+                    "original_width": 1280,
+                    "original_height": 1707,
+                    "reference_index": 1,
+                    "reference_sha256": "7235cf6d05c018cf207b08ae2419ad6f377754f0e91a7842cf68c0355fcef6bf",
+                    "resolution_source": "model"
+                  },
+                  "size_matches": true
+                },
+                "source_task_id": null,
+                "workspace_path": "下载/AI图片/IMG_20261123_123053_e07179_001.png"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

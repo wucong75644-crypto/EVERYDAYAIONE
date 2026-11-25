@@ -28,6 +28,7 @@ export const CHAT_MODELS: UnifiedModel[] = [
       pdfInput: true,
       functionCalling: true,
       structuredOutput: true,
+      thinkingRequired: true,
       thinkingEffort: true,
       streamingResponse: true,
       maxImages: 10,
@@ -55,6 +56,7 @@ export const CHAT_MODELS: UnifiedModel[] = [
       pdfInput: true,
       functionCalling: true,
       structuredOutput: true,
+      thinkingRequired: true,
       thinkingEffort: true,
       streamingResponse: true,
       maxImages: 10,
@@ -74,6 +76,7 @@ export const CHAT_MODELS: UnifiedModel[] = [
     type: 'chat',
     description: 'Google 官方 | 免费 | 快速响应',
     capabilities: {
+      thinkingRequired: true,
       textToImage: false,
       imageEditing: false,
       imageToVideo: false,
@@ -101,6 +104,7 @@ export const CHAT_MODELS: UnifiedModel[] = [
     type: 'chat',
     description: 'Google 官方 | 免费 | 高级推理',
     capabilities: {
+      thinkingRequired: true,
       textToImage: false,
       imageEditing: false,
       imageToVideo: false,
@@ -184,6 +188,7 @@ export const CHAT_MODELS: UnifiedModel[] = [
     type: 'chat',
     description: '深度推理 | 数学/逻辑极强',
     capabilities: {
+      thinkingRequired: true,
       textToImage: false,
       imageEditing: false,
       imageToVideo: false,
@@ -202,6 +207,7 @@ export const CHAT_MODELS: UnifiedModel[] = [
     type: 'chat',
     description: '百万上下文 | 联网搜索与网页阅读',
     capabilities: {
+      thinkingEffort: true,
       textToImage: false,
       imageEditing: false,
       imageToVideo: false,
@@ -298,6 +304,7 @@ export const CHAT_MODELS: UnifiedModel[] = [
     type: 'chat',
     description: 'OpenAI 推理 | 深度思考 | 数学逻辑',
     capabilities: {
+      thinkingRequired: true,
       textToImage: false,
       imageEditing: false,
       imageToVideo: false,
@@ -374,6 +381,7 @@ export const CHAT_MODELS: UnifiedModel[] = [
     type: 'chat',
     description: 'OpenAI 最强推理 | 极致性能 | 费用高',
     capabilities: {
+      thinkingRequired: true,
       textToImage: false,
       imageEditing: false,
       imageToVideo: false,
@@ -414,6 +422,7 @@ export const CHAT_MODELS: UnifiedModel[] = [
     type: 'chat',
     description: 'Google 最新旗舰 | 全模态 | 百万上下文',
     capabilities: {
+      thinkingRequired: true,
       textToImage: false,
       imageEditing: false,
       imageToVideo: false,

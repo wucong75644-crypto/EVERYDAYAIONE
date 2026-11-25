@@ -144,34 +144,6 @@ class WarehouseAgent(DepartmentAgent):
         "platform_map_query": "platform_map",
     }
 
-    def _classify_action(self, task: str) -> str:
-        t = task.lower()
-        # 先匹配具体场景，再匹配宽泛关键词（避免"库存"吃掉"批次库存"）
-        if any(kw in t for kw in ("批次", "效期", "过期", "保质期", "batch")):
-            return "batch_stock_query"
-        if any(kw in t for kw in ("平台映射", "哪些平台", "在售平台", "平台商品",
-                                    "platform_map")):
-            return "platform_map_query"
-        if any(kw in t for kw in ("日统计", "销量排名", "销量top", "退货率",
-                                    "daily_stats", "商品销量")):
-            return "daily_stats_query"
-        if any(kw in t for kw in ("sku", "规格", "变体")):
-            return "sku_query"
-        if any(kw in t for kw in ("商品主数据", "停售商品", "虚拟商品", "商品列表",
-                                    "品牌", "商品分类", "商品信息")):
-            return "product_query"
-        if any(kw in t for kw in ("库存负数", "库存统计", "可用库存", "总库存",
-                                    "库存预警", "缺货商品")):
-            return "stock_data_query"
-        if any(kw in t for kw in ("库存", "可售", "缺货", "stock")):
-            return "stock_query"
-        if any(kw in t for kw in ("仓库", "warehouse")):
-            return "warehouse_list"
-        if any(kw in t for kw in ("收货", "入库", "receipt")):
-            return "receipt_query"
-        if any(kw in t for kw in ("上架", "shelf")):
-            return "shelf_query"
-        return "stock_query"
 
     # v2.2 分析类查询类型——直接走引擎路由，不需要 action 映射
     _ANALYTICS_QUERY_TYPES = frozenset({

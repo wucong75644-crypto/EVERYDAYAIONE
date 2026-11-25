@@ -2,10 +2,10 @@
 ERP 查询参数提取工具函数。
 
 提供 ERPAgent 需要的：
-- 关键词路由（quick_classify）
+- 结构化模型计划解析（旧词法接口仅保留导入兼容）
 - 参数校验（_sanitize_params）
 - LLM prompt 构建与解析（build_extract_prompt, parse_extract_response）
-- 降级参数构造（_build_fallback_params）
+- 模型提取失败时不生成查询计划
 
 拆分到独立模块（此处 re-export 保持兼容）：
 - plan_fill.py: fill_platform, _fill_codes_for_params
@@ -22,26 +22,7 @@ from typing import Any, Optional
 from loguru import logger
 
 
-# ── 关键词 → 域映射（降级用）──
-
-_DOMAIN_KEYWORDS: dict[str, list[str]] = {
-    "warehouse": [
-        "库存", "缺货", "可售", "锁定", "在途", "仓库", "入库",
-        "上架", "盘点", "调拨", "stock", "inventory",
-    ],
-    "purchase": [
-        "采购", "到货", "供应商", "采退", "purchase", "supplier",
-    ],
-    "trade": [
-        "订单", "发货", "物流", "快递", "签收", "退款",
-        "销售", "成交", "下单", "买家", "收货",
-        "order", "trade", "logistics", "sales",
-    ],
-    "aftersale": [
-        "退货", "售后", "退款率", "退货率", "换货",
-        "aftersale", "return",
-    ],
-}
+# ── 结构化域协议 ──
 
 # 有效域名（不含 compute）
 VALID_DOMAINS = frozenset({
@@ -66,32 +47,8 @@ _DOMAIN_DEFAULT_DOC_TYPE: dict[str, str] = {
 
 
 def quick_classify(query: str) -> str | None:
-    """关键词匹配单域分类（降级链第二级）。
-
-    返回域名（如 "warehouse"）或 None。
-    并列得分时返回 None（歧义，应由 LLM 第一级处理）。
-    """
-    query_lower = query.lower()
-    scores: dict[str, int] = {}
-    for domain, keywords in _DOMAIN_KEYWORDS.items():
-        score = sum(1 for kw in keywords if kw in query_lower)
-        if score > 0:
-            scores[domain] = score
-
-    if not scores:
-        return None
-    sorted_scores = sorted(
-        scores.items(), key=lambda x: x[1], reverse=True,
-    )
-    if (
-        len(sorted_scores) >= 2
-        and sorted_scores[0][1] == sorted_scores[1][1]
-    ):
-        logger.info(
-            f"quick_classify ambiguous: {sorted_scores[:3]}",
-        )
-        return None
-    return sorted_scores[0][0]
+    """Retired import compatibility: words cannot supply a missing model decision."""
+    return None
 
 
 # 公开常量（供 get_capability_manifest / 外部引用）
@@ -239,28 +196,39 @@ _DOMAIN_TIME_COL: dict[str, str] = {
 }
 
 
-def _build_fallback_params(
-    query: str,
-    request_ctx: Any = None,
-    domain: str = "",
-) -> dict:
-    """降级路径的最小参数构造（不用 LLM，纯规则）。"""
-    params: dict = {"mode": "summary"}
-    if request_ctx:
-        today = request_ctx.now.strftime("%Y-%m-%d")
-    else:
-        from datetime import datetime
-        today = datetime.now().strftime("%Y-%m-%d")
-    params["time_range"] = f"{today} ~ {today}"
-    params["time_col"] = _DOMAIN_TIME_COL.get(domain, "doc_created_at")
-    if any(kw in query for kw in ("导出", "Excel", "表格文件", "明细", "列表", "详情")):
-        params["mode"] = "export"
-    params["_degraded"] = True
-    return params
+def _build_fallback_params(query: str, request_ctx=None, *, domain=None) -> dict:
+    """Retired import compatibility; never fabricate executable query parameters."""
+    return {}
 
 
 # ── 参数定义文本（单域/多域 prompt 共用，拆分到 plan_builder_prompts.py）──
 from services.agent.plan_builder_prompts import PARAM_DEFINITIONS as _PARAM_DEFINITIONS
+
+# One extraction call owns the complete plan. Extra domain parameters keep the
+# existing extensible contract; order scope remains a bounded business enum.
+from services.agent.plan_schema import query_plan_params_schema
+
+QUERY_PLAN_TOOL = {
+    'type': 'function',
+    'function': {
+        'name': 'submit_query_plan',
+        'description': '提交完整查询计划。订单总体口径与类别限定按用户完整含义选择；仅排除刷单保留关闭等其他状态，不能代替有效订单。',
+        'parameters': {
+            'type': 'object', 'additionalProperties': False, 'required': ['steps'],
+            'properties': {
+                'steps': {'type': 'array', 'minItems': 1, 'maxItems': 4, 'items': {
+                    'type': 'object', 'additionalProperties': False, 'required': ['domain','params'],
+                    'properties': {
+                        'domain': {'type':'string','enum':['warehouse','purchase','trade','aftersale']},
+                        'params': query_plan_params_schema(),
+                    },
+                }},
+                'compute_hint': {'type':['string','null']},
+                'dependency': {'type':'string','enum':['parallel','serial']},
+            },
+        },
+    },
+}
 
 
 # ── LLM Prompt（单域扁平结构）──
@@ -303,7 +271,7 @@ def build_extract_prompt(query: str, now_str: str = "") -> str:
         '"time_range":"2026-04-01 ~ 2026-04-17","supplier_name":"XX供应商"}}\n\n'
         "示例6（刷单统计）：\n"
         '{"domain": "trade", "params": {"doc_type":"order","mode":"summary",'
-        '"time_range":"2026-04-01 ~ 2026-04-17","is_scalping":true,"include_invalid":true}}\n\n'
+        '"time_range":"2026-04-01 ~ 2026-04-17","order_scope":"only_scalping"}}\n\n'
         "示例7（买家张三的订单）：\n"
         '{"domain": "trade", "params": {"doc_type":"order","mode":"export",'
         '"time_range":"2026-01-21 ~ 2026-04-21","buyer_nick":"张三"}}\n\n'
@@ -406,7 +374,7 @@ def build_multi_extract_prompt(query: str, now_str: str = "") -> str:
         + _PARAM_DEFINITIONS +
         "\n返回纯 JSON（不要 markdown 围栏）。\n\n"
         "示例1（单域：今日付款订单统计）：\n"
-        '{"steps":[{"domain":"trade","params":{"doc_type":"order",'
+        '{"steps":[{"domain":"trade","params":{"doc_type":"order","order_scope":"valid",'
         '"mode":"summary","time_range":"2026-04-17 ~ 2026-04-17",'
         '"time_col":"pay_time"}}]}\n\n'
         "示例2（单域：退货按商品分组）：\n"
@@ -432,9 +400,9 @@ def build_multi_extract_prompt(query: str, now_str: str = "") -> str:
         '],"compute_hint":"用 product_code 关联采购量和销量，'
         '计算采销比","dependency":"parallel"}\n\n'
         "示例5（单域：刷单统计）：\n"
-        '{"steps":[{"domain":"trade","params":{"doc_type":"order",'
+        '{"steps":[{"domain":"trade","params":{"doc_type":"order","order_scope":"valid",'
         '"mode":"summary","time_range":"2026-04-01 ~ 2026-04-17",'
-        '"is_scalping":true,"include_invalid":true}}]}\n\n'
+        '"order_scope":"only_scalping"}}]}\n\n'
         "示例6（跨域 serial：查供应商采购商品→用编码查订单）：\n"
         '{"steps":['
         '{"domain":"purchase","params":{"doc_type":"purchase","mode":"summary",'
@@ -453,15 +421,15 @@ def build_multi_extract_prompt(query: str, now_str: str = "") -> str:
         '"numeric_filters":[{"field":"quantity","op":"lt","value":10}],'
         '"sort_by":"quantity","sort_dir":"asc","limit":50}}]}\n\n'
         "示例8（单域：除了淘宝和拼多多的订单）：\n"
-        '{"steps":[{"domain":"trade","params":{"doc_type":"order",'
+        '{"steps":[{"domain":"trade","params":{"doc_type":"order","order_scope":"valid",'
         '"mode":"summary","time_range":"2026-04-17 ~ 2026-04-17",'
         '"exclude_filters":[{"field":"platform","value":["taobao","pdd"]}]}}]}\n\n'
         "示例9（单域：没有快递单号的已发货订单）：\n"
-        '{"steps":[{"domain":"trade","params":{"doc_type":"order",'
+        '{"steps":[{"domain":"trade","params":{"doc_type":"order","order_scope":"valid",'
         '"mode":"export","time_range":"2026-04-17 ~ 2026-04-17",'
         '"order_status":"SELLER_SEND_GOODS","null_fields":["express_no"]}}]}\n\n'
         "示例10（单域：金额最高的10笔订单）：\n"
-        '{"steps":[{"domain":"trade","params":{"doc_type":"order",'
+        '{"steps":[{"domain":"trade","params":{"doc_type":"order","order_scope":"valid",'
         '"mode":"export","time_range":"2026-04-17 ~ 2026-04-17",'
         '"sort_by":"amount","sort_dir":"desc","limit":10}}]}\n\n'
         "示例11（单域：库存最少的商品Top20）：\n"
@@ -469,12 +437,12 @@ def build_multi_extract_prompt(query: str, now_str: str = "") -> str:
         '"mode":"export","sort_by":"available_stock","sort_dir":"asc","limit":20}}]}\n\n'
         # ── v2.2 分析类示例 ──
         "示例12（趋势分析：每天的销售额）：\n"
-        '{"steps":[{"domain":"warehouse","params":{"doc_type":"daily_stats",'
-        '"mode":"summary","time_range":"2026-04-01 ~ 2026-04-27 00:00",'
+        '{"steps":[{"domain":"trade","params":{"doc_type":"order","order_scope":"valid",'
+        '"mode":"summary","time_col":"pay_time","time_range":"2026-04-01 ~ 2026-04-27 00:00",'
         '"query_type":"trend","time_granularity":"day",'
         '"metrics":["order_amount"]}}]}\n\n'
         "示例13（环比对比：这个月比上个月各平台销售额）：\n"
-        '{"steps":[{"domain":"trade","params":{"doc_type":"order",'
+        '{"steps":[{"domain":"trade","params":{"doc_type":"order","order_scope":"valid",'
         '"mode":"summary","time_range":"2026-04-01 ~ 2026-04-27 00:00",'
         '"query_type":"compare","compare_range":"mom",'
         '"group_by":"platform","metrics":["amount"]}}]}\n\n'
@@ -492,7 +460,7 @@ def build_multi_extract_prompt(query: str, now_str: str = "") -> str:
         '"query_type":"ratio","group_by":"product",'
         '"metrics":["order_amount"]}}]}\n\n'
         "示例17（分布分析：订单金额分布）：\n"
-        '{"steps":[{"domain":"trade","params":{"doc_type":"order",'
+        '{"steps":[{"domain":"trade","params":{"doc_type":"order","order_scope":"valid",'
         '"mode":"summary","time_range":"2026-04-01 ~ 2026-04-27 00:00",'
         '"query_type":"distribution","metrics":["amount"]}}]}\n\n'
         "示例18（跨域指标：库存周转天数最短的10个商品）：\n"
@@ -504,11 +472,11 @@ def build_multi_extract_prompt(query: str, now_str: str = "") -> str:
         '"mode":"summary","time_range":"2026-04-01 ~ 2026-04-27 00:00",'
         '"query_type":"cross","metrics":["inventory_flow"]}}]}\n\n'
         "示例20（跨域指标：4月复购率）：\n"
-        '{"steps":[{"domain":"trade","params":{"doc_type":"order",'
+        '{"steps":[{"domain":"trade","params":{"doc_type":"order","order_scope":"valid",'
         '"mode":"summary","time_range":"2026-04-01 ~ 2026-04-27 00:00",'
         '"query_type":"cross","metrics":["repurchase_rate"]}}]}\n\n'
         "示例21（跨域指标：平均发货时长）：\n"
-        '{"steps":[{"domain":"trade","params":{"doc_type":"order",'
+        '{"steps":[{"domain":"trade","params":{"doc_type":"order","order_scope":"valid",'
         '"mode":"summary","time_range":"2026-04-01 ~ 2026-04-27 00:00",'
         '"query_type":"cross","metrics":["avg_ship_time"]}}]}'
     )

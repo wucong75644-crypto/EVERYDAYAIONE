@@ -167,11 +167,8 @@ async def refresh_context(executor, context, registry):
         codes = {code for spec in registry.specs() for code in spec.policy_rules.required_permissions}
         codes.update(snapshot.get("required_permissions") or ())
         checker = PermissionChecker(executor.db)
-        snapshot["permissions"] = {
-            code: bool(context.org_id) and await checker.check(
-                context.actor_user_id, context.org_id, code,
-            ) for code in sorted(codes)
-        }
+        allowed = await checker.check_many(context.actor_user_id, context.org_id, codes)
+        snapshot["permissions"] = {code: code in allowed for code in codes}
         if any(snapshot["permissions"].get(code) is not True for code in snapshot.get("required_permissions", ())):
             snapshot["access_denied_reason"] = "business_permission_required"
     except Exception:

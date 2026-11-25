@@ -237,6 +237,7 @@ async def test_real_loop_revision_matches_model_context_and_finishes_budget_hone
     prepared.permission = SimpleNamespace(mode=SimpleNamespace(value='auto'),
         need_exit_attachment=False, get_reminder=lambda _: '')
     if boundary == 'fast_knowledge':
+        runtime.workflow_projection = {'intent':'explain'}
         prepared.knowledge_answer_plan = {'mode': 'answer'}
         handler._knowledge_run = SimpleNamespace(revalidate=lambda: None)
     handler.org_id = None

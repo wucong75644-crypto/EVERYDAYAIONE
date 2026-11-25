@@ -1,18 +1,11 @@
-"""
-企微用户创建并发安全集成测试（连真实生产库 / staging）
+"""Real WeCom concurrency RPCs in a disposable, socket-only PostgreSQL.
 
-验证 migration 116 三件套（唯一索引 + advisory lock + 单事务）能在真实并发下
-保证同一 wecom_userid 不会创建多个 user 行。
-
-跳过条件：DATABASE_URL 未设置时跳过（CI 环境）。
-清理：使用一个独立的虚拟 wecom_userid 前缀 (concurrent_test_xxx)，
-     测试结束后 DELETE 所有匹配数据，保证可重复执行不污染生产。
+Never reads application DATABASE_URL or connects to a pre-existing database.
 """
 
 from __future__ import annotations
 
-import asyncio
-import os
+import getpass
 import sys
 import uuid
 from pathlib import Path
@@ -24,20 +17,54 @@ if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
 
-pytestmark = pytest.mark.skipif(
-    not os.environ.get("DATABASE_URL"),
-    reason="无 DATABASE_URL，跳过集成测试",
-)
+@pytest.fixture(scope="module")
+def wecom_db(chat_image_postgres_socket):
+    import psycopg
+    from psycopg import sql
+    name = "wecom_concurrency_" + uuid.uuid4().hex
+    admin = psycopg.connect(host=chat_image_postgres_socket, dbname="postgres",
+                            user=getpass.getuser(), autocommit=True)
+    admin.execute(sql.SQL("CREATE DATABASE {} TEMPLATE template0").format(sql.Identifier(name)))
+    dsn = psycopg.conninfo.make_conninfo(host=chat_image_postgres_socket,
+                                       dbname=name, user=getpass.getuser())
+    try:
+        with psycopg.connect(dsn) as conn:
+            conn.execute("""
+                CREATE TYPE user_created_by AS ENUM ('wecom');
+                CREATE TYPE user_role AS ENUM ('user');
+                CREATE TYPE account_status AS ENUM ('active');
+                CREATE TYPE credits_change_type AS ENUM ('register_gift');
+                CREATE TABLE users(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), nickname text,
+                  login_methods jsonb, created_by user_created_by, role user_role, credits int,
+                  status account_status, last_login_at timestamptz, updated_at timestamptz);
+                CREATE TABLE wecom_user_mappings(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+                  wecom_userid text, corp_id text, user_id uuid REFERENCES users ON DELETE CASCADE,
+                  channel text, wecom_nickname text, org_id uuid);
+                CREATE TABLE credits_history(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+                  user_id uuid REFERENCES users ON DELETE CASCADE, change_amount int,
+                  balance_after int, change_type credits_change_type, description text, org_id uuid);
+                CREATE TABLE conversations(user_id uuid REFERENCES users);
+                CREATE TABLE image_generations(user_id uuid REFERENCES users);
+                CREATE TABLE tasks(user_id uuid REFERENCES users);
+                CREATE TABLE org_members(user_id uuid REFERENCES users, org_id uuid);
+                CREATE TABLE credit_transactions(user_id uuid REFERENCES users);
+                CREATE TABLE admin_action_logs(target_user_id uuid REFERENCES users);
+            """)
+            conn.execute((backend_dir / "migrations/116_wecom_dedup_root_fix.sql").read_text())
+        yield dsn
+    finally:
+        admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(name)))
+        admin.close()
 
 
-def _get_pg_conn():
+def _get_pg_conn(dsn):
     import psycopg2
-    return psycopg2.connect(os.environ["DATABASE_URL"], connect_timeout=15)
+    return psycopg2.connect(dsn, connect_timeout=15)
 
 
-def _cleanup(test_wecom_userid: str, test_corp_id: str) -> None:
+def _cleanup(dsn: str, test_wecom_userid: str, test_corp_id: str) -> None:
     """清理测试创建的所有数据"""
-    conn = _get_pg_conn()
+    conn = _get_pg_conn(dsn)
     conn.autocommit = True
     cur = conn.cursor()
     try:
@@ -55,9 +82,9 @@ def _cleanup(test_wecom_userid: str, test_corp_id: str) -> None:
         conn.close()
 
 
-def test_concurrent_rpc_creates_only_one_user():
+def test_concurrent_rpc_creates_only_one_user(wecom_db):
     """
-    100 个并发 RPC 调用同一个 (wecom_userid, corp_id) →
+    50 个并发 RPC 调用同一个 (wecom_userid, corp_id) →
     应只创建 1 个 user + 1 个 mapping。
     """
     test_wecom_userid = f"concurrent_test_{uuid.uuid4().hex[:8]}"
@@ -68,7 +95,7 @@ def test_concurrent_rpc_creates_only_one_user():
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
         def _call_rpc():
-            conn = _get_pg_conn()
+            conn = _get_pg_conn(wecom_db)
             conn.autocommit = True
             try:
                 cur = conn.cursor()
@@ -98,7 +125,7 @@ def test_concurrent_rpc_creates_only_one_user():
         )
 
         # 验证 3: DB 里只有 1 个 user + 1 个 mapping
-        conn = _get_pg_conn()
+        conn = _get_pg_conn(wecom_db)
         try:
             cur = conn.cursor()
             cur.execute("""
@@ -131,15 +158,15 @@ def test_concurrent_rpc_creates_only_one_user():
             conn.close()
 
     finally:
-        _cleanup(test_wecom_userid, test_corp_id)
+        _cleanup(wecom_db, test_wecom_userid, test_corp_id)
 
 
-def test_merge_rpc_migrates_all_refs():
+def test_merge_rpc_migrates_all_refs(wecom_db):
     """
     合并 RPC：drop_uids 的 credits/conversations/tasks 等都迁到 keep_uid，
     drop_uids 被删除。
     """
-    conn = _get_pg_conn()
+    conn = _get_pg_conn(wecom_db)
     conn.autocommit = False
     cur = conn.cursor()
 
@@ -159,6 +186,17 @@ def test_merge_rpc_migrates_all_refs():
                 keep_uid = uid
             else:
                 drop_uids.append(uid)
+        conn.commit()
+
+        # Real FK rows must move too; credits alone cannot prove reference migration.
+        for uid in drop_uids:
+            for table in ('conversations', 'image_generations', 'tasks', 'credit_transactions'):
+                cur.execute(f"INSERT INTO {table}(user_id) VALUES (%s)", (uid,))
+            cur.execute("INSERT INTO admin_action_logs(target_user_id) VALUES (%s)", (uid,))
+            cur.execute("INSERT INTO credits_history(user_id,change_amount) VALUES (%s,1)", (uid,))
+        org = str(uuid.uuid4())
+        for uid in [keep_uid, *drop_uids]:
+            cur.execute("INSERT INTO org_members(user_id,org_id) VALUES (%s,%s)", (uid, org))
         conn.commit()
 
         # 调合并 RPC
@@ -183,8 +221,19 @@ def test_merge_rpc_migrates_all_refs():
             (drop_uids,),
         )
         assert cur.fetchone()[0] == 0, "drop_uids 应已删除"
+        for table in ('conversations', 'image_generations', 'tasks', 'credit_transactions', 'credits_history'):
+            cur.execute(f"SELECT count(*) FROM {table} WHERE user_id=%s", (keep_uid,))
+            assert cur.fetchone()[0] == 2, table
+        cur.execute("SELECT count(*) FROM admin_action_logs WHERE target_user_id=%s", (keep_uid,))
+        assert cur.fetchone()[0] == 2
+        cur.execute("SELECT count(*) FROM org_members WHERE user_id=%s AND org_id=%s", (keep_uid, org))
+        assert cur.fetchone()[0] == 1
 
     finally:
+        conn.rollback()
+        for table in ('conversations', 'image_generations', 'tasks', 'credit_transactions', 'org_members'):
+            cur.execute(f"DELETE FROM {table} WHERE user_id=ANY(%s::uuid[])", ([keep_uid, *drop_uids],))
+        cur.execute("DELETE FROM admin_action_logs WHERE target_user_id=ANY(%s::uuid[])", ([keep_uid, *drop_uids],))
         # 清理 keep
         if keep_uid:
             cur.execute("DELETE FROM users WHERE id = %s;", (keep_uid,))

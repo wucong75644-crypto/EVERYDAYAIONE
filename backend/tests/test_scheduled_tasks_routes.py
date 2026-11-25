@@ -965,3 +965,14 @@ class TestParseNL:
         assert body["schedule_type"] == "weekly"
         assert body["weekdays"] == [1]
         assert body["cron_readable"] == "每周一 09:00"
+
+
+def test_legacy_parse_failure_preserves_form_with_422_and_no_schedule_write():
+    from services.scheduler.task_definition_input import TaskDefinitionInputError
+    db = FakeDB()
+    app = _build_app(db)
+    with patch('api.routes.scheduled_tasks.check_permission', AsyncMock(return_value=True)), patch(
+        'services.scheduler.task_nl_parser.parse_task_nl', AsyncMock(side_effect=TaskDefinitionInputError('已有内容已保留'))):
+        response = TestClient(app).post('/api/scheduled-tasks/parse', json={'text':'每周一上午给我订单日报'})
+    assert response.status_code == 422
+    assert response.json()['detail'] == '已有内容已保留'

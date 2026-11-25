@@ -206,6 +206,7 @@ class TestFullChainAlert:
             "哪些商品快缺货了",
             dag_mode=True,
             params={
+                "doc_type":"daily_stats",
                 "query_type": "alert",
                 "alert_type": "low_stock",
             },
@@ -391,6 +392,7 @@ class TestParamPassthroughToRPC:
             "采购超期了吗",
             dag_mode=True,
             params={
+                "doc_type":"daily_stats",
                 "query_type": "alert",
                 "alert_type": "purchase_overdue",
             },

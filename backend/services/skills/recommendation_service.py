@@ -28,8 +28,8 @@ async def available_capabilities(db, context):
     registry = build_legacy_catalog()
     checker = PermissionChecker(db)
     codes = {code for spec in registry.specs() for code in spec.policy_rules.required_permissions}
-    permissions = {code: bool(context.org_id) and code in PERMISSIONS and await checker.check(
-        context.actor_user_id, context.org_id, code) for code in sorted(codes)}
+    allowed = await checker.check_many(context.actor_user_id, context.org_id, codes & PERMISSIONS.keys())
+    permissions = {code: code in allowed for code in codes}
     snapshot = thaw(context.authorization_snapshot)
     snapshot["permissions"] = permissions
     context = replace(context, authorization_snapshot=snapshot)
