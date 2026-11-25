@@ -80,7 +80,7 @@ class TestInit:
     def test_stores_config(self):
         adapter = _make_adapter()
         assert adapter._api_key == "sk-test-key"
-        assert adapter._model_id == "qwen3.8-max"
+        assert adapter._model_id == "qwen3.8-flash"
         assert adapter._base_url == "https://dashscope.example.com/v1"
 
     def test_strips_trailing_slash(self):

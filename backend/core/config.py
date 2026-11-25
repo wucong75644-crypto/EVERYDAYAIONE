@@ -403,6 +403,7 @@ class Settings(BaseSettings):
         "context_summary_model", "context_summary_fallback_model", "intent_router_model",
         "intent_router_fallback_model", "kb_extraction_model", "kb_extraction_fallback_model",
         "image_enhance_model", "image_enhance_fallback_model", "agent_loop_model",
+        "ecom_image_planning_model", "ecom_image_planning_non_thinking_model",
         mode="before",
     )
     @classmethod

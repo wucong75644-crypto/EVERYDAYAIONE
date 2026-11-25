@@ -139,7 +139,7 @@ def test_planner_snapshots_delivered_appends_verbatim_with_stable_source_ids():
         'source_ref':'text_2','text':text,'source_kind':'user_append'}
 
 
-@pytest.mark.parametrize('model',['qwen3.8-max','qwen3.8-flash'])
+@pytest.mark.parametrize('model',['qwen3.8-flash'])
 def test_qwen_json_contract_is_explicit_and_invalid_formats_cannot_be_dropped(model):
     from services.adapters.dashscope.chat_adapter import DashScopeChatAdapter
     adapter=DashScopeChatAdapter(api_key='offline',model=model)
@@ -156,12 +156,12 @@ def test_invalid_history_selector_is_not_silently_repaired(ids):
         text_message_ids(ids,'current')
 
 
-@pytest.mark.parametrize('mode,page,expected', [('disabled',False,'qwen3.8-max'),
+@pytest.mark.parametrize('mode,page,expected', [('disabled',False,'qwen3.8-flash'),
     ('enabled',False,'openai/gpt-6.1-sol'),(None,False,'openai/gpt-6.1-sol'),
     ('disabled',True,'openai/gpt-6.1-sol')])
 def test_nonthinking_route_is_separate_config_and_does_not_mutate_shared_settings(mode,page,expected):
     service=planner();service.settings.ecom_image_planning_model='openai/gpt-6.1-sol'
-    service.settings.ecom_image_planning_non_thinking_model='qwen3.8-max';service.page_execution=page
+    service.settings.ecom_image_planning_non_thinking_model='qwen3.8-flash';service.page_execution=page
     model,registered=service._select_chat_model({'request_params':{'thinking_mode':mode}})
     assert model==expected and registered.model_id==expected
     assert service.settings.ecom_image_planning_model=='openai/gpt-6.1-sol'
@@ -336,7 +336,7 @@ async def test_unregistered_planner_model_rejected_before_database():
 
 
 @pytest.mark.parametrize('stage', [1, 2, 3])
-@pytest.mark.parametrize('model',['qwen3.8-max','qwen3.8-flash'])
+@pytest.mark.parametrize('model',['qwen3.8-flash'])
 async def test_qwen_planner_off_reaches_actual_adapter_and_keeps_image_input(monkeypatch, stage, model):
     from services.adapters.dashscope.chat_adapter import DashScopeChatAdapter
     from services.model_gateway import ModelGateway
@@ -809,7 +809,7 @@ async def test_off_profile_does_not_require_unused_on_model_or_its_kie_billing(o
     owner.conversation_id=str(uuid4());owner.execution_mode='interactive';owner._current_tool_call_id='planner'
     service.settings.ecom_image_planning_enabled=True
     service.settings.ecom_image_planning_model=on_model
-    service.settings.ecom_image_planning_non_thinking_model='qwen3.8-max'
+    service.settings.ecom_image_planning_non_thinking_model='qwen3.8-flash'
     service.settings.ecom_image_planning_input_credits_per_million=None
     service.settings.ecom_image_planning_output_credits_per_million=None
     saved=WorkflowBinding(kind='main_images',root_task_id=owner.task_id,window_task_id=owner.task_id,
@@ -823,7 +823,7 @@ async def test_off_profile_does_not_require_unused_on_model_or_its_kie_billing(o
     service.scope=SimpleNamespace(table=lambda _:Query())
     result=await service._run({'references':[]})
     assert result.error_message=='ECOM_PLAN_CONTINUATION_REQUIRED'
-    assert service.selected_model=='qwen3.8-max' and service.chat_thinking_mode=='disabled'
+    assert service.selected_model=='qwen3.8-flash' and service.chat_thinking_mode=='disabled'
     service._reserve.assert_not_awaited();service._finish.assert_not_awaited()
 
 
@@ -899,7 +899,7 @@ async def test_planning_does_not_silently_replace_a_frozen_user_count():
     owner.context_scope='user';owner.workspace_user_id=owner.user_id
     owner.conversation_id=str(uuid4());owner.execution_mode='interactive';owner._current_tool_call_id='planner'
     service.settings.ecom_image_planning_enabled=True
-    service.settings.ecom_image_planning_non_thinking_model='qwen3.8-max'
+    service.settings.ecom_image_planning_non_thinking_model='qwen3.8-flash'
     frozen=WorkflowBinding(kind='main_images',root_task_id=owner.task_id,window_task_id=owner.task_id,
         generation_run_id=str(uuid4()),intent='write',image_count=3)
     parent={'user_id':owner.user_id,'org_id':owner.org_id,'conversation_id':owner.conversation_id,
