@@ -150,7 +150,7 @@ class ScheduledTaskExecutor:
             from core.config import get_settings
 
             settings = get_settings()
-            model_id = getattr(settings, "agent_loop_model", None) or "qwen3.8-max"
+            model_id = getattr(settings, "agent_loop_model", None) or "qwen3.8-flash"
             pricing = DASHSCOPE_PRICING.get(model_id)
 
             if pricing:

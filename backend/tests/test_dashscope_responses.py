@@ -164,11 +164,11 @@ def test_upgrade_aliases_leave_deepseek_unchanged():
     from core.config import Settings
     from services.adapters.factory import get_model_config
     settings = Settings(_env_file=None, database_url="test", jwt_secret_key="test", memory_extraction_model="qwen3.5-plus", memory_filter_model="qwen3.5-flash")
-    assert settings.memory_extraction_model == "qwen3.8-max"
+    assert settings.memory_extraction_model == "qwen3.8-flash"
     assert settings.memory_filter_model == "qwen3.8-flash"
     assert settings.agent_loop_model == "deepseek-v4-pro"
     assert settings.dashscope_session_cache_enabled and settings.dashscope_builtin_tools_enabled
-    assert get_model_config("qwen3.5-plus").model_id == "qwen3.8-max"
+    assert get_model_config("qwen3.5-plus").model_id == "qwen3.8-flash"
     assert canonical_model_id("deepseek-v4-pro") == "deepseek-v4-pro"
 
 

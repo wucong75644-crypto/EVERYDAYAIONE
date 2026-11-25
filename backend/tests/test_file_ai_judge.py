@@ -285,11 +285,11 @@ class TestAdjudicateFailureChain:
         ):
             decision = await adjudicate(pool)
         assert decision.attempt_count == 1
-        assert decision.model_used == "qwen3.8-max"
+        assert decision.model_used == "qwen3.8-flash"
 
     @pytest.mark.asyncio
     async def test_third_attempt_succeeds(self):
-        """第 1、2 次失败，第 3 次仍使用 qwen3.8-max 成功。"""
+        """第 1、2 次失败，第 3 次仍使用 qwen3.8-flash 成功。"""
         pool = _mini_pool()
         responses = [
             json.JSONDecodeError("bad", "doc", 0),
@@ -308,8 +308,8 @@ class TestAdjudicateFailureChain:
         with patch("services.agent.file_ai_judge._call_llm", new=mock_call):
             decision = await adjudicate(pool)
         assert decision.attempt_count == 3
-        assert decision.model_used == "qwen3.8-max"
-        assert calls == ["qwen3.8-max", "qwen3.8-max", "qwen3.8-max"]
+        assert decision.model_used == "qwen3.8-flash"
+        assert calls == ["qwen3.8-flash", "qwen3.8-flash", "qwen3.8-flash"]
 
     @pytest.mark.asyncio
     async def test_three_attempts_all_fail_raises_file_too_complex(self):
@@ -418,12 +418,12 @@ async def test_qwen38_json_request_keeps_single_sdk_attempt_and_disables_thinkin
     factory = Mock(return_value=SimpleNamespace(chat=SimpleNamespace(
         completions=SimpleNamespace(create=create))))
     monkeypatch.setattr(openai, "AsyncOpenAI", factory)
-    result = await _call_llm("本地结构化解析测试", "qwen3.8-max", 90)
+    result = await _call_llm("本地结构化解析测试", "qwen3.8-flash", 90)
     assert result == _VALID_LLM_OUTPUT
     assert factory.call_args.kwargs["max_retries"] == 0
     create.assert_awaited_once()
     request = create.call_args.kwargs
-    assert request["model"] == "qwen3.8-max"
+    assert request["model"] == "qwen3.8-flash"
     assert request["response_format"] == {"type": "json_object"}
     assert request["extra_body"] == {"enable_thinking": False}
     assert request["timeout"] == 90

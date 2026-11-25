@@ -4,7 +4,7 @@
   adjudicate(evidence) → AIDecision  # 成功
                        → raise FileAnalyzeError  # 三次全挂
 
-失败链：qwen3.8-max（default → simplified → default），最多三次尝试
+失败链：qwen3.8-flash（default → simplified → default），最多三次尝试
 
 结构化错误：见 §5.1 FileAnalyzeError + §5.4 ERROR_CATEGORIES
 
@@ -36,11 +36,11 @@ from services.agent.file_evidence import EvidencePool
 # ── 失败链配置 ──
 
 _ATTEMPTS: list[dict] = [
-    # 模型统一为 qwen3.8-max；保留既有三次尝试、提示词变体及超时上限。
+    # 模型统一为 qwen3.8-flash；保留既有三次尝试、提示词变体及超时上限。
     # 新模型的真实耗时与费用尚未验收，不沿用旧模型的性能推断。
-    {"model": "qwen3.8-max", "timeout": 90, "prompt_variant": "default"},
-    {"model": "qwen3.8-max", "timeout": 120, "prompt_variant": "simplified"},
-    {"model": "qwen3.8-max", "timeout": 180, "prompt_variant": "default"},
+    {"model": "qwen3.8-flash", "timeout": 90, "prompt_variant": "default"},
+    {"model": "qwen3.8-flash", "timeout": 120, "prompt_variant": "simplified"},
+    {"model": "qwen3.8-flash", "timeout": 180, "prompt_variant": "default"},
 ]
 
 

@@ -202,8 +202,8 @@ export const CHAT_MODELS: UnifiedModel[] = [
     credits: 0,
   },
   {
-    id: 'qwen3.8-max',
-    name: 'Qwen 3.8 Max',
+    id: 'qwen3.8-flash',
+    name: 'Qwen 3.8 Flash',
     type: 'chat',
     description: '百万上下文 | 联网搜索与网页阅读',
     capabilities: {
