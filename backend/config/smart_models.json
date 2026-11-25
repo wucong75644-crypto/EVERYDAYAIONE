@@ -2,8 +2,8 @@
   "chat": {
     "models": [
       {
-        "id": "qwen3.8-max",
-        "description": "阿里千问3.8 Max，百万上下文，支持图片理解、内置联网搜索与网页抓取。默认千问选项，适合通用对话、长文分析、写作、翻译。网页抓取需开启思考模式",
+        "id": "qwen3.8-flash",
+        "description": "阿里千问3.8 Flash，百万上下文，支持图片理解、内置联网搜索与网页抓取。默认千问选项，适合通用对话、长文分析、写作、翻译。网页抓取需开启思考模式",
         "keywords": ["qwen", "千问", "通义", "阿里"],
         "priority": 1,
         "capabilities": ["chat", "analysis", "writing", "translation", "search"],
@@ -202,7 +202,7 @@
         "supports_thinking": true
       }
     ],
-    "default": "qwen3.8-max"
+    "default": "qwen3.8-flash"
   },
   "image": {
     "models": [

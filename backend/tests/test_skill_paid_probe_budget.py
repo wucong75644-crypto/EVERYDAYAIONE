@@ -6,7 +6,7 @@ from tests.fixtures.skill_paid_probe import SkillProbeLedger,ApprovedSkillTransp
 
 
 def body(text='hello'):
-    return {'model':'qwen3.8-max','messages':[{'role':'user','content':text}],
+    return {'model':'qwen3.8-flash','messages':[{'role':'user','content':text}],
         'max_tokens':6000,'stream':True,'enable_thinking':False}
 
 
@@ -48,13 +48,13 @@ async def test_native_gateway_adapter_stream_settles_even_when_consumer_breaks_a
             {'choices':[{'index':0,'delta':{},'finish_reason':'stop'}],'usage':{'prompt_tokens':10,'completion_tokens':20}}]
         data=''.join('data: '+json.dumps(p)+'\n\n' for p in packets)+'data: [DONE]\n\n'
         return httpx.Response(200,content=data,headers={'content-type':'text/event-stream'})
-    adapter=DashScopeChatAdapter('synthetic-never-network','qwen3.8-max',builtin_tools_enabled=False)
+    adapter=DashScopeChatAdapter('synthetic-never-network','qwen3.8-flash',builtin_tools_enabled=False)
     adapter._client=httpx.AsyncClient(base_url='https://dashscope.aliyuncs.com/compatible-mode/v1',transport=ApprovedSkillTransport(book,'reference',httpx.MockTransport(respond)))
     class Events:
         def publish(self,*args,**kwargs):pass
     gateway=ModelGateway(adapter_factory=lambda *_args,**_kwargs:adapter,event_publisher=Events())
     try:
-        session=gateway.open_chat(ModelCallRequest(model_id='qwen3.8-max'))
+        session=gateway.open_chat(ModelCallRequest(model_id='qwen3.8-flash'))
         chunks=[c async for c in session.stream_chat(messages=[{'role':'user','content':'规划'}],thinking_mode='disabled',max_tokens=6000,tools=[])]
         assert ''.join(c.content or '' for c in chunks)=='已规划'
         state=json.loads(book.path.read_text());assert state['calls'][0]['status']=='received'
