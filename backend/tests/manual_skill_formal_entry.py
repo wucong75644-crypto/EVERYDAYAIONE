@@ -89,6 +89,10 @@ def install_entry_schema(dsn,root,settings,monkeypatch):
 @pytest.mark.asyncio
 @pytest.mark.parametrize('task_db',['everydayai'],indirect=True,scope='module')
 async def test_formal_entry_real_model_and_supplier_chain(content_db,monkeypatch):
+    await formal_entry_acceptance(content_db, monkeypatch)
+
+
+async def formal_entry_acceptance(content_db, monkeypatch, *, customer_suite=None):
     async def suite(env):
         from core.db_scope import AsyncScopedDatabaseClient,ScopedDatabaseClient,DatabaseScope,DatabaseAccessKind
         from core.local_db import AsyncLocalDBClient
@@ -161,7 +165,8 @@ async def test_formal_entry_real_model_and_supplier_chain(content_db,monkeypatch
         from services.intent_router import IntentRouter
         route_transport=IntentRouter.call_tool_model
         async def capture_route_transport(self,**kwargs):
-            row={'kind':'formal_router_transport','input':kwargs['text']}
+            row={'kind':'formal_router_transport','input':kwargs['text'],
+                 'system_prompt':kwargs.get('system_prompt'),'tools':kwargs.get('tools')}
             wire.append(row)
             try:
                 value=await route_transport(self,**kwargs)
@@ -250,7 +255,9 @@ async def test_formal_entry_real_model_and_supplier_chain(content_db,monkeypatch
             if selection:body['selected_skill']=selection
             response=await http.post(f"/conversations/{facts['conv']}/messages/generate",json=body)
             assert response.status_code==200,response.text
-            output=response.json()['assistant_message']['id']
+            reply=response.json()
+            assert 'assistant_message' in reply, {'expected':'independent serial turn', 'actual':reply}
+            output=reply['assistant_message']['id']
             claim=await service.claim_serial(facts['conv']);assert claim
             facts.update(task=claim.task_id,turn=claim.turn_id,token=claim.execution_token,message=claim.input_message_id)
             row={'request':text,'task_id':facts['task'],'selection':selection,'status':'running',
@@ -296,6 +303,8 @@ async def test_formal_entry_real_model_and_supplier_chain(content_db,monkeypatch
                 assert any(append['message'] in str(w.get('body',{})) for w in wire[offset:] if w.get('kind')=='formal_model_request')
             return row
         try:
+            if customer_suite is not None:
+                return await customer_suite({**env, 'formal': locals()})
             if os.environ.get('SKILL_FORMAL_SMOKE')=='1':
                 await run(f,[TextPart(text='你好，请直接回复测试成功，不使用工具。')]);return
             if os.environ.get('SKILL_FORMAL_TEXT_CONDITIONS')=='1':
@@ -507,7 +516,7 @@ async def test_formal_entry_real_model_and_supplier_chain(content_db,monkeypatch
             await http.aclose()
             await asyncclient.close()
     await _real_supplier_acceptance(content_db,monkeypatch,suite=suite)
-    if (os.environ.get('SKILL_FORMAL_IMAGE_MODEL') and os.environ.get('SKILL_FORMAL_AUTHOR_ONLY')!='1'
+    if (customer_suite is None and os.environ.get('SKILL_FORMAL_IMAGE_MODEL') and os.environ.get('SKILL_FORMAL_AUTHOR_ONLY')!='1'
             and os.environ.get('SKILL_FORMAL_TEXT_CONDITIONS')!='1'):
         assert_image2_transport(json.loads(Path(os.environ['SKILL_SUPPLIER_EVIDENCE']).joinpath('evidence.json').read_text()))
 

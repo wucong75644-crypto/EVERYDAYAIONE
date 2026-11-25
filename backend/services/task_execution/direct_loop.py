@@ -228,7 +228,11 @@ def context_message(runtime,*,state=None):
         for artifact in facts['previous_task'].get('artifacts',[]):artifact.pop('inline_text',None)
     from .content_objects import TAG, catalog, with_item_sources
     facts['content_objects'] = catalog(state, for_model=True)
-    if source is not None and state is None:
+    from .request_resolution import model_context
+    request_context = model_context(runtime)
+    if request_context is not None:
+        facts['current_request'] = request_context
+    if source is not None and state is None and (request_context or {}).get('catalog_version') != 2:
         source_state = TaskState.model_validate(source['state'])
         older = getattr(runtime, 'task_content_groups', ())
         facts['previous_content_objects'] = catalog(source_state, for_model=True, include_image_markers=bool(older))
@@ -239,6 +243,10 @@ def context_message(runtime,*,state=None):
             operations=[v.model_dump(mode='json') for v in state.operations],
             artifacts=[v.model_dump(mode='json',exclude={'inline_text'}) for v in state.artifacts],
             completed_call_steps=[v.step_id for v in state.results])
+    if (request_context or {}).get('catalog_version') == 2:
+        facts.pop('previous_task', None)
+        if state is not None:
+            facts['content_objects'] = [g for g in request_context['saved_groups'] if g['root_task_id'] == str(state.root_task_id)]
     artifacts = facts['previous_task']['artifacts'] if 'previous_task' in facts else facts.get('artifacts', ())
     if isinstance(artifacts, list):
         artifacts[:] = [artifact for artifact in artifacts if TAG not in artifact.get('validations', ())]
@@ -248,6 +256,10 @@ def context_message(runtime,*,state=None):
 def schemas(runtime,controller=None):
     from .content_objects import save_schema
     result=[PLAN_SCHEMA, save_schema(runtime)]
+    from .request_resolution import context, RESPONSE_SCHEMA, selection_schema
+    if context(runtime) is not None:
+        result.append(copy.deepcopy(RESPONSE_SCHEMA))
+        result.append(selection_schema(runtime))
     if runtime.task_execution_state is None and followup_source(runtime):result.append(RESUME_SCHEMA)
     if controller is not None:
         for schema in controller.schemas():
@@ -646,6 +658,13 @@ async def reuse_images(runtime,calls):
 def content_followup_state(runtime):
     source = followup_source(runtime)
     if runtime.task_execution_state is None and source is not None:
+        from .request_resolution import context, binding
+        selected = binding(runtime)
+        if context(runtime) is not None and selected is not None:
+            target = selected['target']
+            if (selected['status'] != 'resolved' or target['kind'] != 'content'
+                    or target.get('root_task_id') != source['state']['root_task_id']):
+                return None  # A recoverable old task is not this request's base.
         return TaskState.model_validate(source['state'])
     return None
 

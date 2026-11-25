@@ -88,6 +88,7 @@ class ChatGenerationExecutor:
         )
         chat_phase('executor.inputs', task_id=claim.task_id, turn_id=claim.turn_id, attempt=claim.execution_attempt)
         replay_context = await self._load_replay_context(task, claim, store=replay_store)
+        request_context = (replay_context or {}).get('_request_context_v1')
         from core.config import get_settings
         if (not (replay_context or {}).get('_task_execution') and not (replay_context or {}).get('_task_followup')
                 and not (replay_context or {}).get('_task_requirement_review') and self._replay_checkpoint_store is not None
@@ -103,9 +104,13 @@ class ChatGenerationExecutor:
             model_directed = (saved_policy['input'].get('model_directed', False) if saved_policy else
                               getattr(get_settings(), 'agent_task_model_directed_enabled', False))
             if model_directed and not (replay_context or {}).get('_task_direct_plan'):
-                response, plans = await asyncio.gather(
+                response, plans, recent = await asyncio.gather(
                     followup_read, followup_db.rpc('read_agent_working_plan_candidates', args).execute(),
+                    followup_db.rpc('read_agent_request_context', args).execute(),
                 )
+                if not recent or recent.data.get('version') != 1 or recent.data.get('input_message_id') != claim.input_message_id:
+                    raise RuntimeError('REQUEST_CONTEXT_READ_UNCONFIRMED')
+                request_context = recent.data
                 if not plans or plans.data.get('outcome') not in {'found', 'not_found'}:
                     raise RuntimeError('TASK_WORKING_PLAN_CANDIDATES_UNCONFIRMED')
                 runtime.task_plan_candidates = {
@@ -188,6 +193,8 @@ class ChatGenerationExecutor:
         runtime.task_user_change_capture = capture_change
         import copy
         runtime.checkpoint_base=copy.deepcopy(replay_context or {})
+        if request_context is not None:
+            runtime.checkpoint_base['_request_context_v1'] = copy.deepcopy(request_context)
         from services.task_execution.requirement_changes import restore as restore_revision_review
         runtime.task_revision_review=restore_revision_review((replay_context or {}).get('_task_revision_review'),runtime.task_execution_state)
         async def read_pending_changes():
