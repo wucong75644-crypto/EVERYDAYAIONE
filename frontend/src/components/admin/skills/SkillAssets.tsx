@@ -28,11 +28,26 @@ export function SkillAssets({ assets }: { assets: SkillAssetSummary[] }) {
   return <section className="mt-5 border-t border-[var(--s-border-default)] pt-4" aria-label="附件摘要">
     <h3 className="text-sm font-medium">附件与模板（{assets.length}）</h3>
     <ul className="mt-3 space-y-3">{assets.map(asset => <li key={asset.id} className="text-sm">
-      <p className="font-medium">{asset.name}<span className="ml-2 text-xs font-normal text-[var(--s-text-tertiary)]">{kinds[asset.kind]} · {(asset.file_format || asset.format).toUpperCase()}{(asset.file_bytes ?? asset.bytes) !== undefined && ` · ${asset.file_bytes ?? asset.bytes} 字节`}</span></p>
+      <p className="font-medium">{asset.name}<span className="ml-2 text-xs font-normal text-[var(--s-text-tertiary)]">{kinds[asset.kind]}{asset.loading === 'on_demand' ? ' · 按需读取' : ''} · {(asset.file_format || asset.format).toUpperCase()}{(asset.file_bytes ?? asset.bytes) !== undefined && ` · ${asset.file_bytes ?? asset.bytes} 字节`}</span></p>
       <p className="mt-1 text-[var(--s-text-secondary)]">{asset.summary}</p>
     </li>)}</ul>
-    <p className="mt-3 text-xs text-[var(--s-text-tertiary)]">仅在操作说明明确引用且容量允许时提供附件内容。</p>
+    <p className="mt-3 text-xs text-[var(--s-text-tertiary)]">仅在操作说明明确引用且容量允许时提供附件内容；标记为按需的资料在当前阶段需要时读取。</p>
   </section>;
+}
+
+function SkillContextSize({ content }: { content: DraftContent }) {
+  const bytes = (text: string) => new TextEncoder().encode(text).length;
+  const body = bytes(content.body);
+  let eager = 0, deferred = 0;
+  for (const asset of content.assets || []) {
+    if (!content.body.includes(`[[asset:${asset.id}]]`)) continue;
+    if (asset.loading === 'on_demand') deferred += bytes(asset.content);
+    else eager += bytes(asset.content);
+  }
+  const size = (value: number) => `${(value / 1024).toFixed(1)} KiB`;
+  return <p role="status" aria-label="Skill 上下文体积" className="text-xs text-[var(--s-text-tertiary)]">
+    正文 {size(body)} · 立即引用 {size(eager)} · 按需引用 {size(deferred)}。按原始文字估算，模板展开和模型分词会改变实际容量。
+  </p>;
 }
 
 export function SkillAssetEditor({ content, busy, onChange, onUpload }: {
@@ -46,6 +61,7 @@ export function SkillAssetEditor({ content, busy, onChange, onUpload }: {
     assets: assets.map((asset, i) => i === index ? { ...asset, ...patch } : asset) });
   return <section className="space-y-3 border-t border-[var(--s-border-default)] pt-4" aria-label="编辑附件">
     <h3 className="text-sm font-medium">附件与模板（可选）</h3>
+    <SkillContextSize content={content} />
     <p className="text-xs text-[var(--s-text-tertiary)]">上传方法说明、参考资料、模板或示例文件，无需填写附件内容。点击“在操作说明中引用”，并在操作说明里写清文件的用途。</p>
     <input ref={fileInput} type="file" multiple hidden aria-label="选择附件文件" disabled={busy || assets.length >= 16 || !onUpload}
       accept=".docx,.pdf,.xlsx,.txt,.md,.csv,.json" onChange={event => {
@@ -73,6 +89,11 @@ export function SkillAssetEditor({ content, busy, onChange, onUpload }: {
       <fieldset disabled={busy} className="mt-3 space-y-3">
         <Input label="附件名称" value={asset.name} maxLength={120} placeholder="例如：日报格式" onChange={e => update(index, { name: e.target.value })} />
         <Input label="附件说明（选填）" value={asset.summary} maxLength={500} placeholder="例如：规定日报的标题和内容顺序" onChange={e => update(index, { summary: e.target.value || `参考资料：${asset.name}` })} />
+        <label className="block text-sm">读取方式<select aria-label={`读取方式：${asset.name || asset.id}`} className={`${inputVariants()} mt-1`}
+          value={asset.loading || 'eager'} onChange={e => update(index, { loading: e.target.value as 'eager' | 'on_demand' })}>
+          <option value="eager">立即加载（默认）</option><option value="on_demand">当前阶段需要时读取</option>
+        </select></label>
+        <p className="text-xs text-[var(--s-text-tertiary)]">核心规则请保留在正文或立即加载。较长的参考资料可按需读取；图片、视频和计划任务会完整加载引用的资料。</p>
         <label className="block text-sm">附件类型<select className={`${inputVariants()} mt-1`} value={asset.kind} onChange={e => update(index, { kind: e.target.value as SkillAssetDraft['kind'] })}>{Object.entries(kinds).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
         {asset.source ? <label className="block text-sm">读取内容（预览）<textarea readOnly className={`${inputVariants()} mt-1 min-h-40`} value={asset.content} /></label>
           : asset.kind === 'template' ? <div><label htmlFor={`skill-asset-${asset.id}`} className="mb-2 block text-sm">附件内容</label>

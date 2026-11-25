@@ -324,6 +324,7 @@ async def synthesize_wrap_up(
     timeout: float = _WRAP_UP_TIMEOUT,
     *,
     adapter: Any = None,
+    skill_context: bool = False,
 ) -> str | None:
     """Final Synthesis Turn — 不传 tools,强制纯文本输出。
 
@@ -352,6 +353,7 @@ async def synthesize_wrap_up(
         text = ""
         async for chunk in model_gateway.stream_chat(
             messages=slim, tools=None, temperature=0.3,
+            **({"skill_context": True} if skill_context else {}),
         ):
             if chunk.content:
                 text += chunk.content

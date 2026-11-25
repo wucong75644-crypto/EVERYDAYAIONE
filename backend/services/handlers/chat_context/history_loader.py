@@ -270,6 +270,7 @@ async def build_context_messages(
         owner_id, owner_scope, owner_loaded = None, "user", False
         first_assistant_seen = False
         latest_marker: Optional[Dict[str, Any]] = None
+        legacy_input_removed = False
 
         for batch in range(5):
             query = _build_history_query(db, conversation_id, base_revision)
@@ -286,7 +287,15 @@ async def build_context_messages(
             rows = result.data if result else None
             if not rows:
                 break
-            for row in rows:
+            for index, row in enumerate(rows):
+                # Compare the persisted input before source locators are added.
+                # Remove only the newest occurrence: repeated "继续" is history.
+                if base_revision is None and batch == 0 and index == 0 and row["role"] == "user":
+                    raw_text = extract_text_from_content(row.get("content"))
+                    raw_text = re.sub(r"^\[\d{2}-\d{2} \d{2}:\d{2}\] ", "", raw_text).strip()
+                    if raw_text == current_text.strip():
+                        legacy_input_removed = True
+                        continue
                 if row.get("status")=="failed" and (row.get("generation_params") or {}).get("origin")!="chat_image":
                     continue
                 parts = content_parts(row.get("content"))
@@ -323,7 +332,7 @@ async def build_context_messages(
                 break
 
         context = _finalize_history(
-            context, latest_marker, current_text, base_revision is None,
+            context, latest_marker, current_text, base_revision is None and not legacy_input_removed,
         )
         if context:
             logger.debug(

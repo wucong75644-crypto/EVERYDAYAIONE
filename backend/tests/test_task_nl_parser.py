@@ -19,6 +19,7 @@ from services.scheduler.task_nl_parser import (  # noqa: E402
     _fallback,
     parse_task_nl,
 )
+from services.scheduler.task_definition_input import TaskDefinitionInputError
 
 
 # ════════════════════════════════════════════════════════════════
@@ -52,27 +53,10 @@ class TestExtractJson:
 # ════════════════════════════════════════════════════════════════
 
 class TestFallback:
-    def test_daily_default(self):
-        r = _fallback("查销售数据")
-        assert r["schedule_type"] == "daily"
-        assert r["time_str"] == "09:00"
-
-    def test_weekly_keyword(self):
-        r = _fallback("每周一推业绩")
-        assert r["schedule_type"] == "weekly"
-        assert r["name"] == "周报推送"
-
-    def test_monthly_keyword(self):
-        r = _fallback("每月1号推月报")
-        assert r["schedule_type"] == "monthly"
-
-    def test_once_keyword(self):
-        r = _fallback("今晚10点推订单")
-        assert r["schedule_type"] == "once"
-
-    def test_daily_keyword(self):
-        r = _fallback("每日推销售日报")
-        assert r["name"] == "每日报表"
+    @pytest.mark.parametrize('text', ['查销售数据','每周一推业绩','每月1号推月报','今晚10点推订单','每日推销售日报'])
+    def test_no_schedule_is_fabricated_after_parse_failure(self, text):
+        with pytest.raises(TaskDefinitionInputError, match='已有内容已保留'):
+            _fallback(text)
 
 
 # ════════════════════════════════════════════════════════════════
@@ -104,16 +88,13 @@ class TestParseTaskNl:
             "services.scheduler.task_nl_parser._call_llm",
             new=AsyncMock(return_value=None),
         ):
-            result = await parse_task_nl("每天9点推日报")
-        # 兜底
-        assert result["schedule_type"] == "daily"
-        assert result["name"] == "每日报表"
+            with pytest.raises(TaskDefinitionInputError, match="未能解析任务安排"):
+                await parse_task_nl("每天9点推日报")
 
     @pytest.mark.asyncio
     async def test_empty_input(self):
-        result = await parse_task_nl("")
-        # 不应崩溃
-        assert "schedule_type" in result
+        with pytest.raises(TaskDefinitionInputError):
+            await parse_task_nl("")
 
     @pytest.mark.asyncio
     async def test_llm_partial_response_filled_with_defaults(self):
@@ -131,3 +112,63 @@ class TestParseTaskNl:
         assert result["schedule_type"] == "weekly"
         assert "name" in result  # 兜底填了
         assert "prompt" in result
+
+
+@pytest.mark.asyncio
+async def test_parser_uses_configured_gateway_and_closes_session(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+    from services.scheduler import task_nl_parser as mod
+    seen={}
+    async def stream(**kwargs):
+        seen.update(kwargs)
+        yield SimpleNamespace(content='{"schedule_type":"weekly",')
+        yield SimpleNamespace(content='"time_str":"09:00","weekdays":[1]}')
+    session=SimpleNamespace(model_id='configured-semantic-model',stream_chat=stream,close=AsyncMock())
+    gateway=MagicMock(); gateway.open_chat.return_value=session
+    monkeypatch.setattr(mod,'get_model_gateway',lambda:gateway)
+    monkeypatch.setattr(mod.settings,'dashscope_api_key','test')
+    monkeypatch.setattr(mod.settings,'intent_router_fallback_model','configured-semantic-model')
+    result=await mod.parse_task_nl('每个礼拜一早上九点整理销售情况')
+    assert result['weekdays']==[1] and result['time_str']=='09:00'
+    request=gateway.open_chat.call_args.args[0]
+    assert request.model_id=='configured-semantic-model' and request.retry_policy is None
+    assert request.timeout==mod.settings.intent_router_timeout
+    assert seen['thinking_mode']=='disabled' and seen['max_tokens']==300
+    session.close.assert_awaited_once()
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('error',[RuntimeError('429 limit_requests'),RuntimeError('provider unavailable')])
+async def test_gateway_failure_preserves_form_without_fabricating_task(monkeypatch,error):
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+    from services.scheduler import task_nl_parser as mod
+    async def stream(**kwargs):
+        raise error
+        yield
+    session=SimpleNamespace(model_id='configured',stream_chat=stream,close=AsyncMock())
+    gateway=MagicMock(); gateway.open_chat.return_value=session
+    monkeypatch.setattr(mod,'get_model_gateway',lambda:gateway)
+    monkeypatch.setattr(mod.settings,'dashscope_api_key','test')
+    with pytest.raises(TaskDefinitionInputError,match='已有内容已保留'):
+        await mod.parse_task_nl('明早九点整理库存')
+    gateway.open_chat.assert_called_once()
+    session.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_parser_cancellation_is_not_converted_to_a_new_schedule(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+    from services.scheduler import task_nl_parser as mod
+    async def stream(**kwargs):
+        raise asyncio.CancelledError()
+        yield
+    session=SimpleNamespace(model_id='configured',stream_chat=stream,close=AsyncMock())
+    gateway=MagicMock(); gateway.open_chat.return_value=session
+    monkeypatch.setattr(mod,'get_model_gateway',lambda:gateway)
+    monkeypatch.setattr(mod.settings,'dashscope_api_key','test')
+    with pytest.raises(asyncio.CancelledError):
+        await mod.parse_task_nl('明早九点整理库存')
+    session.close.assert_awaited_once()

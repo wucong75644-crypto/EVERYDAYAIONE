@@ -22,7 +22,7 @@ KNOWN_MODEL_IDS = frozenset([
     "deepseek-v4-flash",
     "deepseek-v3.2",
     "deepseek-r1",
-    "qwen3.8-max",
+    "qwen3.8-flash",
     "kimi-k2.5",
     "glm-5",
     "openai/gpt-4.1",

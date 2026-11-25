@@ -112,6 +112,22 @@ async def test_advisory_tail_passes_once_without_paid_repair():
     service._save_attempt.assert_not_awaited()
 
 
+async def test_real_array_element_errors_repair_one_field_without_shifting_indices():
+    from tests.ecommerce_design_fixtures import design_fixture
+    original,evidence,refs=design_fixture(3)
+    broken=deepcopy(original)
+    broken['images'][2]['fact_ids'] += [None,7]
+    del broken['images'][2]['reference_usage']
+    paths=[['images',2,'fact_ids'],['images',2,'reference_usage']]
+    patch={'patches':[{'path':path,'value':original['images'][2][path[-1]]} for path in paths],
+           'review_records':original['review_records']}
+    service=planner();service._call=AsyncMock(side_effect=[(json.dumps(broken),{}),(json.dumps(patch),{})])
+    saved,usage=await run_stage(service,evidence,refs)
+    assert [image['design'] for image in saved['images']]==original['images']
+    assert {tuple(p) for p in usage['repair_paths']}=={tuple(p) for p in paths}
+    assert service._call.await_count==2
+
+
 @pytest.mark.parametrize('defect', ['missing_field', 'wrong_position', 'missing_position'])
 async def test_single_field_repair_keeps_other_images_and_receives_only_affected_draft(defect):
     from tests.ecommerce_design_fixtures import design_fixture
@@ -171,6 +187,49 @@ async def test_syntax_repair_has_raw_first_draft_instead_of_starting_over():
     body = json.loads(service._call.await_args_list[1].args[4][1]['content'][0]['text'])
     assert body['previous_stage_three_output'] == text[:-1]
     assert 'repair_targets' not in body
+
+
+@pytest.mark.parametrize('empty', ['[]', '{}', 'null'])
+@pytest.mark.parametrize('restart', [False, True])
+async def test_empty_completed_native_reply_has_no_design_to_patch(empty, restart):
+    from tests.ecommerce_design_fixtures import design_fixture
+    value, evidence, refs = design_fixture(3)
+    if restart:
+        evidence['stage_drafts'] = {'3': {'output': empty, 'issues': [],
+            'validation_error': 'PLANNER_JSON_OBJECT_REQUIRED', 'delivery_version': DELIVERY_VERSION}}
+    service = planner()
+    service._call = AsyncMock(side_effect=([(empty, {})] if not restart else []) + [(json.dumps(value), {})])
+    saved, _ = await run_stage(service, evidence, refs)
+    body = json.loads(service._call.await_args.args[4][1]['content'][0]['text'])
+    assert 'previous_stage_three_output' not in body and 'repair_targets' not in body
+    assert body['product_selling_points'] == evidence['product_selling_points']
+    assert body['visual_direction'] == evidence['visual_direction']
+    assert set(body['output_json_schema']['properties']) == set(value)
+    assert [image['design'] for image in saved['images']] == value['images']
+    assert '没有逐图设计正文' in service._call.await_args.args[3]
+    if not restart:
+        assert service._save_attempt.await_args.kwargs['draft']['output'] is None
+
+
+async def test_empty_native_replies_still_stop_at_original_attempt_limit():
+    from tests.ecommerce_design_fixtures import design_fixture
+    _, evidence, refs = design_fixture(3)
+    service = planner()
+    service._call = AsyncMock(return_value=('[]', {}))
+    with pytest.raises(ValueError, match='PLANNER_IMAGE_JSON_INVALID'):
+        await run_stage(service, evidence, refs)
+    assert service._call.await_count == service._save_attempt.await_count == 3
+
+
+async def test_empty_product_reply_is_not_frozen_as_an_existing_analysis():
+    service = planner()
+    service._call = AsyncMock(side_effect=[('[]', {}), ('{"status":"ready"}', {})])
+    evidence = {'input_snapshot': {'references': [], 'messages': []}, 'product_schema': {}}
+    result, _ = await service._stage({'id': str(uuid4())}, 'lease', 1, 'rules', wrapper(1), evidence, [], [], [])
+    body = json.loads(service._call.await_args.args[4][1]['content'][0]['text'])
+    assert result == {'status': 'ready'}
+    assert 'previous_stage_output' not in body
+    assert '没有本阶段有效正文' in service._call.await_args.args[3]
 
 
 @pytest.mark.parametrize('stage', [1, 2, 3])
@@ -256,3 +315,15 @@ async def test_known_truncation_is_not_a_completed_planner_stage(monkeypatch,sta
         await service._call({'id':str(uuid4())},'lease',stage,'rules',[])
     assert service._finish.await_args.args[5]=='uncertain'
     session.close.assert_awaited_once()
+
+
+def test_native_ready_delivery_preserves_all_execution_text_and_checks_frozen_hashes():
+    from services.agent.image.ecommerce_planner.delivery import render_ready_plan
+    from services.agent.image.ecommerce_planner.contracts import text_hash
+    original='  保留原图。\r\n负面：不要拉伸。  '
+    row={'status':'ready','items':[{'position':i,'name':f'方案{i}','request_text':original,
+        'request_text_sha256':text_hash(original)} for i in (1,2,3)]}
+    text=render_ready_plan(row)
+    assert text.count(original)==3 and text.startswith('## 1. 方案1\n\n')
+    row['items'][1]['request_text']='篡改正文'
+    with pytest.raises(ValueError,match='CONTENT_CHANGED'):render_ready_plan(row)

@@ -9,6 +9,7 @@ from .contracts import LABELS, source_id, text_hash
 from .designs import DesignValidationError, validate_designs
 
 ASSEMBLY_VERSION = "fixed-frame.v3"
+CLEAN_ASSEMBLY_VERSION = "image-prompt.v1"
 FIDELITY = "商品按参考图真实比例等比例缩放，排版围绕实际商品形状安排，不拉伸、压扁、增厚或改变部件比例。"
 NEGATIVE = "排除商品拉伸、压扁、增厚、部件比例改变及透视失真；不得编造商品结构、原印刷、材质性能或附赠销售内容。"
 CONTENT_FIELDS = ("scene", "layout", "props_and_decoration", "lighting", "text_layout", "product_preservation", "execution_constraints")
@@ -32,7 +33,13 @@ def _check_fixed_conflicts(draft, snapshot):
         raise DesignValidationError(issues)
 
 
-def assemble_designs(value, snapshot, product, visual_direction=None):
+def assemble_designs(value, snapshot, product, visual_direction=None, *, assembly_version=ASSEMBLY_VERSION):
+    # Older page plans used this manifest label for the same v3 assembler.
+    if assembly_version == "ecom-fixed-frame.v3":
+        assembly_version = ASSEMBLY_VERSION
+    if assembly_version not in {ASSEMBLY_VERSION, CLEAN_ASSEMBLY_VERSION}:
+        raise ValueError("PLANNER_ASSEMBLY_VERSION_UNSUPPORTED")
+    clean = assembly_version == CLEAN_ASSEMBLY_VERSION
     draft = validate_designs(value, snapshot, product)
     if draft["status"] != "ready":
         return draft
@@ -47,7 +54,7 @@ def assemble_designs(value, snapshot, product, visual_direction=None):
     language = snapshot.get("language") or "跟随用户要求"
     task = f"生成一张{kind}。目标平台：{platform}；新增文字语言：{language}；画布比例：{target['aspect_ratio']}；清晰度参数：{target.get('resolution') or '模型默认'}。"
     shared = ""
-    if visual_direction is not None:
+    if visual_direction is not None and not clean:
         from .format_delivery import visual_sections
         shared = ("\n整套共同边界（第二阶段原文）：\n" + visual_sections(visual_direction)[7]
             + "\n在这些共同原则内执行本张已确定的画面；可选建议与变化范围不表示添加全部元素或重新策划。")
@@ -55,7 +62,7 @@ def assemble_designs(value, snapshot, product, visual_direction=None):
     from services.handlers.chat_image_request import validate_single_image_request
     for design in draft["images"]:
         usages = {use["number"]: use["usage"] for use in design["reference_usage"]}
-        reference_text = "\n".join(f"输入图片{number}—{source_id(ref)}—{ref['role']}—"
+        reference_text = "\n".join((f"输入图片{number}—" if clean else f"输入图片{number}—{source_id(ref)}—{ref['role']}—")
             + usages.get(number, "本张不使用此素材内容，不据此新增商品或信息。")
             for number, ref in enumerate(refs, 1))
         content = [(LABELS[0], task + f"\n本张任务：{design['purpose']}。"),
@@ -71,10 +78,10 @@ def assemble_designs(value, snapshot, product, visual_direction=None):
                 "前屏关系：" + link["previous"], "后屏关系：" + link["next"], link["edge_treatment"],
                 "整页阅读：" + page["reading_strategy"], "视觉节奏：" + page["visual_rhythm"], *adjacent,
                 "本屏独立生成；不依赖未传入的相邻生成图，不要求精确像素接缝。关键内容在本屏内成立。"])))
-        content.extend([(LABELS[7], design["product_preservation"] + "\n" + FIDELITY),
-            (LABELS[8], design["execution_constraints"] + shared + "\n只按本稿已确定的画面要求执行；不得新增文案或重新策划。")])
+        content.extend([(LABELS[7], design["product_preservation"] + ("" if clean else "\n" + FIDELITY)),
+            (LABELS[8], design["execution_constraints"] + ("" if clean else shared + "\n只按本稿已确定的画面要求执行；不得新增文案或重新策划。"))])
         positive = "\n\n".join(f"【{label}】\n{body}" for label, body in content)
-        negative = NEGATIVE + ("\n" + design["negative_additions"] if design["negative_additions"] else "")
+        negative = design["negative_additions"] if clean else NEGATIVE + ("\n" + design["negative_additions"] if design["negative_additions"] else "")
         request = positive + "\n\n负面提示词：" + negative
         validate_single_image_request({"mode": "image_to_image", "prompt": request,
             "aspect_ratio": target["aspect_ratio"], "resolution": target.get("resolution")}, len(refs))
@@ -89,8 +96,8 @@ def assemble_designs(value, snapshot, product, visual_direction=None):
             "purpose": design["purpose"], "design": deepcopy(design), "references": deepcopy(refs),
             "aspect_ratio": target["aspect_ratio"], "positive_prompt": positive, "negative_prompt": negative,
             "scheme_markdown": display, "request_text": request, "request_text_sha256": text_hash(request),
-            "assembly_version": ASSEMBLY_VERSION})
-    return {**draft, "images": images, "design_output": draft, "assembly_version": ASSEMBLY_VERSION,
+            "assembly_version": assembly_version})
+    return {**draft, "images": images, "design_output": draft, "assembly_version": assembly_version,
         "generation_validation": "pending", "page_assembly_validation": "pending" if detail else "not_applicable"}
 
 

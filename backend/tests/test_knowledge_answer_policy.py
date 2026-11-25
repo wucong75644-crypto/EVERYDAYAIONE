@@ -15,9 +15,11 @@ from tests.test_chat_execution_engine import _request
 @pytest.mark.parametrize('automatic,question,should_prepare', [
     (True, '这张图片是什么风格？', False),
     (True, '文案应该怎么写？', False),
-    (True, '知识库的售后规则是什么？', True),
-    (True, '公司制度有什么要求？', True),
+    (False, '知识库的售后规则是什么？', True),
+    (False, '公司制度有什么要求？', True),
     (False, '售后规则是什么？', True),
+    (True, '知识库的售后规则是什么？', False),
+    (True, '公司制度有什么要求？', False),
 ])
 async def test_preparation_requires_source_binding_or_explicit_lookup(
         monkeypatch, automatic, question, should_prepare):

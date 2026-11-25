@@ -165,7 +165,7 @@ async def test_capability_facts_use_real_registry_policy_and_fresh_permissions(m
         permission_mode="plan", authorized_tool_names={"file_search", "file_delete", "web_search"},
         feature_flags={"file_workspace_enabled": True})
     registry = build_legacy_catalog()
-    checker = Mock(check=AsyncMock(return_value=False))
+    checker = Mock(check_many=AsyncMock(return_value=frozenset()))
     monkeypatch.setattr(service, "PermissionChecker", Mock(return_value=checker))
     names = await service.available_capabilities(Mock(), ctx)
     assert names <= ctx.authorized_tool_names

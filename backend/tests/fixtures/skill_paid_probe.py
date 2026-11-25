@@ -61,7 +61,7 @@ class SkillProbeLedger:
             if c['body_sha256']==digest and c['status']=='received'),None)
 
     def reserve(self, body, scenario):
-        if body.get('model')!='qwen3.8-max' or body.get('enable_thinking') is not False:
+        if body.get('model')!='qwen3.8-flash' or body.get('enable_thinking') is not False:
             raise ProbeLimitReached('Unquoted model or thinking mode')
         if body.get('max_tokens',0) not in range(1,6001) or body.get('enable_search'):
             raise ProbeLimitReached('Unquoted output/search cost')

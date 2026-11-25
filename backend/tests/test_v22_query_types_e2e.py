@@ -517,56 +517,17 @@ class TestPlanBuilderSanitize:
 
 
 class TestPlanFillQueryType:
-    """验证 fill_query_type 从文本关键词推断 query_type。"""
-
-    def _fill(self, query: str, params: dict | None = None) -> dict:
+    @pytest.mark.parametrize('query', ['哪些商品快缺货了','滞销商品有哪些','采购超期未到货','各平台退货率',
+        '毛利率多少','库存周转天数','发货时效','每天的销售额趋势','每月看订单量','环比增长率',
+        '这个月比上个月怎么样','各平台销售额占比','商品ABC分类','订单金额分布','客单价多少'])
+    def test_words_do_not_invent_query_shape(self, query):
         from services.agent.plan_fill import fill_query_type
-        p = params or {}
-        fill_query_type(p, query)
-        return p
-
-    def test_alert_keywords(self):
-        assert self._fill("哪些商品快缺货了")["query_type"] == "alert"
-        assert self._fill("滞销商品有哪些")["query_type"] == "alert"
-        assert self._fill("采购超期未到货")["query_type"] == "alert"
-
-    def test_cross_keywords(self):
-        assert self._fill("各平台退货率")["query_type"] == "cross"
-        assert self._fill("毛利率多少")["query_type"] == "cross"
-        assert self._fill("库存周转天数")["query_type"] == "cross"
-        assert self._fill("发货时效")["query_type"] == "cross"
-
-    def test_trend_keywords(self):
-        assert self._fill("每天的销售额趋势")["query_type"] == "trend"
-        assert self._fill("每月看订单量")["query_type"] == "trend"
-
-    def test_compare_keywords(self):
-        assert self._fill("环比增长率")["query_type"] == "compare"
-        assert self._fill("这个月比上个月怎么样")["query_type"] == "compare"
-
-    def test_ratio_keywords(self):
-        assert self._fill("各平台销售额占比")["query_type"] == "ratio"
-        assert self._fill("商品ABC分类")["query_type"] == "ratio"
-
-    def test_distribution_keywords(self):
-        assert self._fill("订单金额分布")["query_type"] == "distribution"
-
-    def test_no_match_leaves_empty(self):
-        assert "query_type" not in self._fill("4月订单总金额")
-
-    def test_existing_query_type_not_overwritten(self):
-        p = self._fill("退货率趋势", {"query_type": "trend"})
-        assert p["query_type"] == "trend"  # 已有值不覆盖
-
-    def test_alert_fills_alert_type(self):
-        p = self._fill("哪些商品滞销了")
-        assert p["query_type"] == "alert"
-        assert p["alert_type"] == "slow_moving"
-
-    def test_cross_fills_metric(self):
-        p = self._fill("客单价多少")
-        assert p["query_type"] == "cross"
-        assert p["metrics"] == ["avg_order_value"]
+        params = {}
+        fill_query_type(params, query)
+        assert params == {}
+        typed = {'query_type':'trend','time_granularity':'day'}
+        fill_query_type(typed, query)
+        assert typed == {'query_type':'trend','time_granularity':'day'}
 
 
 # ============================================================

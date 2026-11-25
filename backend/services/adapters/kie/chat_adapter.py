@@ -428,6 +428,8 @@ class KieChatAdapter(BaseChatAdapter):
         """
         # GPT planners use KIE's Responses endpoint through this
         # existing KIE adapter/client/auth/Gateway path.
+        from services.model_reasoning import validate_reasoning
+        validate_reasoning(self.model, 'kie', thinking_mode)
         if self.config.get("api_protocol") == "responses":
             async for chunk in self._stream_responses(messages, reasoning_effort, **kwargs):
                 yield chunk
@@ -485,6 +487,8 @@ class KieChatAdapter(BaseChatAdapter):
         **kwargs,
     ) -> ChatResponse:
         """非流式聊天（统一接口，避免与现有 chat 方法冲突）"""
+        from services.model_reasoning import validate_reasoning
+        validate_reasoning(self.model, 'kie', thinking_mode)
         if self.config.get("api_protocol") == "responses":
             return await self._responses_sync(messages, reasoning_effort, **kwargs)
         formatted_messages = self.format_messages_from_history(messages)
@@ -550,8 +554,11 @@ class KieChatAdapter(BaseChatAdapter):
         effort = reasoning_effort or get_settings().ecom_image_planning_reasoning
         if effort not in {"low", "medium", "high", "xhigh"}:
             raise ValueError("KIE_RESPONSES_REASONING_INVALID")
-        return {"model": self.model, "input": self._responses_content(messages),
+        body = {"model": self.model, "input": self._responses_content(messages),
                 "stream": stream, "reasoning": {"effort": effort}}
+        from services.agent.observability.model_request import record_request
+        record_request(body, 'kie.responses')
+        return body
 
     @staticmethod
     def _responses_usage(response):

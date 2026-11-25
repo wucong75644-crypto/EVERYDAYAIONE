@@ -53,5 +53,5 @@ export function getAvailableModels(
 
 // Normalize saved choices at read time; historical records keep their original IDs.
 export function canonicalModelId(modelId: string): string {
-  return ({ 'qwen3.5-plus': 'qwen3.8-max', 'qwen3.5-flash': 'qwen3.8-flash' } as Record<string, string>)[modelId] ?? modelId;
+  return ({ 'qwen3.8-max': 'qwen3.8-flash', 'qwen3.8-max-0902': 'qwen3.8-flash', 'qwen3.5-plus': 'qwen3.8-flash', 'qwen3.5-flash': 'qwen3.8-flash' } as Record<string, string>)[modelId] ?? modelId;
 }

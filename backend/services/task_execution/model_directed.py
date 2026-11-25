@@ -5,6 +5,8 @@ all user requirements. Existing operation adapters remain the execution path.
 """
 from __future__ import annotations
 
+import json
+
 from uuid import UUID
 
 from pydantic import Field
@@ -41,9 +43,12 @@ INSTRUCTIONS = ('自主理解完整用户目标，选择所需Skill、工具或A
     'editable_working_plans是可选的历史计划快照。用户明确修改已有计划时引用对应ID及版本；'
     '独立任务按新计划登记，不能凭标题相似合并。'
     '普通对话直接回答。交付可复用稿件和引用已有成果时，按当轮工具定义选择对应的稿件版本、条目和素材。'
+    '用户为新稿件设置后续确认条件时，用本轮save_task_text的document和confirmation一起登记原稿及等待条件，'
+    '不要只在聊天正文承诺稍后确认，也不要批准或立即执行。此时一次通过保存工具交付正文及其确认条件。'
     '改成图时使用用户选中的已完成结果作为底图；按原图重做时核对原始输入。已受理但未完成的图只能等待结果或改用用户另选的图。'
     '改编、翻译或修订应先完成新的原文；执行时使用选定版本，保留未改要求。'
     '宿主自动登记已核实的原生工具成果，不需手动导入或标记步骤完成。'
+    'content_objects提供可引用的正文稿件；artifacts中kind=receipt是执行回执，不是正文稿件，不能作为content_source。'
     '程序记录执行事实，不替你判断全部自然语言目标或内容质量；对照原目标检查遗漏并如实交付。'
     '按平台权限与工具执行状态规则处理未决操作。'
     '新消息后尚未派发的旧操作保持等待；用户确需继续该操作时按原参数接回已有操作。'
@@ -119,6 +124,32 @@ def operation_binding(state, call):
     return step.id, key, effect_version(state, key)
 
 
+def content_item_identity(arguments):
+    source = arguments
+    for key in ('source_prompt', 'content_object', 'source'):
+        if not isinstance(source, dict):
+            return None
+        source = source.get(key)
+    if isinstance(source, dict) and isinstance(source.get('artifact_id'), str) and type(source.get('item_index')) is int:
+        return source['artifact_id'], source['item_index']
+    return None
+
+
+def independent_accepted_image(state, operation, call):
+    """Compare host-frozen content sources; confirmation slots keep their contract."""
+    if operation.status != 'accepted' or operation.tool_name != 'generate_image' or call.name != 'generate_image':
+        return False
+    current = content_item_identity(thaw(call.arguments))
+    if current is None:
+        return False
+    recipe = next((a for a in state.artifacts if a.step_id == operation.step_id
+                   and 'image.direct.recipe' in a.validations), None)
+    if recipe is None:
+        return False
+    previous = content_item_identity(json.loads(recipe.inline_text).get('normalized', {}))
+    return previous is not None and previous != current
+
+
 def record_calls(state, bootstrap, calls, registry,*,input_sha256=None,media_slots=None):
     """Prepare append-only, concrete tool obligations, not guessed user goals.
 
@@ -176,6 +207,7 @@ def record_calls(state, bootstrap, calls, registry,*,input_sha256=None,media_slo
             raise TaskError('TASK_DIRECT_RESULT_REUSE_REQUIRED')
         if any(v.capability == capability and v.status in {'reserved', 'accepted', 'uncertain'}
                and v is not original and not (v.status == 'accepted' and v.step_id in siblings)
+               and not independent_accepted_image(state, v, call)
                for v in previous_operations):
             raise TaskError('TASK_DIRECT_EFFECT_UNRESOLVED')
         if original is not None:

@@ -407,7 +407,9 @@ class ChatImageLifecycle:
             facts = None
             try:
                 facts = await asyncio.to_thread(read_image_dimensions, path)
-                checks = output_size_check(facts, snapshot["size_requirement"])
+                from services.adapters.kie.configs import IMAGE_MODEL_CONFIGS
+                checks = output_size_check(facts, snapshot["size_requirement"], pixel_alignment=
+                    IMAGE_MODEL_CONFIGS.get(snapshot["model"], {}).get("output_pixel_alignment", 1))
             except ValueError:
                 checks = {"target": snapshot["size_requirement"], "size_matches": False,
                           "error": "IMAGE_DIMENSIONS_UNAVAILABLE"}

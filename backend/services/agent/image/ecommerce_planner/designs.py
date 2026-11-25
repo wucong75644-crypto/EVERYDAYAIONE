@@ -3,8 +3,9 @@ from __future__ import annotations
 
 from copy import deepcopy
 from typing import Literal
+from typing import get_origin
 
-from pydantic import Field, ValidationError
+from pydantic import ConfigDict, Field, ValidationError, model_validator
 
 from .contracts import ReviewRecord, StrictModel
 from .inputs import is_product
@@ -37,7 +38,7 @@ class ImageDesign(StrictModel):
     text_layout: str = Field(min_length=1, description="每处新增文案的准确原文、换行、次数、字形、颜色、尺度、位置和对应对象；没有则明确无新增文字。")
     product_preservation: str = Field(min_length=1, description="当前商品的具体形态、配色、图案、原印刷、部件比例及允许修改范围。")
     execution_constraints: str = Field(min_length=1, description="本张具体执行边界、关键可读内容及当前事实的声明限制。")
-    negative_additions: str = Field(description="本张额外负面约束；通用防变形规则由程序添加，无补充填空字符串。")
+    negative_additions: str = Field(description="本张需要排除的画面内容；无需另列时填空字符串。")
     page_link: PageLink | None = Field(description="主图为null；详情屏填写内容任务、前后关系和边缘处理。")
 
 
@@ -70,9 +71,19 @@ class DesignsOutput(StrictModel):
 
 
 class FieldPatch(StrictModel):
+    model_config = ConfigDict(json_schema_extra={'anyOf': [
+        {'properties': {'op': {'const': 'remove'}}, 'required': ['op']},
+        {'properties': {'op': {'const': 'replace'}}, 'required': ['value']},
+    ]})
     path: list[str | int] = Field(min_length=1)
-    value: object
+    value: object = None
     op: Literal["replace", "remove"] = "replace"
+
+    @model_validator(mode='after')
+    def replacement_value(self):
+        if self.op == 'replace' and 'value' not in self.model_fields_set:
+            raise ValueError('PLANNER_REPAIR_REPLACEMENT_VALUE_REQUIRED')
+        return self
 
 
 class DesignRepair(StrictModel):
@@ -99,8 +110,20 @@ def validate_designs(value, snapshot, product):
         draft = DesignsOutput.model_validate(value).model_dump()
     except ValidationError as error:
         # Accumulate every schema defect before asking the model to repair.
+        if (isinstance(value, dict) and value.get("status") == "ready"
+                and isinstance(value.get("images"), list)
+                and len(value["images"]) != snapshot["image_count"]):
+            problem(("images",), "PLANNER_IMAGE_COUNT_INVALID")
         for item in error.errors():
-            problem(item["loc"], item["type"])
+            path=item['loc']
+            # A malformed array is repaired as one typed field. Element-level
+            # paths make dropping invalid entries impossible without shifting
+            # sibling indices; the complete design is still validated below.
+            if (len(path)>3 and path[0]=='images' and isinstance(path[1],int)
+                    and path[2] in ImageDesign.model_fields and item['type']!='extra_forbidden'
+                    and get_origin(ImageDesign.model_fields[path[2]].annotation) is list):
+                path=path[:3]
+            problem(path, item["type"])
         raise DesignValidationError(issues) from error
     count = snapshot["image_count"]
     usable = {fact["id"] for fact in product.get("facts", []) if fact["status"] == "usable"}
@@ -170,6 +193,9 @@ def repair_context(previous, issues):
     targets = []
     for issue in issues:
         path = issue["path"]
+        # Reviews have their own required output field in DesignRepair.
+        if path == ["review_records"]:
+            continue
         if path in [target["path"] for target in targets]:
             continue
         cursor = previous

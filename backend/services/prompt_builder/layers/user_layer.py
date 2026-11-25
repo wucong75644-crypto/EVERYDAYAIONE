@@ -13,7 +13,29 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 from typing import Any, Dict, List, Optional
+
+
+def visual_measurement_guidance(text: str, has_images: bool) -> str:
+    if not has_images or not re.search(
+            r'几倍|多少(?:条|个|像素)|(?:宽度|长度|面积|尺寸|比例|占比).{0,16}(?:多少|几|多大|多长|多宽)', text):
+        return ''
+    return (
+        '视觉问答口径提示（不是测量结果）：结合当前问题、图片和上下文区分数量、宽度或面积。'
+        '条纹交替不代表等宽；用户要求目测时可给明确标注的估计，不冒充精确测量。'
+        '只有确实无法确定比较对象或口径时才简短澄清。'
+        '精确倍数须有可复查依据，不把缩略图或模型推测当作原图测量。'
+    )
+
+
+def visual_fact_guidance(text: str, has_images: bool) -> str:
+    if (not has_images or not re.search(r'卖点|材质|面料|填充|功能|性能|容量|品牌', text)
+            or re.search(r'(?:写|编写|创作|设计|策划|生成).{0,20}(?:方案|文案|提示词|图片)', text)):
+        return ''
+    return ('商品图片事实提示：现有商品的卖点分析以可见外观和用户资料为依据。'
+            '图片不能证实材质成分、填充物、实际容量、手感、耐用、防尘防丢性能或品牌/IP授权；'
+            '不把这些推测写成已确认事实。可见纹理与真实成分分开，文案建议中的性能卖点须注明待资料确认。')
 
 
 @dataclass
@@ -59,11 +81,15 @@ class UserLayer:
             attachment_refs = format_current_attachment_refs(inp.workspace_files, inp.org_id)
 
         from services.handlers.chat_context.image_sources import format_image_sources
-        from services.handlers.image_size_requirements import size_preflight_notice
-        size_notice = size_preflight_notice(inp.text, inp.image_sources)
-        sources = format_image_sources(inp.image_sources, include_size_guidance=bool(size_notice))
-        if sources or size_notice:
-            attachment_refs = "\n\n".join(filter(None, (attachment_refs, size_notice, sources)))
+        # Only real image metadata belongs here. Output intent is interpreted by
+        # the existing workflow once, then checked by native input preparation.
+        sources = format_image_sources(inp.image_sources)
+        if sources:
+            attachment_refs = "\n\n".join(filter(None, (attachment_refs, sources)))
+        has_images = bool(inp.image_urls or inp.image_sources)
+        measurement = visual_measurement_guidance(inp.text, has_images) + visual_fact_guidance(inp.text, has_images)
+        if measurement:
+            attachment_refs = '\n\n'.join(filter(None, (attachment_refs, measurement)))
 
         # 构造 user message (多模态判断)
         if attachment_refs or inp.image_urls or inp.file_urls:

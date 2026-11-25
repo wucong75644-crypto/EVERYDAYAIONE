@@ -106,6 +106,41 @@ def _task() -> dict:
 
 
 @pytest.mark.asyncio
+async def test_executor_uses_actor_scoped_store_for_both_bootstrap_read_and_save(monkeypatch):
+    from services.replay_checkpoint_store import DatabaseReplayCheckpointStore
+    from services.conversation_commands import SafePoint
+
+    raw = DatabaseReplayCheckpointStore(object())
+    bound = _ReplayCheckpointStore()
+    bound.write = AsyncMock(side_effect=lambda **kwargs: bound.calls.append(kwargs) or {'outcome':'saved'})
+    scopes = []
+
+    def bind(self, **scope):
+        assert self is raw
+        scopes.append(scope)
+        return bound
+
+    async def chat(**kwargs):
+        await kwargs['runtime'].safe_point(SafePoint.BEFORE_TOOL, replay_payload={'messages': []})
+        return ChatExecutionResult(parts=[TextPart(text='完成')], content_blocks=[], usage={},
+                                   credits_cost=0, tool_digest=None)
+
+    monkeypatch.setattr(DatabaseReplayCheckpointStore, 'for_scope', bind)
+    monkeypatch.setattr('services.handlers.chat.executor.execute_chat', chat)
+    executor = ChatGenerationExecutor(
+        _DB({'id':'input-1','conversation_id':'conv-1','turn_id':'turn-1','role':'user',
+             'content':[{'type':'text','text':'写方案'}]}),
+        lambda _: SimpleNamespace(org_id=None), replay_checkpoint_store=raw)
+    await executor.execute(_task(), _claim(), asyncio.Event())
+    assert scopes == [{'actor_user_id':'user-1', 'org_id':'org-1'}]
+    assert bound.read_calls and len(bound.calls) == 2
+    assert bound.calls[0]['boundary'].value == 'before_tool'
+    assert bound.calls[-1]['payload']['checkpoint_kind'] == 'commit_ready'
+    assert all(call['execution_token'] == 'token-1' for call in bound.calls)
+    assert executor._replay_checkpoint_store is raw
+
+
+@pytest.mark.asyncio
 async def test_executor_loads_multimodal_content_from_input_message(monkeypatch):
     row = {
         "id": "input-1",

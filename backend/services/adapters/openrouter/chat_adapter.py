@@ -151,14 +151,21 @@ class OpenRouterChatAdapter(BaseChatAdapter):
                 request_body["tool_choice"] = kwargs["tool_choice"]
         if kwargs.get("max_tokens") is not None:
             request_body["max_tokens"] = kwargs["max_tokens"]
-        if reasoning_effort is not None:
-            request_body["reasoning"] = {"effort": reasoning_effort}
+        from services.model_reasoning import openrouter_reasoning, validate_reasoning
+        validate_reasoning(self._model_id, 'openrouter', thinking_mode)
+        reasoning = openrouter_reasoning(thinking_mode, reasoning_effort)
+        if reasoning is not None:
+            request_body['reasoning'] = reasoning
+            if thinking_mode == 'disabled':
+                request_body['provider'] = {**request_body.get('provider', {}), 'require_parameters': True}
         require_completed = kwargs.get("require_completed", False)
         received_done = False
         received_tool_calls = False
         terminal_reason = None
         received_usage = False
 
+        from services.agent.observability.model_request import record_request
+        record_request(request_body, 'openrouter.chat_completions')
         client = await self._get_client()
 
         try:
@@ -273,9 +280,16 @@ class OpenRouterChatAdapter(BaseChatAdapter):
             "messages": self._chat_messages(messages),
             "stream": False,
         }
-        if reasoning_effort is not None:
-            request_body["reasoning"] = {"effort": reasoning_effort}
+        from services.model_reasoning import openrouter_reasoning, validate_reasoning
+        validate_reasoning(self._model_id, 'openrouter', thinking_mode)
+        reasoning = openrouter_reasoning(thinking_mode, reasoning_effort)
+        if reasoning is not None:
+            request_body['reasoning'] = reasoning
+            if thinking_mode == 'disabled':
+                request_body['provider'] = {**request_body.get('provider', {}), 'require_parameters': True}
 
+        from services.agent.observability.model_request import record_request
+        record_request(request_body, 'openrouter.chat_completions')
         client = await self._get_client()
 
         try:

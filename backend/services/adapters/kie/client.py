@@ -245,6 +245,8 @@ class KieClient:
         endpoint = self.CHAT_ENDPOINTS[model]
         request_data = request.model_dump(exclude_none=True)
         request_data["stream"] = False  # 强制非流式
+        from services.agent.observability.model_request import record_request
+        record_request({"model": model, **request_data}, "kie.chat_completions")
 
         try:
             client = await self._get_client()
@@ -289,6 +291,8 @@ class KieClient:
         endpoint = self.CHAT_ENDPOINTS[model]
         request_data = request.model_dump(exclude_none=True)
         request_data["stream"] = True  # 强制流式
+        from services.agent.observability.model_request import record_request
+        record_request({"model": model, **request_data}, "kie.chat_completions")
 
         try:
             client = await self._get_client()

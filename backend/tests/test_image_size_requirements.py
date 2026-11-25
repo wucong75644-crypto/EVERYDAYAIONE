@@ -7,7 +7,24 @@ from PIL import Image
 import pytest
 
 from services.handlers.image_dimensions import read_image_dimensions, output_size_check
-from services.handlers.image_size_requirements import resolve_size_requirement, user_size_intent
+
+
+@pytest.mark.parametrize('actual,ratio', [( (768,1360),'9:16'), ((1360,768),'16:9')])
+def test_registered_output_grid_accepts_nearest_preset_without_changing_bytes(actual, ratio):
+    from services.adapters.kie.configs import IMAGE_MODEL_CONFIGS
+    facts = {'width':actual[0], 'height':actual[1], 'aspect_ratio':'48:85' if actual[0]<actual[1] else '85:48'}
+    assert not output_size_check(facts, {'aspect_ratio':ratio})['size_matches']
+    alignment = IMAGE_MODEL_CONFIGS['gpt-image-2-5-sunburst-image-to-image']['output_pixel_alignment']
+    checked = output_size_check(facts, {'aspect_ratio':ratio}, pixel_alignment=alignment)
+    assert checked['size_matches'] and checked['actual'] == facts
+    assert not output_size_check(facts, {'aspect_ratio':ratio, 'width':768,'height':1365}, pixel_alignment=alignment)['size_matches']
+
+
+@pytest.mark.parametrize('actual,ratio', [((768,1344),'9:16'), ((767,1360),'9:16'), ((768,1024),'1:1')])
+def test_output_grid_does_not_accept_a_different_canvas(actual, ratio):
+    facts={'width':actual[0], 'height':actual[1], 'aspect_ratio':'actual'}
+    assert not output_size_check(facts, {'aspect_ratio':ratio}, pixel_alignment=16)['size_matches']
+from services.handlers.image_size_requirements import resolve_size_requirement
 from services.handlers.chat_image_request import freeze_image_request, verify_frozen_request
 
 
@@ -17,9 +34,9 @@ def reference(width=1080, height=1080):
             "content_sha256":"a"*64,"workspace_path":"original.jpg","role":"产品"}
 
 
-def resolve(text="", *, refs=None, previous=None, **args):
+def resolve(text="", *, intent=None, refs=None, previous=None, **args):
     return resolve_size_requirement({"mode":"image_to_image","prompt":"竖向笔记本摄影",**args},
-        refs if refs is not None else [reference()], intent=user_size_intent(text), previous=previous)
+        refs if refs is not None else [reference()], intent=intent or {}, previous=previous)
 
 
 def test_original_square_overrides_model_product_shape_estimate():
@@ -36,13 +53,13 @@ def test_original_square_overrides_model_product_shape_estimate():
     ("改为3:4","3:4","2K"),
 ])
 def test_user_change_is_independent_of_other_dimension(text,ratio,resolution):
-    args, _ = resolve(text, previous={"mode":"explicit","aspect_ratio":"1:1","resolution":"2K"},
+    args, _ = resolve(text, intent={'aspect_ratio':ratio, 'resolution':resolution}, previous={"mode":"explicit","aspect_ratio":"1:1","resolution":"2K"},
                       aspect_ratio="9:16",resolution="1K")
     assert args["aspect_ratio"] == ratio and args["resolution"] == resolution
 
 
 def test_resolution_only_retains_prior_portrait_canvas():
-    args, _ = resolve("提高到4K", previous={"mode":"explicit","aspect_ratio":"3:4","resolution":"2K"})
+    args, _ = resolve("提高到4K", intent={'resolution': '4K'}, previous={"mode":"explicit","aspect_ratio":"3:4","resolution":"2K"})
     assert args["aspect_ratio"] == "3:4" and args["resolution"] == "4K"
 
 
@@ -57,17 +74,17 @@ def test_exif_rotated_canvas_and_digest_are_bound_to_same_original(tmp_path):
     assert args["aspect_ratio"] == "3:4" and target["reference_sha256"] == facts["content_sha256"]
 
 
-@pytest.mark.parametrize("text,code", [
-    ("生成1920×1080","EXACT_SIZE_UNSUPPORTED"),
-    ("生成1920×1080，比例1:1","SIZE_CONFLICT"),
-    ("做1080尺寸","SIZE_AMBIGUOUS"),
-    ("生成7:5图片","ASPECT_RATIO_UNSUPPORTED"),
-    ("生成3K图片","RESOLUTION_UNSUPPORTED"),
-    ("生成0:1图片","SIZE_INVALID"),
-    ("比例1:1或3:4","SIZE_AMBIGUOUS"),
+@pytest.mark.parametrize("text,intent,code", [
+    ('生成1920×1080',{'width': 1920, 'height': 1080},'EXACT_SIZE_UNSUPPORTED'),
+    ('生成1920×1080，比例1:1',{'width': 1920, 'height': 1080, 'aspect_ratio': '1:1'},'SIZE_CONFLICT'),
+    ('做1080尺寸',{'width': 1080},'SIZE_INVALID'),
+    ('生成7:5图片',{'aspect_ratio': '7:5'},'ASPECT_RATIO_UNSUPPORTED'),
+    ('生成3K图片',{'resolution': '3K'},'RESOLUTION_UNSUPPORTED'),
+    ('生成0:1图片',{'aspect_ratio': '0:1'},'ASPECT_RATIO_UNSUPPORTED'),
+    ('比例1:1或3:4',{'width': 1080},'SIZE_INVALID'),
 ])
-def test_invalid_or_unsupported_does_not_become_approximate(text,code):
-    with pytest.raises(ValueError,match=code): resolve(text)
+def test_invalid_or_unsupported_does_not_become_approximate(text,intent,code):
+    with pytest.raises(ValueError,match=code): resolve(text,intent=intent)
 
 
 def test_unsupported_precise_pixels_cannot_hide_in_structured_mode():
@@ -75,16 +92,18 @@ def test_unsupported_precise_pixels_cannot_hide_in_structured_mode():
         resolve(size_requirement={"mode":"explicit","width":1920,"height":1080})
 
 
-def test_inherit_requires_explicit_canvas_choice_when_ratios_differ():
+def test_mixed_references_allow_auto_or_an_explicit_canvas_choice():
     refs = [reference(), reference(600,800)]
-    with pytest.raises(ValueError,match="CANVAS_REFERENCE_REQUIRED"): resolve(refs=refs)
+    automatic, target = resolve(refs=refs)
+    assert automatic["aspect_ratio"] == "auto" and target["source"] == "default"
+    assert len(refs) == 2
     args, target = resolve(refs=refs,size_requirement={"mode":"inherit_reference","reference_index":1})
     assert args["aspect_ratio"] == "3:4" and target["reference_index"] == 1
 
 
-def test_auto_requires_user_permission_with_reference_and_records_source():
-    with pytest.raises(ValueError,match="INTENT_REQUIRED"): resolve(size_requirement={"mode":"auto"})
-    args,target = resolve("比例你决定",previous={"aspect_ratio":"1:1","resolution":"2K"})
+def test_auto_is_available_without_extra_permission_and_preserves_explicit_user_source():
+    assert resolve(size_requirement={"mode":"auto"})[0]["aspect_ratio"] == "auto"
+    args,target = resolve("比例你决定", intent={'mode': 'auto'},previous={"aspect_ratio":"1:1","resolution":"2K"})
     assert args["aspect_ratio"] == "auto" and target["source"] == "user"
 
 
@@ -99,18 +118,17 @@ def test_canvas_prompt_conflict_blocked_before_freeze():
 
 
 def test_complete_source_keeps_original_canvas_facts_without_overriding_output():
-    from services.handlers.image_size_requirements import selected_source_size
     prompt = '原图画布比例为80:79。\n原图宽高比：80:79。\n输出比例1:1。'
-    args, _ = resolve('使用1:1', prompt=prompt)
+    args, _ = resolve('使用1:1', intent={'aspect_ratio': '1:1'}, prompt=prompt)
     assert args['aspect_ratio'] == '1:1' and args['prompt'] == prompt
-    assert selected_source_size(prompt)['aspect_ratio'] == '1:1'
+    assert args['aspect_ratio'] == '1:1'
     with pytest.raises(ValueError, match='PROMPT_CONFLICT'):
         resolve(prompt='保持原图比例3:4。输出比例1:1。')
 
 
 def test_frozen_target_does_not_change_with_user_next_turn():
     refs=[reference()]
-    args,target=resolve("统一1:1、2K",refs=refs)
+    args,target=resolve("统一1:1、2K", intent={'aspect_ratio': '1:1', 'resolution': '2K'},refs=refs)
     snapshot=freeze_image_request(args,refs,origin={},max_requests=15,max_credits=300,size_requirement=target)
     target["aspect_ratio"]="3:4"
     verify_frozen_request(snapshot)
@@ -140,58 +158,58 @@ def test_discovery_reads_legacy_original_ignoring_forged_client_dimensions(tmp_p
 
 
 def test_keep_ratio_retains_prior_target_instead_of_resetting_to_reference():
-    args, _ = resolve("保持比例，提高到4K",previous={"mode":"explicit","aspect_ratio":"3:4","resolution":"2K"})
+    args, _ = resolve("保持比例，提高到4K", intent={'keep_aspect_ratio': True, 'resolution': '4K'},previous={"mode":"explicit","aspect_ratio":"3:4","resolution":"2K"})
     assert args["aspect_ratio"]=="3:4" and args["resolution"]=="4K"
 
 
 def test_product_proportions_do_not_change_square_canvas():
-    args, _ = resolve("产品比例3:4，保持原图比例",prompt="产品比例3:4，保持原图画布")
+    args, _ = resolve("产品比例3:4，保持原图比例", intent={'mode': 'inherit_reference'},prompt="产品比例3:4，保持原图画布")
     assert args["aspect_ratio"]=="1:1"
 
 
 def test_long_edge_is_not_approximated_by_resolution_tier():
     with pytest.raises(ValueError,match="EXACT_SIZE_UNSUPPORTED"):
-        resolve("长边1280")
+        resolve("长边1280", intent={'width': 1280, 'height': 1280})
 
 
 def test_negative_ratio_is_invalid_instead_of_becoming_positive():
-    with pytest.raises(ValueError,match="SIZE_INVALID"):
-        resolve("生成-1:1")
+    with pytest.raises(ValueError,match="ASPECT_RATIO_UNSUPPORTED"):
+        resolve("生成-1:1", intent={'aspect_ratio': '-1:1'})
 
 
 
 def test_pixel_width_height_words_are_not_approximated():
     with pytest.raises(ValueError,match="EXACT_SIZE_UNSUPPORTED"):
-        resolve("宽1920高1080")
+        resolve("宽1920高1080", intent={'width': 1920, 'height': 1080})
 
 
 def test_output_resolution_declaration_must_match_the_user_target():
     with pytest.raises(ValueError,match="PROMPT_CONFLICT"):
-        resolve("提高到4K",prompt="分辨率2K")
+        resolve("提高到4K", intent={'resolution': '4K'},prompt="分辨率2K")
 
 
 def test_historic_questions_do_not_become_task_size_requirements():
-    from services.handlers.image_size_requirements import is_size_instruction
-    assert not is_size_instruction("为什么生成3:4，1:1是什么意思")
-    assert not is_size_instruction("例如生成1920×1080")
-    assert is_size_instruction("这六张改成3:4、2K")
-    assert is_size_instruction("3:4、2K")
+    from services.agent.image.ecommerce_planner.workflow import ImageRequestContext
+    # A semantic 'explain' decision carries no requested canvas. The host must
+    # never reconstruct task rules by scanning old user question text.
+    assert ImageRequestContext().size.model_dump(exclude_none=True) == {}
+
 
 
 
 @pytest.mark.parametrize("text,ratio", [("统一三比四","3:4"),("改成16比9","16:9"),("做竖向海报","3:4")])
 def test_natural_language_size_requests_can_override_source(text,ratio):
-    args, target = resolve(text,aspect_ratio=ratio)
+    args, target = resolve(text,intent={'orientation':'portrait'} if ratio=='3:4' and text=='做竖向海报' else {'aspect_ratio':ratio},aspect_ratio=ratio)
     assert args["aspect_ratio"]==ratio and target["source"].startswith("user")
 
 
 def test_pixel_height_and_negative_pixels_are_rejected():
-    with pytest.raises(ValueError,match="EXACT_SIZE_UNSUPPORTED"): resolve("生成1080P")
-    with pytest.raises(ValueError,match="SIZE_INVALID"): resolve("生成-1920×1080")
+    with pytest.raises(ValueError,match="EXACT_SIZE_UNSUPPORTED"): resolve("生成1080P", intent={'width': 1920, 'height': 1080})
+    with pytest.raises(ValueError,match="SIZE_INVALID"): resolve("生成-1920×1080", intent={'width': -1920, 'height': 1080})
 
 
 def test_ratio_and_resolution_preserve_separate_provenance():
-    _, target = resolve("提高到4K",previous={"mode":"explicit","aspect_ratio":"3:4","resolution":"2K","source_task_id":"old-task"})
+    _, target = resolve("提高到4K", intent={'resolution': '4K'},previous={"mode":"explicit","aspect_ratio":"3:4","resolution":"2K","source_task_id":"old-task"})
     assert target["source"]=="task" and target["resolution_source"]=="user"
     assert target["source_task_id"]=="old-task"
 
@@ -209,11 +227,15 @@ def test_current_unpersisted_image_also_gets_server_canvas_facts(tmp_path,monkey
     assert "message_id" not in sources[0]["reference"]
 
 
-def test_verified_source_size_uses_explicit_output_labels_and_preserves_pixels():
-    from services.handlers.image_size_requirements import selected_source_size
-    assert selected_source_size('产品比例2:3，主体宽高比4:5。') == {}
-    assert selected_source_size('产品比例2:3，输出比例1:1。') == {'aspect_ratio': '1:1'}
-    assert selected_source_size('输出尺寸1254×1254像素。') == {'width': 1254, 'height': 1254}
+def test_verified_source_size_comes_from_structured_options_not_product_prose():
+    from services.task_execution.content_groups import bind_group
+    from services.task_execution.content_objects import ContentDocument
+    document = ContentDocument.model_validate({'title':'方案', 'items':[{'title':'A',
+        'body':'产品比例2:3，主体宽高比4:5。', 'options':{'aspect_ratio':'1:1'}}]})
+    bound = bind_group(document, [], '产品比例2:3，输出比例9:16。')
+    assert bound.items[0].options == {'aspect_ratio':'1:1'}
+    assert bound.items[0].body == document.items[0].body
+
 
 
 @pytest.mark.parametrize('width,height,ratio', [(739, 981, '3:4'), (1601, 902, '16:9'), (1024, 1001, '1:1')])
@@ -223,8 +245,26 @@ def test_original_canvas_maps_to_closest_supported_ratio_with_default_tier(width
     assert (target['original_width'], target['original_height']) == (width, height)
 
 
-def test_auto_is_opt_in_even_without_a_reference():
-    assert resolve(refs=[])[0]['aspect_ratio'] == '1:1'
-    with pytest.raises(ValueError, match='INTENT_REQUIRED'):
-        resolve('自动生成一张图片', refs=[], aspect_ratio='auto')
-    assert resolve('比例你定')[0]['aspect_ratio'] == 'auto'
+def test_new_creation_without_a_reference_defaults_to_auto():
+    assert resolve(refs=[])[0]['aspect_ratio'] == 'auto'
+    assert resolve('自动生成一张图片', intent={}, refs=[], aspect_ratio='auto')[0]['aspect_ratio'] == 'auto'
+    assert resolve('比例你定', intent={'mode': 'auto'})[0]['aspect_ratio'] == 'auto'
+
+
+@pytest.mark.parametrize('model', ['gpt-image-2-text-to-image', 'gpt-image-2-image-to-image'])
+def test_real_image2_2k_output_uses_registered_grid_without_weakening_exact_pixels(model):
+    from services.adapters.kie.configs import IMAGE_MODEL_CONFIGS
+    from services.handlers.image_dimensions import ratio_for
+    # Actual Image 2 response from the formal-entry 1920x1080 approximate case.
+    facts = {'width': 2736, 'height': 1536, 'aspect_ratio': ratio_for(2736, 1536)}
+    target = {'aspect_ratio': '16:9', 'resolution': '2K', 'approximate': True,
+        'requested_width': 1920, 'requested_height': 1080}
+    assert not output_size_check(facts, target)['size_matches']
+    grid = IMAGE_MODEL_CONFIGS[model]['output_pixel_alignment']
+    assert grid == 16
+    checked = output_size_check(facts, target, pixel_alignment=grid)
+    assert checked['size_matches'] and checked['actual'] == facts
+    assert not output_size_check(facts, {**target, 'width': 1920, 'height': 1080}, pixel_alignment=grid)['size_matches']
+    for width,height in [(2704,1536), (2735,1536), (2048,1536)]:
+        assert not output_size_check({'width':width,'height':height,'aspect_ratio':ratio_for(width,height)},
+            target, pixel_alignment=grid)['size_matches']

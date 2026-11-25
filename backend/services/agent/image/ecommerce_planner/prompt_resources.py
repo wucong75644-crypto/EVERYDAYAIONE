@@ -138,7 +138,7 @@ def plan_resources(row):
     return bodies, schema
 
 
-def wrapper(stage, task_type="main_images", version=None):
+def wrapper(stage, task_type="main_images", version=None, *, execution_only=False):
     if version == POSITION_VERSION:
         common = ('settings为软件冻结配置，输出张数与上传图数分开；raw_user_texts按内部资料身份逐字承接，'
             '历史留档、人工确认、推断、建议和未知不能统一当成核实事实。image_N绑定与角色由软件维护，'
@@ -181,7 +181,7 @@ def wrapper(stage, task_type="main_images", version=None):
     mode = ("主图page_plan和page_link为null。" if task_type == "main_images" else
         "详情必须提供page_plan及每屏page_link，coverage覆盖全部屏且引用usable事实，boundaries按顺序覆盖全部N−1对相邻屏。"
         "generation_path=independent_screens；关键表达在每屏内成立，不强求精准像素接缝或依赖未传入的相邻生成图。")
-    return common + """
+    delivery = common + """
 只返回一个ecom-design.v3 JSON对象，不加围栏、尾话、报告或第二份执行稿。
 外层精确为schema_version,status,questions,page_plan,images,review_records；按随调用Schema完整填写。
 ready时questions为空、images精确等于settings.image_count，position从1连续；needs_input时images为空且最多三个具体问题。
@@ -193,6 +193,13 @@ review_records使用object,method,checks,conclusion,evidence,impact,attribution,
 有repair_targets时仅返回patches与复查review_records，patches的path必须逐项等于指定路径，不扩展修改范围。修正值用op=replace；只对extra_forbidden多余字段可用op=remove、value=null，禁止删除必填项。审核记录是唯一问题时patches为空。
 JSON闭合立即结束。本Agent只策划；生图由平台按已有授权执行。
 """ + mode
+    if execution_only:
+        delivery = delivery.replace(
+            "negative_additions仅本张额外约束；固定保真句、通用负面词、栏目、真实身份和固定参数由程序拼接，不要求模型复制。",
+            "将第二阶段共同原则中适用于本张的已确定要求融入对应字段，不复制整套规划、备选方向或内部操作说明。"
+            "product_preservation写本张必要的商品保留要求；negative_additions只写本张需要排除的内容，无需另列时为空。"
+            "程序只绑定输入图片编号与固定参数，不追加通用画面规则；不要重复各字段已表达的要求。")
+    return delivery
 
 
 def _minimal_wrapper(stage, task_type):

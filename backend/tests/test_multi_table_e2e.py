@@ -444,33 +444,43 @@ class TestE2ENumericFilterChain:
 # ============================================================
 
 
-class TestE2EClassifyActionFallback:
+class TestE2EExplicitActionRouting:
 
     @pytest.mark.asyncio
-    async def test_keyword_routes_to_stock_data(self):
-        """用户说"库存负数"但 LLM 没提取 doc_type → 关键词匹配到 stock_data_query"""
+    async def test_semantic_document_type_routes_to_stock_data(self):
+        """The upstream structured doc_type selects stock; wording cannot supply it."""
         db = _mock_db([{"outer_id": "X"}], count=1)
         agent = _make_warehouse(db=db)
 
         result = await agent.execute(
             "库存负数的商品",
             dag_mode=True,
-            params={"mode": "summary"},  # 无 doc_type
+            params={"mode": "summary","doc_type":"stock"},
         )
-        # _classify_action("库存负数的商品") → "stock_data_query"
-        # → _dispatch → _query_local_data(doc_type="stock")
+        # Existing structured dispatch must still query the native stock table.
         assert result.status == "success"
         db.table.assert_called_with("erp_stock_status")
 
     @pytest.mark.asyncio
-    async def test_keyword_routes_to_product(self):
+    async def test_semantic_document_type_routes_to_product(self):
         db = _mock_db([{"outer_id": "X", "title": "t", "active_status": 1, "brand": "b"}], count=1)
         agent = _make_warehouse(db=db)
 
         result = await agent.execute(
             "停售商品有哪些",
             dag_mode=True,
-            params={"mode": "summary"},
+            params={"mode": "summary","doc_type":"product"},
         )
         assert result.status == "success"
         db.table.assert_called_with("erp_products")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('text',['库存负数的商品','停售商品有哪些','换一种表达来查询'])
+async def test_missing_document_type_never_uses_wording_as_a_fallback(text):
+    db=_mock_db([],count=0)
+    result=await _make_warehouse(db=db).execute(text,dag_mode=True,params={'mode':'summary'})
+    assert result.error_message=='ERP_DOCUMENT_TYPE_REQUIRED'
+    assert 'params.doc_type' in result.summary
+    db.table.assert_not_called()
+    db.rpc.assert_not_called()

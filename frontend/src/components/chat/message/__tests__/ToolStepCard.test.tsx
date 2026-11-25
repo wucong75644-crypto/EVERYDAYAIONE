@@ -41,6 +41,19 @@ describe('ToolStepCard', () => {
       expect(screen.getByText('失败')).toBeDefined();
     });
 
+    it('保留后端的正文引用错误，不替换成通用参数错误', () => {
+      const output = '重新读取当前目录，使用选定条目的当前版本。（CONTENT_OBJECT_UNAVAILABLE_OR_CHANGED）';
+      const { rerender } = render(
+        <ToolStepCard toolName="code_execute" toolCallId="source-error" status="error" output={output} />,
+      );
+      fireEvent.click(screen.getByRole('button'));
+      expect(screen.getByText(output)).toBeDefined();
+      expect(screen.queryByText('工具参数未通过校验。')).toBeNull();
+      // 同一已保存消息再次渲染，错误原因仍在。
+      rerender(<ToolStepCard toolName="code_execute" toolCallId="source-error" status="error" output={output} />);
+      expect(screen.getByText(output)).toBeDefined();
+    });
+
     it('cancelled 状态显示"已中断"', () => {
       render(<ToolStepCard {...baseProps} status="cancelled" output={undefined} input='{"x":1}' />);
       expect(screen.getByText('已中断')).toBeDefined();

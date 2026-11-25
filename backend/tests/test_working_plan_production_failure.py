@@ -66,7 +66,7 @@ async def test_http_boundary_sends_full_schema_and_preserves_fragmented_provider
                       if t['function']['name'] == 'update_task_plan')
         assert schema == PLAN_SCHEMA['function']['parameters']
         assert schema['$defs']['WorkItem']['required'] == ['step', 'status']
-        assert body['model'] == 'qwen3.8-max'
+        assert body['model'] == 'qwen3.8-flash'
         assert 'response_format' not in body  # A function schema is not structured body output.
         frames = [
             {'choices': [{'delta': {'tool_calls': [{'index': 0, 'id': 'provider-plan',
@@ -77,12 +77,12 @@ async def test_http_boundary_sends_full_schema_and_preserves_fragmented_provider
         content = ''.join('data: '+json.dumps(frame)+'\n\n' for frame in frames)+'data: [DONE]\n\n'
         return httpx.Response(200, text=content, headers={'content-type': 'text/event-stream'})
 
-    adapter = DashScopeChatAdapter(api_key='local-not-a-secret', model='qwen3.8-max',
+    adapter = DashScopeChatAdapter(api_key='local-not-a-secret', model='qwen3.8-flash',
         base_url='https://schema-test.invalid/v1')
     async with httpx.AsyncClient(base_url=adapter._base_url, transport=httpx.MockTransport(respond)) as client:
         adapter._client = client
         p.model_gateway = ModelGateway(adapter_factory=lambda *args, **kwargs: adapter).open_chat(
-            ModelCallRequest(model_id='qwen3.8-max', task_id=r.task_id))
+            ModelCallRequest(model_id='qwen3.8-flash', task_id=r.task_id))
         _, _, calls, _ = await _read_turn(p, [copy.deepcopy(PLAN_SCHEMA)], r.cancellation_event,
             CollectingExecutionSink(), StreamTotals(), [], None, request=req)
         await p.model_gateway.close()

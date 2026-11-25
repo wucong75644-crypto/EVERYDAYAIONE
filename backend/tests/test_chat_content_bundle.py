@@ -226,15 +226,17 @@ async def test_fresh_legacy_mapping_is_rejected_before_dispatch(monkeypatch, moc
 
 
 
-def test_actual_model_schema_exposes_one_content_reference_path():
+@pytest.mark.parametrize('saved_text_available', [False, True])
+def test_actual_model_schema_exposes_one_content_reference_path(saved_text_available):
     from services.tools.catalog import build_capability_catalog
     from services.agent.tool_args_validator import validate_tool_args
     for name in ('generate_image','generate_video','code_execute','web_search'):
         native=build_capability_catalog().require(name).to_schema()
-        schema=content_tools.model_tools([native])[0]
+        schema=content_tools.model_tools([native], saved_text_available=saved_text_available)[0]
         properties=schema['function']['parameters']['properties']
         assert not {'chat_input','chat_text_source','source_prompt'}.intersection(properties)
-        assert ('content_source' in properties)==(name in content_tools.INPUT_TOOLS)
+        uses_source = name in content_tools.INPUT_TOOLS and (name != 'code_execute' or saved_text_available)
+        assert ('content_source' in properties) == uses_source
         if name in ('generate_image', 'generate_video'):
             description = schema['function']['description']
             assert 'content_source' in description

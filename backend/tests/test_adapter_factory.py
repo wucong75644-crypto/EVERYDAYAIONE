@@ -259,7 +259,7 @@ class TestModelRegistry:
         """验证 supports_search 标记（跨 provider）"""
         search_models = {
             # KIE / DashScope
-            "gemini-3-pro", "gemini-3-flash", "qwen3.8-max", "qwen3.8-flash",
+            "gemini-3-pro", "gemini-3-flash", "qwen3.8-flash",
             # OpenRouter
             "openai/gpt-4.1", "openai/gpt-4.1-mini", "openai/o4-mini",
             "x-ai/grok-4.1-fast", "openai/gpt-5.4", "openai/gpt-5.4-pro",
@@ -330,7 +330,7 @@ class TestModelRegistry:
         }
         no_audio = {
             "gemini-3-pro", "gemini-3-flash",
-            "deepseek-v3.2", "qwen3.8-max",
+            "deepseek-v3.2", "qwen3.8-flash",
             "openai/gpt-4.1", "anthropic/claude-sonnet-4",
         }
         for mid in audio_models:
@@ -358,7 +358,7 @@ class TestModelRegistry:
 
     def test_all_dashscope_models_registered(self):
         """验证所有 DashScope 模型都在注册表中"""
-        expected = {"deepseek-v3.2", "deepseek-r1", "qwen3.8-max", "kimi-k2.5", "glm-5"}
+        expected = {"deepseek-v3.2", "deepseek-r1", "qwen3.8-flash", "kimi-k2.5", "glm-5"}
         ds_models = get_models_by_provider(ModelProvider.DASHSCOPE)
         assert expected.issubset(set(ds_models.keys()))
 

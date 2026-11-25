@@ -87,11 +87,6 @@ class TradeAgent(DepartmentAgent):
 
     _DOC_TYPE_ACTION_MAP = {"order": "order_list"}
 
-    def _classify_action(self, task: str) -> str:
-        t = task.lower()
-        if any(kw in t for kw in ("物流", "快递", "签收", "logistics")):
-            return "logistics_query"
-        return "order_list"
 
     async def _dispatch(self, action, params, context):
         return await self.query_orders(**self._query_kwargs(params))

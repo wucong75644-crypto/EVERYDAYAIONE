@@ -69,16 +69,16 @@ async def test_actor_source_checks_identity_permissions_and_flags_before_body(mo
     source.repository.assigned_revision = Mock(side_effect=AssertionError("must not read"))
     identity = Mock()
     monkeypatch.setattr("services.skills.runtime_source._check_identity", identity)
-    checker = SimpleNamespace(check=AsyncMock(return_value=True))
+    checker = SimpleNamespace(check_many=AsyncMock(return_value=frozenset({"order.view"})))
     monkeypatch.setattr("services.skills.runtime_source.PermissionChecker", lambda _: checker)
     assert await source.discover() == [c]
     identity.assert_called_once()
-    checker.check.return_value = False
+    checker.check_many.return_value = frozenset()
     from services.skills.selection import SkillSelection
     manual = state(source)
-    checker.check.return_value = True
+    checker.check_many.return_value = frozenset({"order.view"})
     await manual.initialize(selection=SkillSelection(skill_id=c.skill_key, revision=c.revision))
-    checker.check.return_value = False
+    checker.check_many.return_value = frozenset()
     assert (await manual.activate_manual(SkillSelection(skill_id=c.skill_key, revision=c.revision)))["code"] == "SKILL_ACCESS_DENIED"
     with pytest.raises(SkillError, match="ACCESS_DENIED"):
         await source.load(c)

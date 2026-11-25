@@ -219,7 +219,8 @@ async def test_server_continuation_keeps_the_original_user_input_budget():
     assert repairs.read(continued).input_id == 'source-input-1'
 
 
-def test_saved_source_and_schema_errors_share_one_persisted_correction_budget():
+@pytest.mark.parametrize('source_code', ['CONTENT_BASE_VERSION_CHANGED', 'IMAGE_CANVAS_REFERENCE_REQUIRED', 'IMAGE_DIMENSIONS_UNAVAILABLE'])
+def test_saved_source_and_schema_errors_share_one_persisted_correction_budget(source_code):
     import json
 
     runtime, prepared, _, request = setup()
@@ -229,7 +230,7 @@ def test_saved_source_and_schema_errors_share_one_persisted_correction_budget():
     }}}
     schema_error = call('generate_video', {'unexpected': True}, 'invalid-schema')
     stale = call('generate_video', {'content_source': {'item_index': 2}}, 'invalid-source')
-    errors = {'invalid-source': ('CONTENT_BASE_VERSION_CHANGED', '来源版本已经变化')}
+    errors = {'invalid-source': (source_code, '来源或尺寸需要核对')}
     first = repairs.Batch.prepare(runtime, request, [schema_error, stale], offer)
     combined = repairs.Batch.with_sources(runtime, request, [schema_error, stale], errors, first)
     assert list(combined.state.counts.values()) == [1]
@@ -241,3 +242,22 @@ def test_saved_source_and_schema_errors_share_one_persisted_correction_budget():
     third = repairs.Batch.prepare(runtime, request, [schema_error], offer)
     assert list(third.state.counts.values()) == [3]
     assert third.state.stopped
+
+
+@pytest.mark.asyncio
+async def test_missing_planner_count_is_rejected_before_dispatch_and_uses_existing_repair_ledger():
+    from services.handlers.chat.content_tools import model_tools
+    from services.tools import build_legacy_catalog
+    runtime,prepared,handler,request=setup()
+    spec,=model_tools([build_legacy_catalog().require('plan_ecommerce_images').to_schema()])
+    prepared.content_visible_tools={'plan_ecommerce_images':spec['function']}
+    missing=call('plan_ecommerce_images',{'references':[{'file_id':'source','role':'product'}]},'missing-count')
+    await execute(runtime,prepared,handler,request,[missing])
+    handler._execute_tool_calls.assert_not_awaited()
+    assert error_code(prepared.messages,'missing-count')==repairs.INVALID
+    assert list(repairs.read(runtime).counts.values())==[1]
+    # The next attempt supplies the user's actual count, without rewriting input or selecting a new Skill.
+    corrected=call('plan_ecommerce_images',{'references':[{'file_id':'source','role':'product'}],'image_count':3},'correct-count')
+    await execute(runtime,prepared,handler,request,[corrected])
+    handler._execute_tool_calls.assert_awaited_once()
+    assert handler._execute_tool_calls.await_args.args[0]==[corrected]

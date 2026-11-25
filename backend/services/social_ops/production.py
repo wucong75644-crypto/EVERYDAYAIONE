@@ -565,7 +565,7 @@ class ProductionWorker:
                 ),
             }
         )
-        model = settings.agent_loop_model or "qwen3.8-max"
+        model = settings.agent_loop_model or "qwen3.8-flash"
         # These existing adapters have an explicit JSON-object transport contract.
         # DeepSeek JSON output is requested in non-thinking mode; other models
         # retain their previous path rather than assuming provider capabilities.

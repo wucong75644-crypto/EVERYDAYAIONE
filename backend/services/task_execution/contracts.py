@@ -10,6 +10,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator, model_serial
 Key = Annotated[str, Field(pattern=r'^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,99}$')]
 Digest = Annotated[str, Field(pattern=r'^[a-f0-9]{64}$')]
 Count = Annotated[int, Field(strict=True, ge=0)]
+MAX_INLINE_TEXT_CHARS = 50_000
+
 ArtifactKind = Literal['text', 'file', 'image', 'data', 'receipt']
 TaskStatus = Literal['active', 'waiting_input', 'waiting_approval', 'waiting_dependencies',
                      'paused', 'completed', 'partial', 'failed', 'cancelled']
@@ -151,7 +153,7 @@ class Artifact(Fact):
     step_id: Key
     # Names of domain checks actually passed, never assertions accepted from a model.
     validations: tuple[Key, ...] = Field(default=('artifact.exists',), max_length=32)
-    inline_text: str | None = Field(default=None, min_length=1, max_length=50000)
+    inline_text: str | None = Field(default=None, min_length=1, max_length=MAX_INLINE_TEXT_CHARS)
     image_reuse: ReusedImage | None = None
     image_method: MethodBinding | None = None
 

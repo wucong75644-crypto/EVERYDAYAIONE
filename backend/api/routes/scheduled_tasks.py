@@ -1000,13 +1000,14 @@ async def parse_nl_task(
     - name / prompt / schedule_type / time_str / weekdays / day_of_month / run_at
 
     structured_fields 使用共享字段校验，失败返回 422 供界面保留输入。
-    旧调用保留其原有解析及降级约定。
+    旧表单解析失败同样返回 422，不从关键词猜周期或时间。
     """
     org_id = _require_org(org_ctx)
     if not await check_permission(db, user_id, org_id, "task.create"):
         raise HTTPException(403, "无权创建定时任务")
 
     from services.scheduler.task_nl_parser import parse_task_nl
+    from services.scheduler.task_definition_input import TaskDefinitionInputError
     if payload.structured_fields:
         from services.scheduler.task_nl_parser import parse_structured_task_request
         from services.scheduler.task_definition_input import TaskDefinitionInputError
@@ -1021,7 +1022,10 @@ async def parse_nl_task(
         result = await parse_task_request(payload.text, operation=payload.operation)
         return {"success": True, "data": {**result["changes"], "missing_fields": result["missing_fields"],
                                            "recipient": result["recipient"], "suggested_target": None}}
-    parsed = await parse_task_nl(payload.text, tz="Asia/Shanghai")
+    try:
+        parsed = await parse_task_nl(payload.text, tz="Asia/Shanghai")
+    except TaskDefinitionInputError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     # 计算 cron_readable 用于 UI 展示（only for daily/weekly/monthly）
     cron_readable: Optional[str] = None

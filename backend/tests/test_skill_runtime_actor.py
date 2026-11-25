@@ -233,6 +233,8 @@ async def test_activation_checkpoint_precedes_pause_or_cancel_and_resumes_exactl
     assert checkpoint["next_model_round"] == 1
     assert len([m for m in checkpoint["messages"] if m["role"] == "tool"]) == 2
     assert checkpoint["skill_runtime"]["active"][0]["effective_allowed_tool_names"] == ["file_search"]
+    assert runtime.skill_runtime.checkpoint() == checkpoint['skill_runtime']
+    assert p.messages == checkpoint['messages']
     if command is CommandType.PAUSE:
         resumed = state(source)
         source.load.side_effect = source._load
@@ -241,6 +243,31 @@ async def test_activation_checkpoint_precedes_pause_or_cancel_and_resumes_exactl
         resumed.ensure_messages(messages)
         assert messages == checkpoint["messages"]
         assert (await resumed.activate(activate()))["code"] == "SKILL_ALREADY_ACTIVE"
+
+
+@pytest.mark.parametrize('control', ['activate_skill', 'deactivate_skill'])
+async def test_plain_chat_control_failure_never_persists_an_unpaired_assistant(control):
+    confirmed = []
+    async def save(point, payload):
+        if point is SafePoint.AFTER_SKILL_ACTIVATION:
+            raise RuntimeError('checkpoint unavailable')
+        confirmed.append(copy.deepcopy(payload))
+        return {'outcome': 'saved'}
+    runtime = actor(save)
+    runtime.skill_runtime = state(Source(body='Current method'))
+    await runtime.skill_runtime.initialize()
+    if control == 'deactivate_skill':
+        assert (await runtime.skill_runtime.activate(activate()))['ok']
+    p, h = prepared(), handler()
+    runtime.skill_runtime.ensure_messages(p.messages)
+    before, messages = runtime.skill_runtime.checkpoint(), copy.deepcopy(p.messages)
+    with pytest.raises(RuntimeError, match='checkpoint unavailable'):
+        await batch(runtime, p, [call(control, json.dumps({'skill_id': 'report'}))], h)
+    assert confirmed == []
+    assert runtime.replay_save_sequence == 0
+    assert p.messages == messages
+    assert runtime.skill_runtime.checkpoint() == before
+    h._execute_tool_calls.assert_not_awaited()
 
 
 async def test_cancellation_before_activation_does_not_load_or_dispatch():

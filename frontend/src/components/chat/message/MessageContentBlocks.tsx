@@ -344,6 +344,7 @@ export default function MessageContentBlocks({
           .filter(p => p.type === 'thinking')
           .reduce((sum, p) => sum + ((p as { text?: string }).text?.length || 0), 0);
         const livePart = (streamingThinking || '').slice(committedLen);
+        if (!livePart) return null;
         return (
           <ThinkingBlock
             content={livePart}
@@ -354,7 +355,7 @@ export default function MessageContentBlocks({
       })()}
       {(isStreaming || isRegenerating) && (
         <LoadingPlaceholder text={agentStepHint || (
-          textContent ? 'AI 正在输出' : 'AI 正在思考'
+          textContent ? 'AI 正在输出' : streamingThinking ? 'AI 正在思考' : 'AI 正在处理'
         )} />
       )}
     </div>

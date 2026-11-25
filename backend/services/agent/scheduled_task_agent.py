@@ -131,7 +131,7 @@ class ScheduledTaskAgent:
             from core.config import get_settings
             settings = get_settings()
             model_id = (
-                getattr(settings, "agent_loop_model", None) or "qwen3.8-max"
+                getattr(settings, "agent_loop_model", None) or "qwen3.8-flash"
             )
             model_gateway = get_model_gateway().open_chat(
                 ModelCallRequest(
@@ -368,6 +368,7 @@ class ScheduledTaskAgent:
         tool_loop = ToolLoopExecutor(
             adapter=model_gateway,
             executor=executor,
+            skill_context=self.skill_runtime is not None,
             all_tools=all_tools,
             config=LoopConfig(
                 max_turns=MAX_SCHEDULED_TURNS,

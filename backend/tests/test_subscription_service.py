@@ -191,9 +191,9 @@ class TestKnownModelIds:
 def test_qwen_subscription_upgrade_is_read_only_and_idempotent(mock_db, service):
     rows = [{"user_id": "u1", "model_id": "qwen3.5-plus", "subscribed_at": "2026-03-10T00:00:00Z"}]
     mock_db.set_table_data("user_subscriptions", rows)
-    assert service.get_user_subscriptions("u1")[0]["model_id"] == "qwen3.8-max"
+    assert service.get_user_subscriptions("u1")[0]["model_id"] == "qwen3.8-flash"
     assert mock_db.table("user_subscriptions").select("*").execute().data[0]["model_id"] == "qwen3.5-plus"
-    service.subscribe("u1", "qwen3.8-max")
+    service.subscribe("u1", "qwen3.8-flash")
     assert len(mock_db.table("user_subscriptions").select("*").execute().data) == 1
-    service.unsubscribe("u1", "qwen3.8-max")
+    service.unsubscribe("u1", "qwen3.8-flash")
     assert service.get_user_subscriptions("u1") == []

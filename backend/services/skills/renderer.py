@@ -87,6 +87,11 @@ def referenced_assets(skill) -> tuple[str, ...]:
     return ids
 
 
+def deferred_assets(skill) -> tuple[str, ...]:
+    declared = {a.id: a for a in skill.resources.assets}
+    return tuple(key for key in referenced_assets(skill) if declared[key].loading == 'on_demand')
+
+
 def _template_names(text: str, declarations) -> set[str]:
     names = set(_VARIABLE.findall(text))
     remainder = _VARIABLE.sub('', text)
@@ -124,15 +129,21 @@ def asset_manifest_digest(resources) -> str | None:
 
 
 def prepare_resources(skill, context: dict, maximum: int, *, maximum_body: int = MAX_BODY_BYTES,
-                      maximum_rendered: int = MAX_RENDERED_BYTES):
+                      maximum_rendered: int = MAX_RENDERED_BYTES, defer_assets: bool = False):
     """Determine reads from the original body, before substitution or asset IO."""
-    ids = referenced_assets(skill)
+    all_ids = referenced_assets(skill)
+    deferred = deferred_assets(skill) if defer_assets else ()
+    ids = tuple(key for key in all_ids if key not in deferred)
     values = server_arguments(skill.resources, context)
     names = _template_names(skill.body, skill.resources.template_variables)
     base = render(skill.body, {name: values[name] for name in names},
                   maximum_body=maximum_body, maximum_rendered=maximum_rendered)
     if skill.resources.assets:
         base += '\n\n[Skill attachments: summaries]\n' + encoded(public_assets(skill.resources))
+    if deferred:
+        base += ('\n\n[Skill on-demand attachments]\n' + encoded({'skill_id': skill.skill_key, 'asset_ids': deferred})
+                 + '\n这些附件按需读取，状态以本轮已加载清单为准；当前阶段需要时先调用 read_skill_asset，下一轮从本 Skill 指令中读取加载后的正文。'
+                   '无需当前资料时不要读取；附件中的引用不触发递归读取。')
     entries = {a.id: a for a in skill.resources.assets}
     required = len(base.encode('utf-8')) + sum(
         len(asset_header(entries[asset_id]).encode('utf-8')) + entries[asset_id].bytes for asset_id in ids)

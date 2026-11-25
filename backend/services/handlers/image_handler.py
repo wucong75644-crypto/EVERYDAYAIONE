@@ -42,7 +42,10 @@ class ImageHandler(BaseHandler):
         super().__init__(db)
 
     async def accept_chat_image(self, owner: Any, args: Dict[str, Any]) -> Dict[str, Any]:
-        """Persist one frozen child. No prepare, provider IO or credit debit.
+        """Preflight scoped inputs, then persist one frozen child.
+
+        Input checks use native source/size/permission contracts only; image
+        submission and credit debit remain in the existing native lifecycle.
 
         `owner` is the Policy-approved executor, never a model argument. Actor
         fencing comes from the active handler and is checked again by the RPC.
@@ -117,6 +120,30 @@ class ImageHandler(BaseHandler):
             origin["skills"] = list(getattr(owner, "image_skill_snapshot", ()))
             if composition is not None:
                 origin['skill_composition_revision'] = composition.revision
+            # Preserve an experimental historical origin field only for exact
+            # idempotent replay. It grants no permission and starts no review.
+            existing=await asyncio.to_thread(lambda:scoped.table('tasks').select('request_params')
+                .eq('user_id',owner.user_id).eq('conversation_id',owner.conversation_id).eq('type','image')
+                .eq("request_params->'_media_request_v1'->'origin'->>'parent_task_id'",owner.task_id)
+                .eq("request_params->'_media_request_v1'->'origin'->>'tool_call_id'",call_id).limit(1).execute().data)
+            if existing:
+                prior=existing[0]['request_params']['_media_request_v1']
+                from services.handlers.chat_image_request import verify_frozen_request
+                verify_frozen_request(prior)
+                fidelity=prior['origin'].get('product_fidelity')
+                provenance={'source','resolution_source','source_task_id','source_message_id','resolution'}
+                prior_size=prior.get('size_requirement')
+                if (isinstance(prior_size,dict) and isinstance(target_size,dict)
+                        and {k:v for k,v in prior_size.items() if k not in provenance}
+                        == {k:v for k,v in target_size.items() if k not in provenance}):
+                    # Acceptance owns its original provenance. Reconstructing
+                    # it from later siblings must not invalidate a replay.
+                    # freeze_image_request still binds normalized resolution.
+                    target_size=dict(prior_size)
+            else:
+                fidelity=None
+            if fidelity is not None:
+                origin['product_fidelity']=fidelity
             if plan_proof:
                 origin["plan_source"] = plan_proof
             snapshot=freeze_image_request(normalized,refs,origin=origin,

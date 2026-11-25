@@ -226,7 +226,7 @@ describe('MessageItem 助手内容宽度', () => {
 });
 
 describe('MessageItem 图片提交态', () => {
-  it('图片任务在后端确认前显示思考文案而不启动媒体卡', () => {
+  it('图片任务在后端确认前显示处理文案而不虚报思考或启动媒体卡', () => {
     render(
       <MessageItem
         message={makeMessage({
@@ -240,7 +240,7 @@ describe('MessageItem 图片提交态', () => {
       />,
     );
 
-    expect(screen.getByText('AI 正在思考')).toBeInTheDocument();
+    expect(screen.getByText('AI 正在处理')).toBeInTheDocument();
     expect(capturedMediaProps.isGenerating).toBe(false);
   });
 });

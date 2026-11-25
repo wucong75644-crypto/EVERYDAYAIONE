@@ -1,3 +1,4 @@
+from tests.semantic_fixtures import semantic_request
 """Regressions for the actual production Skill bypass and KIE 200/401 failure."""
 import asyncio
 from dataclasses import replace
@@ -14,6 +15,190 @@ from services.adapters.kie.chat_adapter import KieChatAdapter
 from services.adapters.kie.client import KieClient, KieAuthenticationError, KieRateLimitError
 from services.agent.agent_result import AgentResult
 from services.agent.image.ecommerce_planner.service import EcommerceImagePlanner
+
+
+def test_workflow_prompt_reflects_preloaded_skill_and_server_publication():
+    from services.agent.image.ecommerce_planner.workflow import EcommerceWorkflow
+    workflow=EcommerceWorkflow.__new__(EcommerceWorkflow)
+    workflow.value=SimpleNamespace(kind='main_images',skill={'skill_key':'ecommerce-main-images'},plan_id=None,mode='plan_only')
+    workflow.server_selected=lambda:True
+    workflow.server_skill_key=lambda:'ecommerce-main-images'
+    prompt=json.loads(workflow.context_message()['content'].split('\n',1)[1])['instruction']
+    assert '已激活，无需再次调用 activate_skill' in prompt
+    assert '后台保存和发布' in prompt and '不调用 save_task_text' in prompt
+    workflow.value.skill=None
+    assert '先激活该 Skill' in workflow.context_message()['content']
+
+
+@pytest.mark.asyncio
+async def test_manual_entry_freezes_the_same_workflow_before_skill_activation():
+    from services.agent.image.ecommerce_planner.workflow import EcommerceWorkflow,WorkflowBinding,KEY
+    from services.skills.coordination import ActionContext
+    from unittest.mock import Mock
+    workflow=EcommerceWorkflow.__new__(EcommerceWorkflow)
+    workflow.value=WorkflowBinding(kind='main_images',root_task_id=str(uuid4()),window_task_id=str(uuid4()),generation_run_id=str(uuid4()))
+    skills=SimpleNamespace(action_context=ActionContext(action='other'),set_action=Mock(),manual_skill_id='ecommerce-main-images',
+        workflow_method=lambda _:None,bind_workflow=Mock())
+    workflow.runtime=SimpleNamespace(skill_coordination=True,skill_runtime=skills,workflow_projection=workflow.value.model_dump(mode='json'))
+    workflow.request=SimpleNamespace(params={},replay_context=None)
+    workflow.route={'kind':'main_images'}
+    workflow.server_skill_key=lambda:None
+    assert not workflow.requires_server_binding()  # No active method or plan yet.
+    await workflow.coordinate(skills)
+    assert workflow.request.params[KEY]==workflow.runtime.workflow_projection
+    skills.bind_workflow.assert_called_once_with(workflow.runtime.workflow_projection)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('text', ['把第一个方案生成图片，按保存原文执行。', '第一个和第三个做成图吧。', '就用刚才那套，做出来看看。'])
+async def test_numbered_execution_keeps_ready_server_identity_without_reauthoring(monkeypatch,text):
+    from unittest.mock import MagicMock,Mock
+    from schemas.message import TextPart
+    from services.agent.image.ecommerce_planner.workflow import EcommerceWorkflow,WorkflowBinding
+    task,user,conv,prior,plan,item=[str(uuid4()) for _ in range(6)]
+    old=WorkflowBinding(kind='main_images',root_task_id=prior,window_task_id=prior,generation_run_id=str(uuid4()),
+        plan_id=plan,skill={'skill_key':'ecommerce-main-images'})
+    q=SimpleNamespace(task_id=task,user_id=user,conversation_id=conv,params={},selected_skill=None,replay_context=None,
+        content=[TextPart(text=text)])
+    runtime=SimpleNamespace(skill_coordination=True,skill_runtime=None)
+    workflow=EcommerceWorkflow(SimpleNamespace(db=Mock(),org_id=None),q,runtime,None)
+    query=MagicMock()
+    for method in ['select','eq','neq','order','limit','single','maybe_single']:getattr(query,method).return_value=query
+    ready={'id':plan,'status':'ready','plan_revision':1,'items':[
+        {'position':i,'item_id':item if i==1 else str(uuid4()),'name':f'方案{i}'} for i in (1,2,3)]}
+    query.execute.side_effect=[SimpleNamespace(data={'id':task,'user_id':user,'org_id':None,'conversation_id':conv,
+        'status':'running','input_message_id':str(uuid4()),'request_params':{}}),
+        SimpleNamespace(data={'role':'user','content':[{'type':'text','text':q.content[0].text}]}),
+        SimpleNamespace(data=[{'id':prior,'request_params':{'_ecom_workflow':old.model_dump(mode='json')}}]),
+        SimpleNamespace(data={'id':plan,'status':'ready','current_stage':3,'image_count':3}),SimpleNamespace(data=ready)]
+    workflow.scope=SimpleNamespace(table=lambda _:query)
+    router=AsyncMock(return_value={'kind':'main_images','mode':'input','reuse_through_stage':0,'intent':'execute_saved'})
+    monkeypatch.setattr('services.agent.image.ecommerce_planner.workflow.classify_workflow',router)
+    await workflow.initialize()
+    assert workflow.value.plan_id==plan and workflow.value.generation_run_id==old.generation_run_id
+    assert workflow.value.mode=='input' and workflow.value.reset_window is False
+    assert workflow.ready_execution==ready
+    workflow.server_selected=lambda:True
+    workflow.activated=AsyncMock()
+    assert not await workflow.needs_planner([])
+    body=json.loads(workflow.context_message()['content'].split('\n',1)[1])
+    assert body['items'][0]['plan_source']=={'plan_id':plan,'revision':1,'item_id':item}
+
+
+@pytest.mark.asyncio
+async def test_manual_image_writing_uses_the_same_scope_router_as_other_entries(monkeypatch):
+    from unittest.mock import MagicMock,Mock
+    from schemas.message import TextPart,ImagePart
+    from services.agent.image.ecommerce_planner.workflow import EcommerceWorkflow
+    task,user,conv=[str(uuid4()) for _ in range(3)]
+    q=SimpleNamespace(task_id=task,user_id=user,conversation_id=conv,params={},replay_context=None,
+        selected_skill=SimpleNamespace(skill_id='ecommerce-main-images'),
+        content=[TextPart(text='参考产品图写3套主图方案，先只写文字。'),ImagePart(name='原图',url='https://example.invalid/product.png')])
+    runtime=SimpleNamespace(skill_coordination=True,skill_runtime=None)
+    workflow=EcommerceWorkflow(SimpleNamespace(db=Mock(),org_id=None),q,runtime,None)
+    query=MagicMock()
+    for method in ['select','eq','neq','order','limit','single']:getattr(query,method).return_value=query
+    query.execute.side_effect=[SimpleNamespace(data={'id':task,'user_id':user,'org_id':None,'conversation_id':conv,
+        'status':'running','input_message_id':str(uuid4()),'request_params':{}}),
+        SimpleNamespace(data={'role':'user','content':[p.model_dump(mode='json') for p in q.content]}),SimpleNamespace(data=[])]
+    workflow.scope=SimpleNamespace(table=lambda _:query)
+    router=AsyncMock(return_value={'kind':'main_images','mode':'new','reuse_through_stage':0,'intent':'write'})
+    monkeypatch.setattr('services.agent.image.ecommerce_planner.workflow.classify_workflow',router)
+    await workflow.initialize()
+    assert workflow.value.kind=='main_images' and runtime.workflow_projection['kind']=='main_images'
+    router.assert_awaited_once()
+
+
+def test_current_user_message_as_explicit_source_is_included_exactly_once():
+    from services.agent.image.ecommerce_planner.inputs import text_message_ids
+    assert text_message_ids(['past','current'],'current')==['past','current']
+    assert text_message_ids([],'current')==['current']
+    # Other IDs remain subject to the native scoped resolver, never discarded.
+    assert text_message_ids(['foreign','current'],'current')==['foreign','current']
+
+
+def test_planner_snapshots_delivered_appends_verbatim_with_stable_source_ids():
+    import hashlib
+    from services.task_execution.user_changes import UserChanges,UserChange
+    from services.agent.image.ecommerce_planner.inputs import with_user_changes,model_input,source_bindings
+    owner,other=uuid4(),uuid4()
+    text='背景改为浅米灰色，仍然只写文字。'
+    def change(task,delivered):
+        return UserChange(event_id=uuid4(),owner_task_id=task,message=text,
+            message_sha256=hashlib.sha256(text.encode()).hexdigest(),delivered=delivered)
+    accepted=change(owner,True)
+    changes=UserChanges(root_task_id=owner,items=(accepted,change(other,True),change(owner,False)))
+    original=[{'message_id':str(uuid4()),'parts':[{'content_index':0,'text':'原始要求16:9、2K。'}]}]
+    messages=with_user_changes(original,changes,str(owner))
+    assert len(messages)==2 and messages[1]['parts'][0]['text']==text
+    assert messages[1]['message_sha256']==accepted.message_sha256
+    assert with_user_changes(messages,changes,str(owner))==messages
+    assert len(original)==1
+    assert source_bindings({'messages':messages})['text_2']['source_id']==f'user_change:{accepted.event_id}:0'
+    assert model_input({'messages':messages},messages,[])['raw_user_texts'][1]=={
+        'source_ref':'text_2','text':text,'source_kind':'user_append'}
+
+
+@pytest.mark.parametrize('model',['qwen3.8-flash'])
+def test_qwen_json_contract_is_explicit_and_invalid_formats_cannot_be_dropped(model):
+    from services.adapters.dashscope.chat_adapter import DashScopeChatAdapter
+    adapter=DashScopeChatAdapter(api_key='offline',model=model)
+    options={'stream':True,'thinking_mode':'disabled','reasoning_effort':None}
+    assert 'response_format' not in adapter._request_body([],**options)
+    with pytest.raises(ValueError,match='QWEN_RESPONSE_FORMAT_UNSUPPORTED'):
+        adapter._request_body([],**options,response_format={'type':'json_schema'})
+
+
+@pytest.mark.parametrize('ids',[None,'current',['past','past'],['current','current'],[1],list(map(str,range(9)))])
+def test_invalid_history_selector_is_not_silently_repaired(ids):
+    from services.agent.image.ecommerce_planner.inputs import text_message_ids
+    with pytest.raises(ValueError,match='ECOM_PLAN_HISTORY_INVALID'):
+        text_message_ids(ids,'current')
+
+
+@pytest.mark.parametrize('mode,page,expected', [('disabled',False,'qwen3.8-flash'),
+    ('enabled',False,'openai/gpt-6.1-sol'),(None,False,'openai/gpt-6.1-sol'),
+    ('disabled',True,'openai/gpt-6.1-sol')])
+def test_nonthinking_route_is_separate_config_and_does_not_mutate_shared_settings(mode,page,expected):
+    service=planner();service.settings.ecom_image_planning_model='openai/gpt-6.1-sol'
+    service.settings.ecom_image_planning_non_thinking_model='qwen3.8-flash';service.page_execution=page
+    model,registered=service._select_chat_model({'request_params':{'thinking_mode':mode}})
+    assert model==expected and registered.model_id==expected
+    assert service.settings.ecom_image_planning_model=='openai/gpt-6.1-sol'
+    assert service.chat_thinking_mode==('disabled' if mode=='disabled' and not page else None)
+    assert service._select_chat_model({'request_params':{}})[0]=='openai/gpt-6.1-sol'
+
+
+@pytest.mark.parametrize('selected',['not-registered','openai/gpt-6.1-sol'])
+def test_invalid_nonthinking_route_cannot_fallback_or_reserve_credits(selected):
+    service=planner();service.settings.ecom_image_planning_non_thinking_model=selected
+    with pytest.raises(Exception):service._select_chat_model({'request_params':{'thinking_mode':'disabled'}})
+    service._reserve.assert_not_awaited()
+
+
+@pytest.mark.parametrize('text,expected', [
+    ('做一套韩系ins风格主图，符合抖音端口人群','抖音'),
+    ('策划适合在淘宝上展示的主图','淘宝'),
+    ('面向1688和小红书的用户',None),
+    ('不要用于抖音主图',None),
+    ('客户示例：“抖音主图”。只分析产品',None),
+    ('产品名叫抖音联名本',None),
+])
+def test_platform_is_frozen_from_semantic_context(text, expected):
+    from services.agent.image.ecommerce_planner.workflow import ImageRequestContext
+    frame = ImageRequestContext(platform=expected)
+    assert frame.platform == expected
+    assert text  # Original customer wording belongs to the semantic producer.
+
+
+
+def test_multiple_new_platforms_cannot_reuse_a_previous_single_platform():
+    from services.agent.image.ecommerce_planner.workflow import ImageRequestContext
+    changed = ImageRequestContext(platform=None, platform_changed=True)
+    assert changed.platform is None and changed.platform_changed
+    unchanged = ImageRequestContext()
+    assert unchanged.platform is None and not unchanged.platform_changed
+
 
 
 @pytest.mark.parametrize('code,error', [(401, KieAuthenticationError), (429, KieRateLimitError)])
@@ -61,13 +246,15 @@ async def test_kie_responses_preserves_images_and_terminal_usage(model):
 
 
 @pytest.mark.parametrize('mode', ['completed', 'missing_done', 'length', 'missing_usage', 'missing_cost'])
-async def test_openrouter_planner_uses_real_factory_images_receipt_and_fails_closed(monkeypatch, mode):
+@pytest.mark.parametrize('thinking_mode', [None, 'disabled'])
+async def test_openrouter_planner_uses_real_factory_images_receipt_and_fails_closed(monkeypatch, mode, thinking_mode):
     from services.adapters.openrouter.chat_adapter import OpenRouterChatAdapter
     from services.agent.execution_budget import ExecutionBudget
     from services.agent.image.ecommerce_planner.recovery import PlannerRecoveryError
     from services.model_gateway import ModelGateway
     service = planner()
     service.settings.ecom_image_planning_model = 'openai/gpt-6.1-sol'
+    service.chat_thinking_mode = thinking_mode
     service.settings.ecom_image_planning_input_credits_per_million = None
     service.settings.ecom_image_planning_output_credits_per_million = None
     service.owner.execution_budget = ExecutionBudget(max_wall_time=600)
@@ -108,6 +295,14 @@ async def test_openrouter_planner_uses_real_factory_images_receipt_and_fails_clo
         {'type': 'input_image', 'image_url': 'https://example.invalid/second.png'}]}]
     try:
         call = service._call({'id': str(uuid4())}, 'lease', 3, 'rules', messages)
+        if thinking_mode == 'disabled':
+            from services.model_reasoning import ReasoningUnsupportedError
+            with pytest.raises(ReasoningUnsupportedError):
+                await call
+            assert seen == []
+            service._reserve.assert_not_awaited()
+            service._finish.assert_not_awaited()
+            return
         if mode == 'completed':
             content, usage = await call
             assert content == 'OK' and usage['provider'] == 'openrouter'
@@ -118,7 +313,8 @@ async def test_openrouter_planner_uses_real_factory_images_receipt_and_fails_clo
             assert service._finish.await_args.args[5] == 'uncertain'
         body, authorization, read_timeout = seen[0]
         assert len(seen) == 1 and authorization == 'Bearer platform-test-key'
-        assert body['model'] == 'openai/gpt-6.1-sol' and body['reasoning'] == {'effort': 'medium'}
+        assert body['model'] == 'openai/gpt-6.1-sol'
+        assert body['reasoning'] == ({'enabled': False} if thinking_mode == 'disabled' else {'effort': 'medium'})
         assert body['messages'][1]['content'] == [{'type': 'text', 'text': '要有发财的感觉'},
             {'type': 'image_url', 'image_url': {'url': 'https://example.invalid/first.png'}},
             {'type': 'image_url', 'image_url': {'url': 'https://example.invalid/second.png'}}]
@@ -137,6 +333,42 @@ async def test_unregistered_planner_model_rejected_before_database():
     result = await service.run({'references': [], 'image_count': 5})
     assert result.error_message == 'ECOM_IMAGE_PLANNING_MODEL_MISMATCH'
     service._reserve.assert_not_awaited()
+
+
+@pytest.mark.parametrize('stage', [1, 2, 3])
+@pytest.mark.parametrize('model',['qwen3.8-flash'])
+async def test_qwen_planner_off_reaches_actual_adapter_and_keeps_image_input(monkeypatch, stage, model):
+    from services.adapters.dashscope.chat_adapter import DashScopeChatAdapter
+    from services.model_gateway import ModelGateway
+    service=planner();service.settings.ecom_image_planning_model=model
+    service.chat_thinking_mode='disabled';seen=[]
+    def response(request):
+        seen.append(json.loads(request.content))
+        assert request.url.path.endswith('/chat/completions')
+        return httpx.Response(200,headers={'content-type':'text/event-stream'},content=(
+            'data: {"choices":[{"delta":{"content":"output"},"finish_reason":"stop"}]}\n\n'
+            'data: {"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":10}}\n\n'
+            'data: [DONE]\n\n'))
+    async def client(adapter):
+        if adapter._client is None:
+            adapter._client=httpx.AsyncClient(base_url=adapter._base_url,transport=httpx.MockTransport(response))
+        return adapter._client
+    monkeypatch.setattr(DashScopeChatAdapter,'_get_client',client)
+    monkeypatch.setattr('services.circuit_breaker.is_provider_available',lambda _:True)
+    gateway=ModelGateway(event_publisher=SimpleNamespace(publish=lambda event:None))
+    monkeypatch.setattr('services.agent.image.ecommerce_planner.service.get_model_gateway',lambda:gateway)
+    messages=[{'role':'user','content':[{'type':'input_text','text':'保留真实商品'},
+        {'type':'input_image','image_url':'https://example.invalid/product.png'}]}]
+    try:
+        content,usage=await service._call({'id':str(uuid4())},'lease',stage,'rules',messages)
+        assert content=='output' and usage['input_tokens']==100 and usage['output_tokens']==10
+        body,=seen
+        assert body['enable_thinking'] is False and not body.get('reasoning_effort')
+        assert body.get('response_format')==({'type':'json_object'} if stage in {1,3} else None)
+        assert body['messages'][0]['content'][1]=={'type':'image_url','image_url':{'url':'https://example.invalid/product.png'}}
+        service._reserve.assert_awaited_once()
+    finally:
+        await gateway.close()
 
 
 def planner():
@@ -424,3 +656,259 @@ async def test_kie_terminal_failure_retains_diagnostics_without_guessing_http_re
         assert raised.value.status_code is None
     finally:
         await adapter.close()
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('stage',[1,2,3])
+async def test_completed_planning_stage_does_not_wait_for_a_second_model(monkeypatch,stage):
+    service=planner()
+    reply='完整视觉方向' if stage==2 else '{"status":"ready"}'
+    service._call=AsyncMock(return_value=(reply,{'attempt_id':'completed-attempt'}))
+    def no_review():
+        raise AssertionError('A completed author stage must not start a separate evaluator')
+    monkeypatch.setattr('services.model_gateway.get_model_gateway',no_review)
+    args=({'id':str(uuid4())},'lease','original','integration',
+        {'input_snapshot':{},'product_selling_points':{},'visual_direction':'原稿'},[],[],[])
+    if stage==3:value,usage=await service._stage_images(*args)
+    else:value,usage=await service._stage(args[0],args[1],stage,*args[2:])
+    assert value==('完整视觉方向' if stage==2 else {'status':'ready'})
+    assert usage['attempt_id']=='completed-attempt'
+    service._call.assert_awaited_once();service._save_attempt.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_ready_writing_plan_is_delivered_by_host_without_another_model_or_save_call(monkeypatch):
+    from dataclasses import replace
+    from schemas.message import TextPart
+    from tests.test_skill_runtime_actor import actor,prepared,handler,call
+    from tests.test_chat_execution_engine import _request
+    from services.handlers.chat.execution_engine import _run_loop
+    from services.handlers.chat.execution_sink import CollectingExecutionSink
+    from services.handlers.chat.stream_session import StreamTotals
+    runtime,p,h=actor(),prepared(),handler()
+    q=replace(_request(),content=[TextPart(text='策划10张主图，先只写方案不要生成图片')])
+    q = semantic_request(q, 'write')
+    text='## 1. 原方案\n\n完整原文，负面条件和素材说明。'
+    result=AgentResult('原生策划ready',metadata={'status':'ready','plan_id':str(uuid4()),
+        'server_plan_owner_task_id':str(q.task_id),'server_plan_text':text})
+    tc=call('plan_ecommerce_images','{}','planner')
+    h._execute_tool_calls.return_value=[(tc,result,False,result.summary)]
+    reader=AsyncMock(return_value=('', '', [tc],set()))
+    monkeypatch.setattr('services.handlers.chat.execution_engine._read_turn',reader)
+    monkeypatch.setattr('services.handlers.chat.execution_engine.compact_tool_context',AsyncMock())
+    blocks=[];totals=StreamTotals()
+    await _run_loop(handler=h,request=q,prepared=p,cancellation_event=runtime.cancellation_event,
+        sink=CollectingExecutionSink(),totals=totals,blocks=blocks,runtime=runtime)
+    reader.assert_awaited_once();h._execute_tool_calls.assert_awaited_once()
+    assert blocks[-1]['text']==text and blocks[-1]['content_delivery_final'] is True and totals.text==text
+
+
+@pytest.mark.asyncio
+async def test_ready_native_text_recovers_after_tool_checkpoint_without_model_io(monkeypatch):
+    from dataclasses import replace
+    from schemas.message import TextPart
+    from tests.test_skill_runtime_actor import actor,prepared,handler,call
+    from tests.test_chat_execution_engine import _request
+    from services.handlers.chat.execution_engine import _run_loop
+    from services.handlers.chat.execution_sink import CollectingExecutionSink
+    from services.handlers.chat.stream_session import StreamTotals
+    from services.handlers.chat.native_plan_delivery import stage,KEY
+    runtime,p,h=actor(),prepared(),handler()
+    q=replace(_request(),content=[TextPart(text='只写10套图片方案，不要生成图片')])
+    q = semantic_request(q, 'write')
+    text='## 1. 第一套\n\n完整原文\r\n禁止变形。'
+    result=AgentResult('ready',metadata={'status':'ready','plan_id':str(uuid4()),
+        'server_plan_owner_task_id':str(q.task_id),'server_plan_text':text})
+    stage(runtime,q,[(call('plan_ecommerce_images','{}','p'),result,False,'ready')])
+    assert runtime.checkpoint_base[KEY]['phase']=='pending'
+    reader=AsyncMock(side_effect=AssertionError('Recovery cannot sample the model'))
+    monkeypatch.setattr('services.handlers.chat.execution_engine._read_turn',reader)
+    blocks=[];totals=StreamTotals()
+    await _run_loop(handler=h,request=q,prepared=p,cancellation_event=runtime.cancellation_event,
+        sink=CollectingExecutionSink(),totals=totals,blocks=blocks,runtime=runtime)
+    reader.assert_not_awaited();h._execute_tool_calls.assert_not_awaited()
+    assert blocks[-1]['text']==text and runtime.checkpoint_base[KEY]['phase']=='committed'
+
+
+@pytest.mark.parametrize('delivered',[False,True])
+def test_ready_native_plan_publishes_after_consumed_append_but_waits_for_new_input(delivered):
+    from dataclasses import replace
+    from schemas.message import TextPart
+    from tests.test_skill_runtime_actor import actor,call
+    from tests.test_chat_execution_engine import _request
+    from services.handlers.chat.native_plan_delivery import stage,KEY
+    runtime=actor();q=replace(_request(),content=[TextPart(text='只写三套方案，不要生成图片')])
+    q = semantic_request(q, 'write')
+    runtime.task_user_changes=SimpleNamespace(items=(SimpleNamespace(owner_task_id=runtime.task_id,
+        event_id=uuid4(),message_sha256='a'*64,message='补充背景颜色为浅灰色，仍然只写方案。',delivered=delivered),))
+    result=AgentResult('ready',metadata={'status':'ready','plan_id':str(uuid4()),
+        'server_plan_owner_task_id':str(q.task_id),'server_plan_text':'完整原文'})
+    stage(runtime,q,[(call('plan_ecommerce_images','{}','p'),result,False,'ready')])
+    assert (KEY in runtime.checkpoint_base) is delivered
+
+
+@pytest.mark.parametrize('text',['先策划10张主图，再把方案导出PDF文件','策划10套方案并发送给同事','策划10套方案后保存到知识库'])
+def test_native_ready_projection_does_not_end_compound_delivery_requests(text):
+    from dataclasses import replace
+    from schemas.message import TextPart
+    from tests.test_skill_runtime_actor import actor,call
+    from tests.test_chat_execution_engine import _request
+    from services.handlers.chat.native_plan_delivery import stage,KEY
+    runtime=actor();q=replace(_request(),content=[TextPart(text=text)])
+    runtime.workflow_projection={'intent':'write','request_context':{'size':{},'continue_delivery':True}}
+    result=AgentResult('ready',metadata={'status':'ready','plan_id':str(uuid4()),
+        'server_plan_owner_task_id':str(q.task_id),'server_plan_text':'完整方案'})
+    stage(runtime,q,[(call('plan_ecommerce_images','{}','p'),result,False,'ready')])
+    assert KEY not in runtime.checkpoint_base
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('changed',['input','owner','body'])
+async def test_native_plan_projection_cannot_replay_stale_or_tampered_text(changed):
+    from dataclasses import replace
+    from types import SimpleNamespace
+    from schemas.message import TextPart
+    from tests.test_skill_runtime_actor import actor,call
+    from tests.test_chat_execution_engine import _request
+    from services.handlers.chat.native_plan_delivery import stage,deliver,KEY
+    from services.handlers.chat.execution_sink import CollectingExecutionSink
+    from services.handlers.chat.stream_session import StreamTotals
+    runtime=actor();q=replace(_request(),content=[TextPart(text='只写10套图片方案，不要生图')])
+    q = semantic_request(q, 'write')
+    result=AgentResult('ready',metadata={'status':'ready','plan_id':str(uuid4()),
+        'server_plan_owner_task_id':str(q.task_id),'server_plan_text':'完整原文'})
+    stage(runtime,q,[(call('plan_ecommerce_images','{}','p'),result,False,'ready')])
+    if changed=='input':
+        runtime.task_user_changes=SimpleNamespace(items=[SimpleNamespace(event_id=uuid4(),message_sha256='new-user-request')])
+    elif changed=='owner':runtime.checkpoint_base[KEY]['owner_task_id']=str(uuid4())
+    else:runtime.checkpoint_base[KEY]['text']='被改写的正文'
+    blocks=[]
+    if changed=='body':
+        with pytest.raises(ValueError,match='CONTENT_CHANGED'):
+            await deliver(runtime,q,blocks,CollectingExecutionSink(),StreamTotals())
+    else:
+        assert not await deliver(runtime,q,blocks,CollectingExecutionSink(),StreamTotals())
+        assert runtime.checkpoint_base[KEY]['phase']=='superseded'
+    assert blocks==[]
+
+
+def test_registered_flash_off_profile_uses_the_same_registry_provider_and_reasoning_gate():
+    service=planner();service.settings.ecom_image_planning_non_thinking_model='qwen3.8-flash'
+    model,config=service._select_chat_model({'request_params':{'thinking_mode':'disabled'}})
+    assert model==config.provider_model=='qwen3.8-flash'
+    assert config.provider.value=='dashscope' and config.supports_vision
+    assert service.chat_thinking_mode=='disabled'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('on_model',['gpt-5-6-luna','removed-on-model'])
+async def test_off_profile_does_not_require_unused_on_model_or_its_kie_billing(on_model):
+    from services.agent.image.ecommerce_planner.workflow import WorkflowBinding,KEY
+    service=planner();owner=service.owner
+    owner.image_skill_snapshot=({'skill_key':'ecommerce-main-images'},)
+    owner.context_scope='user';owner.workspace_user_id=owner.user_id
+    owner.conversation_id=str(uuid4());owner.execution_mode='interactive';owner._current_tool_call_id='planner'
+    service.settings.ecom_image_planning_enabled=True
+    service.settings.ecom_image_planning_model=on_model
+    service.settings.ecom_image_planning_non_thinking_model='qwen3.8-flash'
+    service.settings.ecom_image_planning_input_credits_per_million=None
+    service.settings.ecom_image_planning_output_credits_per_million=None
+    saved=WorkflowBinding(kind='main_images',root_task_id=owner.task_id,window_task_id=owner.task_id,
+        generation_run_id=str(uuid4()),plan_id=str(uuid4()))
+    parent={'user_id':owner.user_id,'org_id':owner.org_id,'conversation_id':owner.conversation_id,
+        'status':'running','base_context_revision':0,'input_message_id':str(uuid4()),
+        'request_params':{'thinking_mode':'disabled',KEY:saved.model_dump(mode='json')}}
+    class Query:
+        def __getattr__(self,name):return lambda *a,**kw:self
+        def execute(self):return SimpleNamespace(data=parent)
+    service.scope=SimpleNamespace(table=lambda _:Query())
+    result=await service._run({'references':[]})
+    assert result.error_message=='ECOM_PLAN_CONTINUATION_REQUIRED'
+    assert service.selected_model=='qwen3.8-flash' and service.chat_thinking_mode=='disabled'
+    service._reserve.assert_not_awaited();service._finish.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('kind', ['ordinary_image', 'unrelated', 'unavailable'])
+async def test_manual_method_never_forces_product_design_into_server_planning(monkeypatch, kind):
+    from unittest.mock import MagicMock, Mock
+    from schemas.message import TextPart, ImagePart
+    from services.agent.image.ecommerce_planner.workflow import EcommerceWorkflow
+    task, user, conv = [str(uuid4()) for _ in range(3)]
+    q = SimpleNamespace(task_id=task, user_id=user, conversation_id=conv, params={}, replay_context=None,
+        selected_skill=SimpleNamespace(skill_id='ecommerce-main-images'),
+        content=[TextPart(text='参考这个产品，帮我想3个新款，把提示词写出来，我先看看。'),
+                 ImagePart(name='原图', url='https://example.invalid/product.png')])
+    runtime = SimpleNamespace(skill_coordination=True, skill_runtime=None)
+    workflow = EcommerceWorkflow(SimpleNamespace(db=Mock(), org_id=None), q, runtime, None)
+    query = MagicMock()
+    for method in ['select', 'eq', 'neq', 'order', 'limit', 'single']:
+        getattr(query, method).return_value = query
+    query.execute.side_effect = [SimpleNamespace(data={'id': task, 'user_id': user, 'org_id': None,
+        'conversation_id': conv, 'status': 'running', 'input_message_id': str(uuid4()), 'request_params': {}}),
+        SimpleNamespace(data={'role': 'user', 'content': [p.model_dump(mode='json') for p in q.content]}),SimpleNamespace(data=[])]
+    workflow.scope = SimpleNamespace(table=lambda _: query)
+    router = AsyncMock(return_value={'kind': kind, 'mode': 'new', 'reuse_through_stage': 0})
+    monkeypatch.setattr('services.agent.image.ecommerce_planner.workflow.classify_workflow', router)
+    await workflow.initialize()
+    router.assert_awaited_once()
+    assert workflow.value is None or workflow.value.kind == 'ordinary_image'
+    workflow.activated = AsyncMock()
+    assert not await workflow.needs_planner([])
+    assert '_ecom_workflow' not in q.params
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('text,route', [
+    ('刚才三个方案有什么区别？', {'kind':'unrelated','mode':'new','reuse_through_stage':0}),
+    ('帮我重新画一只小猫。', {'kind':'ordinary_image','mode':'new','reuse_through_stage':0}),
+    ('另外策划一套新的主图。', {'kind':'main_images','mode':'new','reuse_through_stage':0}),
+])
+async def test_ready_plan_is_not_executed_for_a_discussion_or_new_task(monkeypatch,text,route):
+    from unittest.mock import MagicMock,Mock
+    from schemas.message import TextPart
+    from services.agent.image.ecommerce_planner.workflow import EcommerceWorkflow,WorkflowBinding,KEY
+    task,user,conv,prior,plan=[str(uuid4()) for _ in range(5)]
+    old=WorkflowBinding(kind='main_images',root_task_id=prior,window_task_id=prior,
+        generation_run_id=str(uuid4()),plan_id=plan,skill={'skill_key':'ecommerce-main-images'})
+    q=SimpleNamespace(task_id=task,user_id=user,conversation_id=conv,params={},selected_skill=None,
+        replay_context=None,content=[TextPart(text=text)])
+    workflow=EcommerceWorkflow(SimpleNamespace(db=Mock(),org_id=None),q,
+        SimpleNamespace(skill_coordination=True,skill_runtime=None),None)
+    query=MagicMock()
+    for method in ['select','eq','neq','order','limit','single','maybe_single']:
+        getattr(query,method).return_value=query
+    query.execute.side_effect=[SimpleNamespace(data={'id':task,'user_id':user,'org_id':None,
+        'conversation_id':conv,'status':'running','input_message_id':str(uuid4()),'request_params':{}}),
+        SimpleNamespace(data={'role':'user','content':[{'type':'text','text':text}]}),
+        SimpleNamespace(data=[{'id':prior,'request_params':{KEY:old.model_dump(mode='json')}}]),
+        SimpleNamespace(data={'id':plan,'status':'ready','current_stage':3,'image_count':3})]
+    workflow.scope=SimpleNamespace(table=lambda _:query)
+    router=AsyncMock(return_value=route)
+    monkeypatch.setattr('services.agent.image.ecommerce_planner.workflow.classify_workflow',router)
+    await workflow.initialize()
+    router.assert_awaited_once()
+    assert workflow.ready_execution is None
+    assert workflow.value is None or workflow.value.plan_id is None
+
+
+@pytest.mark.asyncio
+async def test_planning_does_not_silently_replace_a_frozen_user_count():
+    from services.agent.image.ecommerce_planner.workflow import WorkflowBinding,KEY
+    service=planner();owner=service.owner
+    owner.image_skill_snapshot=({'skill_key':'ecommerce-main-images'},)
+    owner.context_scope='user';owner.workspace_user_id=owner.user_id
+    owner.conversation_id=str(uuid4());owner.execution_mode='interactive';owner._current_tool_call_id='planner'
+    service.settings.ecom_image_planning_enabled=True
+    service.settings.ecom_image_planning_non_thinking_model='qwen3.8-flash'
+    frozen=WorkflowBinding(kind='main_images',root_task_id=owner.task_id,window_task_id=owner.task_id,
+        generation_run_id=str(uuid4()),intent='write',image_count=3)
+    parent={'user_id':owner.user_id,'org_id':owner.org_id,'conversation_id':owner.conversation_id,
+        'status':'running','base_context_revision':0,'input_message_id':str(uuid4()),
+        'request_params':{'thinking_mode':'disabled',KEY:frozen.model_dump(mode='json')}}
+    class Query:
+        def __getattr__(self,name):return lambda *a,**kw:self
+        def execute(self):return SimpleNamespace(data=parent)
+    service.scope=SimpleNamespace(table=lambda _:Query())
+    result=await service._run({'references':[],'image_count':10})
+    assert result.error_message=='ECOM_IMAGE_COUNT_CONFLICT'
+    service._reserve.assert_not_awaited();service._finish.assert_not_awaited()

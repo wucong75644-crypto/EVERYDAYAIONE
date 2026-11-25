@@ -43,7 +43,7 @@ def api(monkeypatch, mock_db):
     factory = Mock(return_value=repository)
     monkeypatch.setattr(available, "SkillRepository", factory)
     checker = Mock()
-    checker.check = AsyncMock(return_value=False)
+    checker.check_many = AsyncMock(return_value=frozenset())
     monkeypatch.setattr(available, "PermissionChecker", Mock(return_value=checker))
     # Any accidental call to the existing body loader fails this entire suite.
     monkeypatch.setattr("services.skills.storage.SkillStorage._read", Mock(side_effect=AssertionError("no body IO")))
@@ -119,10 +119,10 @@ def test_revoked_identity_or_membership_is_reread_on_next_request(api, table):
 
 def test_permission_changes_take_effect_without_catalog_cache(api):
     api[5].catalog_candidates.return_value = [candidate(catalog_metadata={"required_permissions": ["order.view"]})]
-    api[7].check.return_value = True
+    api[7].check_many.return_value = frozenset({"order.view"})
     assert len(get(api).json()) == 1
-    api[7].check.assert_awaited_with(str(ACTOR), str(ORG), "order.view")
-    api[7].check.return_value = False
+    api[7].check_many.assert_awaited_with(str(ACTOR), str(ORG), {"order.view"})
+    api[7].check_many.return_value = frozenset()
     assert get(api).json() == []
 
 
@@ -142,9 +142,9 @@ def test_real_permission_checker_reads_current_assignment(api, monkeypatch):
 
 def test_unknown_permission_is_not_allowed_even_for_boss(api):
     api[5].catalog_candidates.return_value = [candidate(catalog_metadata={"required_permissions": ["unknown.permission"]})]
-    api[7].check.return_value = True
+    api[7].check_many.return_value = frozenset({"order.view"})
     assert get(api).json() == []
-    api[7].check.assert_not_called()
+    api[7].check_many.assert_not_called()
 
 
 def test_personal_conversation_lists_only_owned_personal_skills(api):
@@ -155,7 +155,7 @@ def test_personal_conversation_lists_only_owned_personal_skills(api):
     result = get(api).json()
     assert len(result) == 1 and result[0]["source"] == "personal"
     assert api[6].call_args.args[1].org_id is None
-    api[7].check.assert_not_called()
+    api[7].check_many.assert_not_called()
 
 
 def test_web_domain_mode_and_feature_flags_are_server_owned(api):

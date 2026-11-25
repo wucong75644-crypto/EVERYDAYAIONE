@@ -7,6 +7,7 @@ from core.db_scope import DatabaseAccessKind, DatabaseScope
 from services.permissions.checker import PermissionChecker
 from services.permissions.permission_points import PERMISSIONS
 from services.skills.capability_state import available_capability_names
+from services.skills.observability import measure_skill, skill_span
 from services.skills.contracts import PublishRevision, SkillError
 from services.skills.discovery_policy import discoverable
 from services.skills.repository import SkillRepository
@@ -25,6 +26,7 @@ class ActorSkillSource:
             access_kind=DatabaseAccessKind.PROJECTION,
         ))
 
+    @measure_skill("identity")
     async def _resolution_context(self, candidates):
         context = self.context
         scope = getattr(self.handler, "execution_scope", None)
@@ -44,10 +46,10 @@ class ActorSkillSource:
             raise SkillError("SKILL_IDENTITY_UNAVAILABLE") from None
         checker = PermissionChecker(self.handler.db)
         required = {code for c in candidates for code in c.catalog_metadata.required_permissions}
-        permissions = set()
-        for code in sorted(required & PERMISSIONS.keys()):
-            if await checker.check(context.actor_user_id, context.org_id, code):
-                permissions.add(code)
+        with skill_span('permissions', task_id=context.task_id):
+            permissions = (await checker.check_many(
+                context.actor_user_id, context.org_id, required & PERMISSIONS.keys())
+                if context.org_id is not None and required & PERMISSIONS.keys() else frozenset())
         return SkillResolutionContext(
             actor_user_id=context.actor_user_id, org_id=context.org_id,
             conversation_scope=context.context_scope, agent_domain=context.agent_domain,
@@ -62,11 +64,25 @@ class ActorSkillSource:
             ),
         )
 
+    @measure_skill("discovery")
     async def discover(self):
         candidates = await asyncio.to_thread(self.repository.catalog_candidates)
         context = await self._resolution_context(candidates)
         return SkillResolver().select(context, candidates)
 
+    @measure_skill("selection")
+    async def discover_selection(self, selection):
+        """Resolve only the selected key with the same scope/precedence rules.
+
+        The current catalog revision is returned so stale UI selections still
+        fail with the normal version-changed response, never silently upgrade.
+        """
+        candidates = await asyncio.to_thread(
+            self.repository.catalog_candidates, skill_key=selection.skill_id)
+        context = await self._resolution_context(candidates)
+        return SkillResolver().select(context, candidates)
+
+    @measure_skill("bindings")
     async def session_bindings(self):
         # Scheduled/preflight entrypoints must never inherit session settings.
         if (getattr(self.context, "execution_mode", None) != "interactive" or self.context.context_scope != "user"
@@ -80,6 +96,7 @@ class ActorSkillSource:
         return [c for c in candidates if self.task_mode in c.catalog_metadata.task_modes
                 and discoverable(c.skill_key, c.scope_kind, 'interactive')]
 
+    @measure_skill("body")
     async def load(self, candidate, *, restoring: bool = False):
         # Recheck current identity and business permissions, even on replay.
         context = await self._resolution_context([candidate])
@@ -101,6 +118,7 @@ class ActorSkillSource:
 
         return await asyncio.to_thread(read)
 
+    @measure_skill("assets")
     async def load_assets(self, candidate, validated, asset_ids):
         if candidate.skill_key != validated.skill_key or candidate.revision != validated.revision:
             raise SkillError('SKILL_PINNED_METADATA_MISMATCH')

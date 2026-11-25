@@ -172,8 +172,8 @@ async def _heartbeat_loop(conn_id: str, websocket: WebSocket):
         pass
 
 
-def _find_steer_receipt(db, *, task_id, conversation_id, user_id, org_id, request_id, message, attachments=()):
-    # Look up an exact, owned task even when the original turn has finished.
+def _find_actor_steer_task(db, *, task_id, conversation_id, user_id, org_id):
+    """Resolve only an exact owned Actor task, including a closed window."""
     aliases = ('client_task_id', 'external_task_id')
     try:
         uuid.UUID(task_id)
@@ -182,15 +182,22 @@ def _find_steer_receipt(db, *, task_id, conversation_id, user_id, org_id, reques
     else:
         aliases = ('id', *aliases)
     for alias in aliases:
-        query = (db.table('tasks').select('id,delivery_context')
+        query = (db.table('tasks').select('id,delivery_context,status')
                  .eq(alias, task_id).eq('conversation_id', conversation_id)
                  .eq('user_id', user_id).eq('type', 'chat'))
         query = query.eq('org_id', org_id) if org_id else query.is_('org_id', 'null')
         matches = query.limit(2).execute().data or []
         if len(matches) != 1 or not is_actor_task(matches[0]):
             continue
+        return matches[0]
+    return None
+
+
+def _find_steer_receipt(db, *, task_id, conversation_id, user_id, org_id, request_id, message, attachments=()):
+    task = _find_actor_steer_task(db, task_id=task_id, conversation_id=conversation_id, user_id=user_id, org_id=org_id)
+    if task:
         event = (db.table('conversation_control_events').select('id,payload,status')
-                 .eq('task_id', matches[0]['id']).eq('conversation_id', conversation_id)
+                 .eq('task_id', task['id']).eq('conversation_id', conversation_id)
                  .eq('event_type', 'steer').eq('dedupe_key', f'steer:{request_id}')
                  .maybe_single().execute())
         data = event.data if event else None
@@ -198,6 +205,16 @@ def _find_steer_receipt(db, *, task_id, conversation_id, user_id, org_id, reques
             if steer_attachments.matches(data.get('payload'), message.strip(), attachments):
                 return str(data['id'])
     return None
+
+
+def _steer_window_closed(db, *, task_id, conversation_id, user_id, org_id, request_id):
+    task = _find_actor_steer_task(db, task_id=task_id, conversation_id=conversation_id, user_id=user_id, org_id=org_id)
+    if not task or task.get('status') not in {'completed', 'failed', 'cancelled'}:
+        return False
+    event = (db.table('conversation_control_events').select('id').eq('task_id', task['id'])
+             .eq('event_type', 'steer').eq('dedupe_key', f'steer:{request_id}').maybe_single().execute())
+    # An existing/uncertain original event must be reconciled, never resubmitted.
+    return event is not None and event.data is None
 
 
 async def _handle_message(
@@ -361,7 +378,7 @@ async def _handle_message(
                 except ValueError:
                     await reply('unconfirmed')
                     return
-            if request_id and conversation_id and payload.get('retry') is True:
+            if request_id and conversation_id:
                 event_id = await asyncio.to_thread(
                     _find_steer_receipt, get_db(), task_id=str(task_id),
                     conversation_id=str(conversation_id), user_id=user_id, org_id=org_id,
@@ -469,19 +486,23 @@ async def _handle_message(
                             payload=command_input,
                         )
                     except Exception as error:
-                        if not attachments or not any(code in str(error) for code in (
+                        if not any(code in str(error) for code in (
                                 'ACTOR_STEER_SCOPE_MISMATCH', 'ACTOR_STEER_ATTACHMENT_WINDOW_CLOSED')):
                             raise
-                        await reply('unconfirmed')
+                        closed = request_id and await asyncio.to_thread(_steer_window_closed, get_db(),
+                            task_id=str(task_id), conversation_id=str(conversation_id), user_id=user_id,
+                            org_id=org_id, request_id=request_id)
+                        await reply('window_closed' if closed else 'unconfirmed')
                         return
-                    from services.conversation_worker import RedisConversationWakeup
-                    await RedisConversationWakeup().publish(
-                        str(candidate_task["conversation_id"]), org_id,
-                    )
                     if request_id:
                         same_input = steer_result.get('payload') == command_input
                         await reply('enqueued' if same_input and steer_result.get('outcome') == 'enqueued'
                                     else 'unconfirmed', steer_result.get('event_id'))
+                    from services.conversation_worker import RedisConversationWakeup
+                    try:
+                        await RedisConversationWakeup().publish(str(candidate_task["conversation_id"]), org_id)
+                    except Exception:
+                        logger.warning('Actor steer saved; immediate worker wakeup unavailable | task={}', internal_task_id)
                     logger.info(
                         "Actor steer persisted | "
                         f"task_id={internal_task_id} | "
@@ -492,7 +513,9 @@ async def _handle_message(
             if request_id:
                 # A current-protocol client can retain the draft for reconciliation.
                 # Do not fall through to an unscoped ephemeral waiter.
-                await reply('unconfirmed')
+                closed = await asyncio.to_thread(_steer_window_closed, get_db(), task_id=str(task_id),
+                    conversation_id=str(conversation_id), user_id=user_id, org_id=org_id, request_id=request_id)
+                await reply('window_closed' if closed else 'unconfirmed')
                 return
             resolved = ws_manager.resolve_steer(task_id, message)
             logger.info(

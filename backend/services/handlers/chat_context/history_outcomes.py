@@ -63,7 +63,11 @@ def project_completed_assistant(content: Any) -> str:
 
     for block in content_blocks(content):
         kind = block.get("type")
-        if kind == "form":
+        if kind == "text" and block.get('content_incomplete') is True:
+            add('content_delivery', '正文未完整交付，不能据说明认定已保存或执行', {})
+        elif kind == "text" and block.get('content_artifact_id'):
+            add('content_delivery', '已登记并展示正文', _fields(block, 'content_artifact_id'))
+        elif kind == "form":
             # status/result_message/next_form mutate after turn closure without a
             # context revision. Only the original delivery is snapshot-stable.
             add(kind, "已提供表单", _fields(block, "form_id", "form_type", "title"))

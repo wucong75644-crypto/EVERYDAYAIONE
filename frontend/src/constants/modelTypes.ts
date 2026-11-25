@@ -24,6 +24,7 @@ export interface ModelCapabilities {
   // 高级功能
   functionCalling?: boolean; // 工具调用/函数调用
   structuredOutput?: boolean; // 结构化输出（JSON Schema）
+  thinkingRequired?: boolean; // 当前接口不支持关闭思考
   thinkingEffort?: boolean; // 可配置推理强度
   streamingResponse?: boolean; // 流式响应
 

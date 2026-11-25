@@ -87,11 +87,6 @@ class AftersaleAgent(DepartmentAgent):
 
     _DOC_TYPE_ACTION_MAP = {"aftersale": "aftersale_list"}
 
-    def _classify_action(self, task: str) -> str:
-        t = task.lower()
-        if any(kw in t for kw in ("退货率", "退款率", "return_rate")):
-            return "return_rate"
-        return "aftersale_list"
 
     async def _dispatch(self, action, params, context):
         return await self._query_local_data(

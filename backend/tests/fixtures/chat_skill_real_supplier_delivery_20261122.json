@@ -1,0 +1,737 @@
+{
+  "provenance": "Actual local PostgreSQL worker events from real KIE jobs; IDs/URLs/paths sanitized. Dimensions independently decoded from returned PNG bytes.",
+  "cases": [
+    {
+      "label": "canvas-1",
+      "actual_width": 1086,
+      "actual_height": 1448,
+      "source_sha256": "fa1ed78348e0ce948b78ee95ed9ffafccce5820b19cbbb61337eacf30150798b",
+      "expected_url": "https://images.example.invalid/generated/canvas-1.png",
+      "pending": {
+        "type": "message_pending",
+        "payload": {
+          "message": {
+            "id": "84064682-887b-53c9-8b72-84e58360d946",
+            "conversation_id": "80a743e7-bbfe-5367-947a-655eeb784058",
+            "org_id": null,
+            "role": "assistant",
+            "content": [
+              {
+                "type": "image",
+                "url": null
+              }
+            ],
+            "status": "pending",
+            "generation_params": {
+              "mode": "image_to_image",
+              "type": "image",
+              "model": "gpt-image-2-5-sunburst-image-to-image",
+              "origin": "chat_image",
+              "task_id": "d1987716-5236-5172-ab82-a8eab56600da",
+              "num_images": 1,
+              "resolution": "1K",
+              "aspect_ratio": "3:4",
+              "size_requirement": {
+                "mode": "inherit_reference",
+                "source": "user",
+                "resolution": "1K",
+                "aspect_ratio": "3:4",
+                "original_width": 1280,
+                "original_height": 1707,
+                "reference_index": 0,
+                "reference_sha256": "7235cf6d05c018cf207b08ae2419ad6f377754f0e91a7842cf68c0355fcef6bf",
+                "resolution_source": "model"
+              },
+              "submission_state": "queued"
+            },
+            "context_revision": null,
+            "credits_cost": 0,
+            "created_at": "2026-11-22T13:42:23.776279+08:00",
+            "message_kind": "conversation",
+            "turn_id": null,
+            "reply_to_message_id": null,
+            "is_error": false
+          },
+          "submission_state": "queued"
+        },
+        "timestamp": 1795326143780,
+        "task_id": "d1987716-5236-5172-ab82-a8eab56600da",
+        "conversation_id": "80a743e7-bbfe-5367-947a-655eeb784058",
+        "message_id": "84064682-887b-53c9-8b72-84e58360d946"
+      },
+      "done": {
+        "type": "message_done",
+        "payload": {
+          "message": {
+            "id": "84064682-887b-53c9-8b72-84e58360d946",
+            "conversation_id": "80a743e7-bbfe-5367-947a-655eeb784058",
+            "org_id": null,
+            "role": "assistant",
+            "content": [
+              {
+                "url": "https://images.example.invalid/generated/canvas-1.png",
+                "name": "canvas-1.png",
+                "size": 3209982,
+                "type": "image",
+                "width": 1086,
+                "height": 1448,
+                "task_id": "d1987716-5236-5172-ab82-a8eab56600da",
+                "asset_id": "65e33009-8f9c-506b-8d7a-a06907a866bf",
+                "mime_type": "image/png",
+                "preview_url": "https://images.example.invalid/generated/canvas-1.png",
+                "download_url": "https://images.example.invalid/generated/canvas-1.png",
+                "original_url": "https://images.example.invalid/generated/canvas-1.png",
+                "thumbnail_url": "https://images.example.invalid/thumbs/canvas-1.webp",
+                "quality_checks": {
+                  "actual": {
+                    "width": 1086,
+                    "height": 1448,
+                    "aspect_ratio": "3:4"
+                  },
+                  "target": {
+                    "mode": "inherit_reference",
+                    "source": "user",
+                    "resolution": "1K",
+                    "aspect_ratio": "3:4",
+                    "original_width": 1280,
+                    "original_height": 1707,
+                    "reference_index": 0,
+                    "reference_sha256": "7235cf6d05c018cf207b08ae2419ad6f377754f0e91a7842cf68c0355fcef6bf",
+                    "resolution_source": "model"
+                  },
+                  "size_matches": true
+                },
+                "source_task_id": null,
+                "workspace_path": "generated/canvas-1.png"
+              }
+            ],
+            "status": "completed",
+            "generation_params": {
+              "mode": "image_to_image",
+              "type": "image",
+              "model": "gpt-image-2-5-sunburst-image-to-image",
+              "origin": "chat_image",
+              "task_id": "d1987716-5236-5172-ab82-a8eab56600da",
+              "num_images": 1,
+              "resolution": "1K",
+              "aspect_ratio": "3:4",
+              "source_task_id": null,
+              "size_requirement": {
+                "mode": "inherit_reference",
+                "source": "user",
+                "resolution": "1K",
+                "aspect_ratio": "3:4",
+                "original_width": 1280,
+                "original_height": 1707,
+                "reference_index": 0,
+                "reference_sha256": "7235cf6d05c018cf207b08ae2419ad6f377754f0e91a7842cf68c0355fcef6bf",
+                "resolution_source": "model"
+              },
+              "submission_state": "queued"
+            },
+            "context_revision": 1,
+            "credits_cost": 6,
+            "created_at": "2026-11-22T13:42:23.776279+08:00",
+            "message_kind": "conversation",
+            "turn_id": null,
+            "reply_to_message_id": null,
+            "is_error": false
+          },
+          "credits_consumed": 6
+        },
+        "timestamp": 1795326211104,
+        "task_id": "d1987716-5236-5172-ab82-a8eab56600da",
+        "conversation_id": "80a743e7-bbfe-5367-947a-655eeb784058",
+        "message_id": "84064682-887b-53c9-8b72-84e58360d946"
+      }
+    },
+    {
+      "label": "plan-1",
+      "actual_width": 1254,
+      "actual_height": 1254,
+      "source_sha256": "b4d4be94590008b815fbf5ffb81b2eb63826f682a74a1d128a59567c6dfb58fd",
+      "expected_url": "https://images.example.invalid/generated/plan-1.png",
+      "pending": {
+        "type": "message_pending",
+        "payload": {
+          "message": {
+            "id": "f2dbdc0a-b7fb-57ef-8e4e-8e5da069bdeb",
+            "conversation_id": "cc837c70-de6b-5c6a-9e67-be0625462252",
+            "org_id": null,
+            "role": "assistant",
+            "content": [
+              {
+                "type": "image",
+                "url": null
+              }
+            ],
+            "status": "pending",
+            "generation_params": {
+              "mode": "image_to_image",
+              "type": "image",
+              "model": "gpt-image-2-5-sunburst-image-to-image",
+              "origin": "chat_image",
+              "task_id": "37d7eac9-9eea-5633-a1c0-9980ea15a4c7",
+              "num_images": 1,
+              "resolution": "1K",
+              "aspect_ratio": "1:1",
+              "size_requirement": {
+                "mode": "inherit_reference",
+                "source": "reference",
+                "resolution": "1K",
+                "aspect_ratio": "1:1",
+                "original_width": 360,
+                "original_height": 360,
+                "reference_index": 0,
+                "reference_sha256": "4218069bf3620852a83ba0ccf80d43843bb37cc19831adc3c966368f40bec572",
+                "resolution_source": "model"
+              },
+              "submission_state": "queued"
+            },
+            "context_revision": null,
+            "credits_cost": 0,
+            "created_at": "2026-11-22T13:54:40.636782+08:00",
+            "message_kind": "conversation",
+            "turn_id": null,
+            "reply_to_message_id": null,
+            "is_error": false
+          },
+          "submission_state": "queued"
+        },
+        "timestamp": 1795326880640,
+        "task_id": "37d7eac9-9eea-5633-a1c0-9980ea15a4c7",
+        "conversation_id": "cc837c70-de6b-5c6a-9e67-be0625462252",
+        "message_id": "f2dbdc0a-b7fb-57ef-8e4e-8e5da069bdeb"
+      },
+      "done": {
+        "type": "message_done",
+        "payload": {
+          "message": {
+            "id": "f2dbdc0a-b7fb-57ef-8e4e-8e5da069bdeb",
+            "conversation_id": "cc837c70-de6b-5c6a-9e67-be0625462252",
+            "org_id": null,
+            "role": "assistant",
+            "content": [
+              {
+                "url": "https://images.example.invalid/generated/plan-1.png",
+                "name": "plan-1.png",
+                "size": 4127994,
+                "type": "image",
+                "width": 1254,
+                "height": 1254,
+                "task_id": "37d7eac9-9eea-5633-a1c0-9980ea15a4c7",
+                "asset_id": "98bc203b-9790-5fcd-a30b-34d6e0b52463",
+                "mime_type": "image/png",
+                "preview_url": "https://images.example.invalid/generated/plan-1.png",
+                "download_url": "https://images.example.invalid/generated/plan-1.png",
+                "original_url": "https://images.example.invalid/generated/plan-1.png",
+                "thumbnail_url": "https://images.example.invalid/thumbs/plan-1.webp",
+                "quality_checks": {
+                  "actual": {
+                    "width": 1254,
+                    "height": 1254,
+                    "aspect_ratio": "1:1"
+                  },
+                  "target": {
+                    "mode": "inherit_reference",
+                    "source": "reference",
+                    "resolution": "1K",
+                    "aspect_ratio": "1:1",
+                    "original_width": 360,
+                    "original_height": 360,
+                    "reference_index": 0,
+                    "reference_sha256": "4218069bf3620852a83ba0ccf80d43843bb37cc19831adc3c966368f40bec572",
+                    "resolution_source": "model"
+                  },
+                  "size_matches": true
+                },
+                "source_task_id": null,
+                "workspace_path": "generated/plan-1.png"
+              }
+            ],
+            "status": "completed",
+            "generation_params": {
+              "mode": "image_to_image",
+              "type": "image",
+              "model": "gpt-image-2-5-sunburst-image-to-image",
+              "origin": "chat_image",
+              "task_id": "37d7eac9-9eea-5633-a1c0-9980ea15a4c7",
+              "num_images": 1,
+              "resolution": "1K",
+              "aspect_ratio": "1:1",
+              "source_task_id": null,
+              "size_requirement": {
+                "mode": "inherit_reference",
+                "source": "reference",
+                "resolution": "1K",
+                "aspect_ratio": "1:1",
+                "original_width": 360,
+                "original_height": 360,
+                "reference_index": 0,
+                "reference_sha256": "4218069bf3620852a83ba0ccf80d43843bb37cc19831adc3c966368f40bec572",
+                "resolution_source": "model"
+              },
+              "submission_state": "queued"
+            },
+            "context_revision": 2,
+            "credits_cost": 6,
+            "created_at": "2026-11-22T13:54:40.636782+08:00",
+            "message_kind": "conversation",
+            "turn_id": null,
+            "reply_to_message_id": null,
+            "is_error": false
+          },
+          "credits_consumed": 6
+        },
+        "timestamp": 1795326950631,
+        "task_id": "37d7eac9-9eea-5633-a1c0-9980ea15a4c7",
+        "conversation_id": "cc837c70-de6b-5c6a-9e67-be0625462252",
+        "message_id": "f2dbdc0a-b7fb-57ef-8e4e-8e5da069bdeb"
+      }
+    },
+    {
+      "label": "plan-2",
+      "actual_width": 1024,
+      "actual_height": 1024,
+      "source_sha256": "7df0d6d7848436e54aa007096e60d181eabea5626ec6fe07095e661c6adfcab6",
+      "expected_url": "https://images.example.invalid/generated/plan-2.png",
+      "pending": {
+        "type": "message_pending",
+        "payload": {
+          "message": {
+            "id": "f1803241-3182-5c5b-ade9-fe3d91391ad9",
+            "conversation_id": "cc837c70-de6b-5c6a-9e67-be0625462252",
+            "org_id": null,
+            "role": "assistant",
+            "content": [
+              {
+                "type": "image",
+                "url": null
+              }
+            ],
+            "status": "pending",
+            "generation_params": {
+              "mode": "image_to_image",
+              "type": "image",
+              "model": "gpt-image-2-5-sunburst-image-to-image",
+              "origin": "chat_image",
+              "task_id": "e627248b-3af2-51ea-9eb0-c4f102ddfcc4",
+              "num_images": 1,
+              "resolution": "1K",
+              "aspect_ratio": "1:1",
+              "size_requirement": {
+                "mode": "inherit_reference",
+                "source": "reference",
+                "resolution": "1K",
+                "aspect_ratio": "1:1",
+                "original_width": 360,
+                "original_height": 360,
+                "reference_index": 0,
+                "reference_sha256": "4218069bf3620852a83ba0ccf80d43843bb37cc19831adc3c966368f40bec572",
+                "resolution_source": "model"
+              },
+              "submission_state": "queued"
+            },
+            "context_revision": null,
+            "credits_cost": 0,
+            "created_at": "2026-11-22T13:54:40.678818+08:00",
+            "message_kind": "conversation",
+            "turn_id": null,
+            "reply_to_message_id": null,
+            "is_error": false
+          },
+          "submission_state": "queued"
+        },
+        "timestamp": 1795326880680,
+        "task_id": "e627248b-3af2-51ea-9eb0-c4f102ddfcc4",
+        "conversation_id": "cc837c70-de6b-5c6a-9e67-be0625462252",
+        "message_id": "f1803241-3182-5c5b-ade9-fe3d91391ad9"
+      },
+      "done": {
+        "type": "message_done",
+        "payload": {
+          "message": {
+            "id": "f1803241-3182-5c5b-ade9-fe3d91391ad9",
+            "conversation_id": "cc837c70-de6b-5c6a-9e67-be0625462252",
+            "org_id": null,
+            "role": "assistant",
+            "content": [
+              {
+                "url": "https://images.example.invalid/generated/plan-2.png",
+                "name": "plan-2.png",
+                "size": 2243238,
+                "type": "image",
+                "width": 1024,
+                "height": 1024,
+                "task_id": "e627248b-3af2-51ea-9eb0-c4f102ddfcc4",
+                "asset_id": "87140545-55d6-50d6-ba27-8f8b6487e740",
+                "mime_type": "image/png",
+                "preview_url": "https://images.example.invalid/generated/plan-2.png",
+                "download_url": "https://images.example.invalid/generated/plan-2.png",
+                "original_url": "https://images.example.invalid/generated/plan-2.png",
+                "thumbnail_url": "https://images.example.invalid/thumbs/plan-2.webp",
+                "quality_checks": {
+                  "actual": {
+                    "width": 1024,
+                    "height": 1024,
+                    "aspect_ratio": "1:1"
+                  },
+                  "target": {
+                    "mode": "inherit_reference",
+                    "source": "reference",
+                    "resolution": "1K",
+                    "aspect_ratio": "1:1",
+                    "original_width": 360,
+                    "original_height": 360,
+                    "reference_index": 0,
+                    "reference_sha256": "4218069bf3620852a83ba0ccf80d43843bb37cc19831adc3c966368f40bec572",
+                    "resolution_source": "model"
+                  },
+                  "size_matches": true
+                },
+                "source_task_id": null,
+                "workspace_path": "generated/plan-2.png"
+              }
+            ],
+            "status": "completed",
+            "generation_params": {
+              "mode": "image_to_image",
+              "type": "image",
+              "model": "gpt-image-2-5-sunburst-image-to-image",
+              "origin": "chat_image",
+              "task_id": "e627248b-3af2-51ea-9eb0-c4f102ddfcc4",
+              "num_images": 1,
+              "resolution": "1K",
+              "aspect_ratio": "1:1",
+              "source_task_id": null,
+              "size_requirement": {
+                "mode": "inherit_reference",
+                "source": "reference",
+                "resolution": "1K",
+                "aspect_ratio": "1:1",
+                "original_width": 360,
+                "original_height": 360,
+                "reference_index": 0,
+                "reference_sha256": "4218069bf3620852a83ba0ccf80d43843bb37cc19831adc3c966368f40bec572",
+                "resolution_source": "model"
+              },
+              "submission_state": "queued"
+            },
+            "context_revision": 3,
+            "credits_cost": 6,
+            "created_at": "2026-11-22T13:54:40.678818+08:00",
+            "message_kind": "conversation",
+            "turn_id": null,
+            "reply_to_message_id": null,
+            "is_error": false
+          },
+          "credits_consumed": 6
+        },
+        "timestamp": 1795327125966,
+        "task_id": "e627248b-3af2-51ea-9eb0-c4f102ddfcc4",
+        "conversation_id": "cc837c70-de6b-5c6a-9e67-be0625462252",
+        "message_id": "f1803241-3182-5c5b-ade9-fe3d91391ad9"
+      }
+    },
+    {
+      "label": "edit-1-1",
+      "actual_width": 1024,
+      "actual_height": 1024,
+      "source_sha256": "ca1bd98e56883a8dc2e967bb2315a4aa3fda8e0591c495af1841747048565688",
+      "expected_url": "https://images.example.invalid/generated/edit-1-1.png",
+      "pending": {
+        "type": "message_pending",
+        "payload": {
+          "message": {
+            "id": "f8f5b7c6-76fc-5a11-9939-5612cb325129",
+            "conversation_id": "cc837c70-de6b-5c6a-9e67-be0625462252",
+            "org_id": null,
+            "role": "assistant",
+            "content": [
+              {
+                "type": "image",
+                "url": null
+              }
+            ],
+            "status": "pending",
+            "generation_params": {
+              "mode": "image_to_image",
+              "type": "image",
+              "model": "gpt-image-2-5-sunburst-image-to-image",
+              "origin": "chat_image",
+              "task_id": "3990a6ed-9427-5272-8e46-0bfb5b930fb8",
+              "num_images": 1,
+              "resolution": "1K",
+              "aspect_ratio": "1:1",
+              "size_requirement": {
+                "mode": "inherit_reference",
+                "source": "reference",
+                "resolution": "1K",
+                "aspect_ratio": "1:1",
+                "original_width": 1024,
+                "source_task_id": "e627248b-3af2-51ea-9eb0-c4f102ddfcc4",
+                "original_height": 1024,
+                "reference_index": 0,
+                "reference_sha256": "7df0d6d7848436e54aa007096e60d181eabea5626ec6fe07095e661c6adfcab6",
+                "resolution_source": "task",
+                "source_message_id": "f1803241-3182-5c5b-ade9-fe3d91391ad9"
+              },
+              "submission_state": "queued"
+            },
+            "context_revision": null,
+            "credits_cost": 0,
+            "created_at": "2026-11-22T14:01:38.540064+08:00",
+            "message_kind": "conversation",
+            "turn_id": null,
+            "reply_to_message_id": null,
+            "is_error": false
+          },
+          "submission_state": "queued"
+        },
+        "timestamp": 1795327298544,
+        "task_id": "3990a6ed-9427-5272-8e46-0bfb5b930fb8",
+        "conversation_id": "cc837c70-de6b-5c6a-9e67-be0625462252",
+        "message_id": "f8f5b7c6-76fc-5a11-9939-5612cb325129"
+      },
+      "done": {
+        "type": "message_done",
+        "payload": {
+          "message": {
+            "id": "f8f5b7c6-76fc-5a11-9939-5612cb325129",
+            "conversation_id": "cc837c70-de6b-5c6a-9e67-be0625462252",
+            "org_id": null,
+            "role": "assistant",
+            "content": [
+              {
+                "url": "https://images.example.invalid/generated/edit-1-1.png",
+                "name": "edit-1-1.png",
+                "size": 2010665,
+                "type": "image",
+                "width": 1024,
+                "height": 1024,
+                "task_id": "3990a6ed-9427-5272-8e46-0bfb5b930fb8",
+                "asset_id": "cb2c429f-c8fd-593b-aadf-7695ce66650c",
+                "mime_type": "image/png",
+                "preview_url": "https://images.example.invalid/generated/edit-1-1.png",
+                "download_url": "https://images.example.invalid/generated/edit-1-1.png",
+                "original_url": "https://images.example.invalid/generated/edit-1-1.png",
+                "thumbnail_url": "https://images.example.invalid/thumbs/edit-1-1.webp",
+                "quality_checks": {
+                  "actual": {
+                    "width": 1024,
+                    "height": 1024,
+                    "aspect_ratio": "1:1"
+                  },
+                  "target": {
+                    "mode": "inherit_reference",
+                    "source": "reference",
+                    "resolution": "1K",
+                    "aspect_ratio": "1:1",
+                    "original_width": 1024,
+                    "source_task_id": "e627248b-3af2-51ea-9eb0-c4f102ddfcc4",
+                    "original_height": 1024,
+                    "reference_index": 0,
+                    "reference_sha256": "7df0d6d7848436e54aa007096e60d181eabea5626ec6fe07095e661c6adfcab6",
+                    "resolution_source": "task",
+                    "source_message_id": "f1803241-3182-5c5b-ade9-fe3d91391ad9"
+                  },
+                  "size_matches": true
+                },
+                "source_task_id": null,
+                "workspace_path": "generated/edit-1-1.png"
+              }
+            ],
+            "status": "completed",
+            "generation_params": {
+              "mode": "image_to_image",
+              "type": "image",
+              "model": "gpt-image-2-5-sunburst-image-to-image",
+              "origin": "chat_image",
+              "task_id": "3990a6ed-9427-5272-8e46-0bfb5b930fb8",
+              "num_images": 1,
+              "resolution": "1K",
+              "aspect_ratio": "1:1",
+              "source_task_id": null,
+              "size_requirement": {
+                "mode": "inherit_reference",
+                "source": "reference",
+                "resolution": "1K",
+                "aspect_ratio": "1:1",
+                "original_width": 1024,
+                "source_task_id": "e627248b-3af2-51ea-9eb0-c4f102ddfcc4",
+                "original_height": 1024,
+                "reference_index": 0,
+                "reference_sha256": "7df0d6d7848436e54aa007096e60d181eabea5626ec6fe07095e661c6adfcab6",
+                "resolution_source": "task",
+                "source_message_id": "f1803241-3182-5c5b-ade9-fe3d91391ad9"
+              },
+              "submission_state": "queued"
+            },
+            "context_revision": 6,
+            "credits_cost": 6,
+            "created_at": "2026-11-22T14:01:38.540064+08:00",
+            "message_kind": "conversation",
+            "turn_id": null,
+            "reply_to_message_id": null,
+            "is_error": false
+          },
+          "credits_consumed": 6
+        },
+        "timestamp": 1795327703311,
+        "task_id": "3990a6ed-9427-5272-8e46-0bfb5b930fb8",
+        "conversation_id": "cc837c70-de6b-5c6a-9e67-be0625462252",
+        "message_id": "f8f5b7c6-76fc-5a11-9939-5612cb325129"
+      }
+    },
+    {
+      "label": "edit-2-1",
+      "actual_width": 1254,
+      "actual_height": 1254,
+      "source_sha256": "09e48839cc98abae3703eafeec300bb3ed28ef099f7b9cb207534571d548cfbd",
+      "expected_url": "https://images.example.invalid/generated/edit-2-1.png",
+      "pending": {
+        "type": "message_pending",
+        "payload": {
+          "message": {
+            "id": "bd21230b-2057-5f42-a3d8-37e00d86bfce",
+            "conversation_id": "cc837c70-de6b-5c6a-9e67-be0625462252",
+            "org_id": null,
+            "role": "assistant",
+            "content": [
+              {
+                "type": "image",
+                "url": null
+              }
+            ],
+            "status": "pending",
+            "generation_params": {
+              "mode": "image_to_image",
+              "type": "image",
+              "model": "gpt-image-2-5-sunburst-image-to-image",
+              "origin": "chat_image",
+              "task_id": "2551e702-ba3e-59b6-b7a2-0d343cba8bb5",
+              "num_images": 1,
+              "resolution": "1K",
+              "aspect_ratio": "1:1",
+              "size_requirement": {
+                "mode": "inherit_reference",
+                "source": "reference",
+                "resolution": "1K",
+                "aspect_ratio": "1:1",
+                "original_width": 1024,
+                "source_task_id": "3990a6ed-9427-5272-8e46-0bfb5b930fb8",
+                "original_height": 1024,
+                "reference_index": 0,
+                "reference_sha256": "ca1bd98e56883a8dc2e967bb2315a4aa3fda8e0591c495af1841747048565688",
+                "resolution_source": "task",
+                "source_message_id": "f8f5b7c6-76fc-5a11-9939-5612cb325129"
+              },
+              "submission_state": "queued"
+            },
+            "context_revision": null,
+            "credits_cost": 0,
+            "created_at": "2026-11-22T14:08:31.219586+08:00",
+            "message_kind": "conversation",
+            "turn_id": null,
+            "reply_to_message_id": null,
+            "is_error": false
+          },
+          "submission_state": "queued"
+        },
+        "timestamp": 1795327711221,
+        "task_id": "2551e702-ba3e-59b6-b7a2-0d343cba8bb5",
+        "conversation_id": "cc837c70-de6b-5c6a-9e67-be0625462252",
+        "message_id": "bd21230b-2057-5f42-a3d8-37e00d86bfce"
+      },
+      "done": {
+        "type": "message_done",
+        "payload": {
+          "message": {
+            "id": "bd21230b-2057-5f42-a3d8-37e00d86bfce",
+            "conversation_id": "cc837c70-de6b-5c6a-9e67-be0625462252",
+            "org_id": null,
+            "role": "assistant",
+            "content": [
+              {
+                "url": "https://images.example.invalid/generated/edit-2-1.png",
+                "name": "edit-2-1.png",
+                "size": 2845208,
+                "type": "image",
+                "width": 1254,
+                "height": 1254,
+                "task_id": "2551e702-ba3e-59b6-b7a2-0d343cba8bb5",
+                "asset_id": "a35b28fa-d1ec-5ba3-9508-ccaedaa61227",
+                "mime_type": "image/png",
+                "preview_url": "https://images.example.invalid/generated/edit-2-1.png",
+                "download_url": "https://images.example.invalid/generated/edit-2-1.png",
+                "original_url": "https://images.example.invalid/generated/edit-2-1.png",
+                "thumbnail_url": "https://images.example.invalid/thumbs/edit-2-1.webp",
+                "quality_checks": {
+                  "actual": {
+                    "width": 1254,
+                    "height": 1254,
+                    "aspect_ratio": "1:1"
+                  },
+                  "target": {
+                    "mode": "inherit_reference",
+                    "source": "reference",
+                    "resolution": "1K",
+                    "aspect_ratio": "1:1",
+                    "original_width": 1024,
+                    "source_task_id": "3990a6ed-9427-5272-8e46-0bfb5b930fb8",
+                    "original_height": 1024,
+                    "reference_index": 0,
+                    "reference_sha256": "ca1bd98e56883a8dc2e967bb2315a4aa3fda8e0591c495af1841747048565688",
+                    "resolution_source": "task",
+                    "source_message_id": "f8f5b7c6-76fc-5a11-9939-5612cb325129"
+                  },
+                  "size_matches": true
+                },
+                "source_task_id": null,
+                "workspace_path": "generated/edit-2-1.png"
+              }
+            ],
+            "status": "completed",
+            "generation_params": {
+              "mode": "image_to_image",
+              "type": "image",
+              "model": "gpt-image-2-5-sunburst-image-to-image",
+              "origin": "chat_image",
+              "task_id": "2551e702-ba3e-59b6-b7a2-0d343cba8bb5",
+              "num_images": 1,
+              "resolution": "1K",
+              "aspect_ratio": "1:1",
+              "source_task_id": null,
+              "size_requirement": {
+                "mode": "inherit_reference",
+                "source": "reference",
+                "resolution": "1K",
+                "aspect_ratio": "1:1",
+                "original_width": 1024,
+                "source_task_id": "3990a6ed-9427-5272-8e46-0bfb5b930fb8",
+                "original_height": 1024,
+                "reference_index": 0,
+                "reference_sha256": "ca1bd98e56883a8dc2e967bb2315a4aa3fda8e0591c495af1841747048565688",
+                "resolution_source": "task",
+                "source_message_id": "f8f5b7c6-76fc-5a11-9939-5612cb325129"
+              },
+              "submission_state": "queued"
+            },
+            "context_revision": 9,
+            "credits_cost": 6,
+            "created_at": "2026-11-22T14:08:31.219586+08:00",
+            "message_kind": "conversation",
+            "turn_id": null,
+            "reply_to_message_id": null,
+            "is_error": false
+          },
+          "credits_consumed": 6
+        },
+        "timestamp": 1795327785157,
+        "task_id": "2551e702-ba3e-59b6-b7a2-0d343cba8bb5",
+        "conversation_id": "cc837c70-de6b-5c6a-9e67-be0625462252",
+        "message_id": "bd21230b-2057-5f42-a3d8-37e00d86bfce"
+      }
+    }
+  ]
+}

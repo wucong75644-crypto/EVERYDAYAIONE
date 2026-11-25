@@ -235,17 +235,17 @@ class TestFillPlatform:
     def test_single_cn_platform_fills(self):
         params: dict = {}
         self._fill(params, "昨天淘宝的订单统计")
-        assert params["platform"] == "tb"
+        assert "platform" not in params
 
     def test_douyin_alias(self):
         params: dict = {}
         self._fill(params, "抖店订单")
-        assert params["platform"] == "fxg"
+        assert "platform" not in params
 
     def test_tianmao_maps_to_tb(self):
         params: dict = {}
         self._fill(params, "天猫店铺的售后")
-        assert params["platform"] == "tb"
+        assert "platform" not in params
 
     def test_ai_already_extracted_not_overwritten(self):
         params = {"platform": "jd"}
@@ -265,12 +265,12 @@ class TestFillPlatform:
     def test_1688_fills(self):
         params: dict = {}
         self._fill(params, "1688的采购单")
-        assert params["platform"] == "1688"
+        assert "platform" not in params
 
     def test_same_platform_aliases_count_as_one(self):
         params: dict = {}
         self._fill(params, "淘宝天猫的订单")
-        assert params["platform"] == "tb"
+        assert "platform" not in params
 
 
 # ============================================================
@@ -774,7 +774,7 @@ class TestModuleSplitIntegrity:
         from services.agent.plan_fill import fill_platform
         params: dict = {}
         fill_platform(params, "淘宝订单有多少")
-        assert params.get("platform") == "tb"
+        assert "platform" not in params
 
     def test_sanitize_params_preserves_underscore_fields(self):
         """_sanitize_params 透传 _ 前缀字段（计划模式内部元数据）"""

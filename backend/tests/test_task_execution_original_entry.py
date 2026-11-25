@@ -7,7 +7,7 @@ test_task_execution_saved_image_reuse with the same RepositoryOriginalSource.
 import copy
 import json
 from dataclasses import replace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -48,9 +48,6 @@ async def test_original_entry_reaches_model_and_recovers_bad_arguments(
     monkeypatch.setattr('core.config.get_settings', lambda: settings)
     source = original_source
     monkeypatch.setattr('services.skills.runtime_source.ActorSkillSource', lambda *_: source)
-    # Any return to the old keyword workflow fails the regression immediately.
-    legacy = AsyncMock(side_effect=AssertionError('legacy keyword workflow entered'))
-    monkeypatch.setattr('services.agent.image.ecommerce_planner.workflow.EcommerceWorkflow.initialize', legacy)
     boot, state, anchor, _ = bootstrap()
     boot = replace(boot, original_goal=goal, require_coverage_review=True)
     runtime = actor()
@@ -67,7 +64,25 @@ async def test_original_entry_reaches_model_and_recovers_bad_arguments(
     monkeypatch.setattr('services.handlers.chat.execution_engine.prepare_chat_stream', AsyncMock(return_value=p))
     h = handler()
     h.org_id = None
-    h.db = object()  # Legacy workflow condition must be reachable, not bypassed by missing DB.
+    h.db = object()  # The semantic host initialization remains reachable.
+    task_table, message_table = MagicMock(), MagicMock()
+    for table in (task_table, message_table):
+        for method in ('select', 'eq', 'neq', 'order'):
+            getattr(table, method).return_value = table
+    task_table.single.return_value.execute.return_value.data = {
+        'user_id': str(state.actor_user_id), 'org_id': None,
+        'conversation_id': str(state.conversation_id), 'status': 'running',
+        'input_message_id': str(anchor.input_message_id), 'request_params': {},
+    }
+    task_table.limit.return_value.execute.return_value.data = []
+    message_table.single.return_value.execute.return_value.data = {
+        'role': 'user', 'content': [{'type': 'text', 'text': goal}],
+    }
+    scope = MagicMock()
+    scope.table.side_effect = lambda name: {'tasks': task_table, 'messages': message_table}[name]
+    monkeypatch.setattr('services.agent.image.ecommerce_planner.workflow.ScopedDatabaseClient', lambda *_: scope)
+    semantic_router = AsyncMock(side_effect=AssertionError('text-only input has no image pre-route'))
+    monkeypatch.setattr('services.agent.image.ecommerce_planner.workflow.classify_workflow', semantic_router)
     h._execute_tool_calls.side_effect = AssertionError('unexpected external business dispatch')
     selection = SkillSelection(skill_id=key, revision=source.values[key].revision) if key else None
     request = replace(_request(), content=[TextPart(text=goal)], selected_skill=selection,
@@ -125,8 +140,9 @@ async def test_original_entry_reaches_model_and_recovers_bad_arguments(
     with pytest.raises(LoopObserved):
         await execute_chat(handler=h, request=request, runtime=runtime)
     assert len(main_rounds) == 3 and len(review_rounds) == 1
-    assert p.ecom_workflow is None
-    legacy.assert_not_awaited()
+    assert p.ecom_workflow is not None and p.ecom_workflow.value is None
+    assert p.ecom_workflow.input == [{"type": "text", "text": goal}]
+    semantic_router.assert_not_awaited()
     h._execute_tool_calls.assert_not_awaited()
     p.adapter.close.assert_awaited_once()
 

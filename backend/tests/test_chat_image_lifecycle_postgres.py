@@ -1,10 +1,11 @@
-"""Real PostgreSQL concurrency/rollback/RLS. Requires explicitly isolated DSN.
+"""Real PostgreSQL concurrency/rollback/RLS in a test-owned, socket-only cluster.
 
-Run with CHAT_IMAGE_TEST_ADMIN_DSN pointing at the local temporary cluster.
+An explicit CHAT_IMAGE_TEST_ADMIN_DSN retains its original fixed-socket gate.
 Creates and removes a dedicated database. Never uses application DATABASE_URL.
 """
 from concurrent.futures import ThreadPoolExecutor
 import asyncio
+import getpass
 from copy import deepcopy
 import os
 from pathlib import Path
@@ -21,13 +22,17 @@ ROOT = Path(__file__).parents[1]
 
 
 @pytest.fixture(scope="module")
-def isolated_db():
+def isolated_db(request):
     dsn = os.getenv("CHAT_IMAGE_TEST_ADMIN_DSN")
-    if not dsn:
-        pytest.skip("Explicit isolated PostgreSQL DSN required")
-    # Restrict this destructive fixture to our Unix-socket temporary cluster.
-    info = psycopg.conninfo.conninfo_to_dict(dsn)
-    assert info.get("host") == "/private/tmp" and info.get("port") == "55439"
+    if dsn:
+        # Preserve the explicit override's existing destructive-fixture gate.
+        info = psycopg.conninfo.conninfo_to_dict(dsn)
+        assert info.get("host") == "/private/tmp" and info.get("port") == "55439"
+    else:
+        # No configured/production database is consulted. The shared fixture
+        # owns initdb/start/stop and a unique Unix socket, with TCP disabled.
+        socket = request.getfixturevalue('chat_image_postgres_socket')
+        dsn = psycopg.conninfo.make_conninfo(host=socket, dbname='postgres', user=getpass.getuser())
     name = "chat_image_test_" + uuid4().hex
     admin = psycopg.connect(dsn, autocommit=True)
     for role in ("everydayai", "everydayai_worker", "everydayai_owner", "image_untrusted"):
@@ -1024,11 +1029,11 @@ async def test_isolated_tool_to_http_completion_and_snapshot_replay(facts,lifecy
     app.dependency_overrides[get_org_context]=lambda:SimpleNamespace(user_id=facts["user"],org_id=None)
     app.dependency_overrides[get_scoped_db]=lambda:runtime_db
     with psycopg.connect(facts["dsn"]) as db:
-        db.execute("INSERT INTO messages(id,conversation_id,role,content,status,context_revision) VALUES (%s,%s,'user','[{\"type\":\"text\",\"text\":\"生成图片\"}]','completed',0)",
+        db.execute("INSERT INTO messages(id,conversation_id,role,content,status,context_revision) VALUES (%s,%s,'user','[{\"type\":\"text\",\"text\":\"生成1:1图片\"}]','completed',0)",
                    (facts["snapshot"]["origin"]["input_message_id"],conversation))
     token=_dispatch_call_id.set("end-to-end-single-call")
     try:
-        receipt=(await executor._generate_image({"mode":"text_to_image","prompt":"  exact end-to-end prompt  "})).metadata
+        receipt=(await executor._generate_image({"mode":"text_to_image","prompt":"  exact end-to-end prompt  ","aspect_ratio":"1:1"})).metadata
         assert receipt["completed"] is False and not requests
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),base_url="http://isolated-app") as browser:
             task_id=receipt["task_id"]
@@ -1120,8 +1125,15 @@ def test_size_budget_migration_rollback_and_forward_restore(facts):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("user_text,expected", [("参考原图生成图片","1:1"),("改成3:4、2K","3:4"),("生成1920×1080",None)])
-async def test_actual_acceptance_uses_square_bytes_or_user_override_before_debit(facts,monkeypatch,tmp_path,user_text,expected):
+@pytest.mark.parametrize("user_text,expected,context", [
+    ("参考原图生成图片","1:1",{'canvas_image':1}),
+    ("改成3:4、2K","3:4",{'size':{'aspect_ratio':'3:4','resolution':'2K'}}),
+    ("生成1920×1080",None,{'size':{'width':1920,'height':1080,'approximate_pixels':False}}),
+    ("约1920×1080，接近即可","16:9",{'size':{'width':1920,'height':1080,'approximate_pixels':True}}),
+    ("生成790×790左右","1:1",{'size':{'width':790,'height':790,'approximate_pixels':True}}),
+    ("参考原图生成图片","1:1",None),  # Legacy owner without a semantic projection still replays exactly.
+])
+async def test_actual_acceptance_uses_square_bytes_or_user_override_before_debit(facts,monkeypatch,tmp_path,user_text,expected,context):
     from types import SimpleNamespace
     from PIL import Image
     import json
@@ -1132,6 +1144,10 @@ async def test_actual_acceptance_uses_square_bytes_or_user_override_before_debit
     from services.handlers.image_handler import ImageHandler
     from services.handlers.chat_image_request import ChatImageNotAcceptedError,verify_frozen_request
     from services.tools.dispatcher import _dispatch_call_id
+    from unittest.mock import AsyncMock
+    def unexpected_review():
+        raise AssertionError('Native image acceptance must not call a second language model')
+    monkeypatch.setattr('services.model_gateway.get_model_gateway',unexpected_review)
     settings=Settings(_env_file=None,database_url="postgresql://invalid/test",jwt_secret_key="isolated-test-key",file_workspace_root=str(tmp_path),chat_image_async_enabled=True)
     monkeypatch.setattr("core.config.get_settings",lambda:settings)
     raw=LocalDBClient(psycopg.conninfo.make_conninfo(facts["dsn"],user="everydayai"),min_size=1,max_size=3)
@@ -1144,6 +1160,14 @@ async def test_actual_acceptance_uses_square_bytes_or_user_override_before_debit
         content=json.dumps([{"type":"text","text":user_text},{"type":"image","workspace_path":"original.png","width":600,"height":800}])
         db.execute("INSERT INTO messages(id,conversation_id,role,content,status,context_revision) VALUES (%s,%s,'user',%s,'completed',0)",(message,conv,content))
         db.execute("INSERT INTO messages(id,conversation_id,role,content,status,context_revision) VALUES (%s,%s,'user','[{\"type\":\"text\",\"text\":\"改成16:9、4K\"}]','completed',1)",(str(uuid4()),conv))
+        if context is not None:
+            from services.agent.image.ecommerce_planner.workflow import WorkflowBinding,ImageRequestContext,KEY
+            from psycopg.types.json import Jsonb
+            parent=facts['parent']
+            projection=WorkflowBinding(kind='ordinary_image',root_task_id=parent,window_task_id=parent,
+                generation_run_id=parent,intent='generate',request_context=ImageRequestContext.model_validate(context))
+            db.execute("UPDATE tasks SET request_params=request_params || %s WHERE id=%s",
+                       (Jsonb({KEY:projection.model_dump(mode='json')}),parent))
     owner=SimpleNamespace(db=scoped,user_id=facts["user"],workspace_user_id=facts["user"],org_id=None,
         task_id=facts["parent"],conversation_id=conv,image_execution_token=facts["token"],context_scope="user",execution_mode="interactive",resource_manifest=None,cancellation_event=None)
     token=_dispatch_call_id.set("actual-square-reference")
@@ -1159,7 +1183,24 @@ async def test_actual_acceptance_uses_square_bytes_or_user_override_before_debit
                 verify_frozen_request(snapshot)
                 assert snapshot["aspect_ratio"]==expected
                 assert snapshot["references"][0]["width"]==snapshot["references"][0]["height"]==1080
-                assert snapshot["resolution"]==("2K" if expected=="3:4" else "1K")
+                assert snapshot["resolution"]==("2K" if expected in {"3:4","16:9"} else "1K")
+                # Historical experimental metadata stays opaque and immutable
+                # on an accepted-call replay; it cannot trigger another model.
+                from services.handlers.chat_image_request import canonical_hash
+                from psycopg.types.json import Jsonb
+                snapshot['origin']['product_fidelity']={'version':'retired-local-prototype','review':{'status':'uncertain'}}
+                snapshot.pop('request_hash')
+                snapshot['request_hash']=canonical_hash(snapshot)
+                db.execute("UPDATE tasks SET request_params=jsonb_set(request_params,'{_media_request_v1}',%s) WHERE id=%s",
+                    (Jsonb(snapshot),receipt['task_id']))
+            replay=await ImageHandler(scoped).accept_chat_image(owner,args)
+            assert replay['task_id']==receipt['task_id']
+            with psycopg.connect(facts['dsn']) as db:
+                restored=db.execute("SELECT request_params->'_media_request_v1' FROM tasks WHERE id=%s",(receipt['task_id'],)).fetchone()[0]
+                assert restored==snapshot
+                assert db.execute("SELECT count(*) FROM tasks WHERE user_id=%s AND type='image'",(facts['user'],)).fetchone()[0]==1
+            with pytest.raises(psycopg.errors.InvalidParameterValue,match='CHAT_IMAGE_CALL_CONFLICT'):
+                await ImageHandler(scoped).accept_chat_image(owner,{**args,'prompt':'changed request must not replay'})
         with psycopg.connect(facts["dsn"]) as db:
             assert db.execute("SELECT credits FROM users WHERE id=%s",(facts["user"],)).fetchone()[0]==100
             assert db.execute("SELECT count(*) FROM credit_transactions WHERE user_id=%s",(facts["user"],)).fetchone()[0]==0

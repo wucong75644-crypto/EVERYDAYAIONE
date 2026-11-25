@@ -61,10 +61,8 @@ class ConversationSkillBindings:
         # business permissions. Runtime rechecks the recipient again on use.
         checker = PermissionChecker(self.db)
         required = {code for c in candidates for code in c.catalog_metadata.required_permissions}
-        permissions = set()
-        for code in sorted(required & PERMISSIONS.keys()):
-            if await checker.check(self.owner, self.org, code):
-                permissions.add(code)
+        permissions = (await checker.check_many(self.owner, self.org, required & PERMISSIONS.keys())
+                       if self.org is not None and required & PERMISSIONS.keys() else frozenset())
         from services.skills.capability_state import available_capability_names
         available = await asyncio.to_thread(
             available_capability_names, self.db, self.org, self.settings,

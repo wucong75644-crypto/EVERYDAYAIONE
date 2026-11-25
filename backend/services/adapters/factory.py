@@ -156,16 +156,6 @@ MODEL_REGISTRY: Dict[str, ModelConfig] = {
         max_tokens=16384,
         context_window=131_072,
     ),
-    "qwen3.8-max": ModelConfig(
-        model_id="qwen3.8-max", provider=ModelProvider.DASHSCOPE,
-        provider_model="qwen3.8-max", display_name="Qwen 3.8 Max",
-        input_price=1.67, output_price=5.0,  # Beijing: CNY 12 / 36 per 1M tokens
-        credits_per_1k_input=0.17, credits_per_1k_output=0.51,
-        supports_vision=True, supports_video=True, supports_tools=True,
-        supports_search=True, supports_thinking=True,
-        builtin_tools=BUILTIN_TOOLS["qwen3.8-max"], supports_session_cache="qwen3.8-max" in CACHE_MODELS,
-        max_tokens=131072, context_window=1_000_000,
-    ),
     "qwen3.8-flash": ModelConfig(
         model_id="qwen3.8-flash", provider=ModelProvider.DASHSCOPE,
         provider_model="qwen3.8-flash", display_name="Qwen 3.8 Flash",

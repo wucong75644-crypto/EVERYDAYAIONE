@@ -221,3 +221,167 @@ def test_latest_source_and_runtime_versions_are_separate_and_do_not_default_coun
     source = Path(__file__).parents[1] / "config/ecommerce_planner_prompts/source-20261009/manifest.json"
     assert source.is_file()
     assert FixedSettings.model_validate({"task_type": "detail_page", "image_count": 7, "platform": "淘宝", "language": "中文", "aspect_ratio": "3:4", "resolution": "1K"}).image_count == 7
+
+
+@pytest.mark.parametrize("task_type", ["main_images", "detail_page"])
+@pytest.mark.parametrize("negative", ["", "不要重复绘制商品。"])
+def test_clean_execution_keeps_model_design_without_internal_ids_or_extra_rules(task_type, negative):
+    from services.agent.image.ecommerce_planner.assembly import CLEAN_ASSEMBLY_VERSION, NEGATIVE
+    from services.task_execution.legacy_sources import native_plan_document
+    value, evidence, refs = design_fixture(3, task_type, 3)
+    for design in value["images"]:
+        design["negative_additions"] = negative
+    before = deepcopy(value)
+    saved = assemble_designs(value, evidence["input_snapshot"], evidence["product_selling_points"],
+        evidence["visual_direction"], assembly_version=CLEAN_ASSEMBLY_VERSION)
+    assert value == before
+    for design, item in zip(value["images"], saved["images"]):
+        prompt = item["request_text"]
+        assert item["assembly_version"] == CLEAN_ASSEMBLY_VERSION
+        assert item["references"] == refs and item["design"] == design
+        for field in ("scene", "layout", "props_and_decoration", "lighting", "text_layout",
+                      "product_preservation", "execution_constraints"):
+            assert design[field] in prompt
+        assert item["negative_prompt"] == negative
+        assert FIDELITY not in prompt and NEGATIVE not in prompt
+        assert "整套共同边界" not in prompt and "第二阶段原文" not in prompt
+        assert all(ref["source_id"] not in prompt and ref["role"] not in prompt for ref in refs)
+        for number, use in enumerate(design["reference_usage"], 1):
+            assert f"输入图片{use['number']}—{use['usage']}" in prompt
+        assert item["request_text_sha256"] == text_hash(prompt)
+        assert prompt == item["positive_prompt"] + "\n\n负面提示词：" + negative
+        assert prompt == item["scheme_markdown"].split("## 完整生图提示词\n\n")[1].replace("\n\n## 负面提示词\n\n", "\n\n负面提示词：")
+    # The existing saved-plan adapter accepts an absent *extra* negative rule
+    # without manufacturing one, while preserving exact text and item IDs.
+    document = json.loads(native_plan_document({"id": str(uuid4()), "plan_revision": 1,
+        "status": "ready", "target_size": evidence["input_snapshot"]["target_size"],
+        "stage_outputs": {"1": evidence["product_selling_points"], "2": evidence["visual_direction"]},
+        "items": saved["images"]}))
+    assert [image["negative_prompt"] for image in document["image_plans"]] == [negative] * 3
+    assert [image["prompt"] for image in document["image_plans"]] == [image["positive_prompt"] for image in saved["images"]]
+
+
+def test_legacy_assembly_stays_pinned_and_clean_wrapper_assigns_design_to_model():
+    from services.agent.image.ecommerce_planner.assembly import ASSEMBLY_VERSION, CLEAN_ASSEMBLY_VERSION
+    value, evidence, _ = design_fixture()
+    args = (value, evidence["input_snapshot"], evidence["product_selling_points"], evidence["visual_direction"])
+    implicit = assemble_designs(*args)
+    explicit = assemble_designs(*args, assembly_version=ASSEMBLY_VERSION)
+    assert implicit["images"][0]["request_text"] == explicit["images"][0]["request_text"]
+    assert implicit["images"][0]["request_text_sha256"] == explicit["images"][0]["request_text_sha256"]
+    legacy = wrapper(3)
+    clean = wrapper(3, execution_only=True)
+    assert "通用负面词" in legacy and "程序只绑定输入图片编号与固定参数" in clean
+    assert "通用负面词" not in clean and "适用于本张" in clean
+    assert wrapper(1) == wrapper(1, execution_only=True)
+    assert wrapper(2) == wrapper(2, execution_only=True)
+    with pytest.raises(ValueError, match="ASSEMBLY_VERSION_UNSUPPORTED"):
+        assemble_designs(*args, assembly_version="future-unknown")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('version', [None, 'fixed-frame.v3', 'ecom-fixed-frame.v3', 'image-prompt.v1'])
+async def test_resumed_stage_three_uses_pinned_assembly_without_rewriting_prior_stages(version):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from services.agent.image.ecommerce_planner.assembly import ASSEMBLY_VERSION, CLEAN_ASSEMBLY_VERSION
+    from services.agent.agent_result import AgentResult
+    value, evidence, refs = design_fixture()
+    service = planner()
+    query = Mock()
+    query.execute.return_value = SimpleNamespace(data={'claimed': True, 'current_stage': 3,
+        'stage_outputs': {'1': evidence['product_selling_points'], '2': evidence['visual_direction']}})
+    service.scope = SimpleNamespace(rpc=lambda *a: query)
+    service._stage = AsyncMock(side_effect=AssertionError('Completed stages must not be billed again'))
+    captured = []
+    async def stage(row, lease, original, integration, *args, validator):
+        captured.append(integration)
+        return validator(value), {}
+    service._stage_images = stage
+    service._save = AsyncMock()
+    service._result = AsyncMock(return_value=AgentResult('saved'))
+    row = {'id': str(uuid4()), 'plan_revision': 1, 'input_snapshot': evidence['input_snapshot'],
+        'prompt_versions': {} if version is None else {'assembly_version': version}}
+    bodies, schema = resources()
+    result = await service.execute(row, refs, ['https://example.invalid/source'],
+        evidence['input_snapshot']['messages'], schema, bodies)
+    assert result is service._result.return_value
+    service._stage.assert_not_awaited()
+    final = service._save.await_args.args[3]
+    assert final['assembly_version'] == (ASSEMBLY_VERSION if version == 'ecom-fixed-frame.v3' else version or ASSEMBLY_VERSION)
+    assert (FIDELITY in final['images'][0]['request_text']) == (version != CLEAN_ASSEMBLY_VERSION)
+    assert ('程序只绑定输入图片编号与固定参数' in captured[0]) == (version == CLEAN_ASSEMBLY_VERSION)
+
+
+@pytest.mark.parametrize('with_legacy_null', [False, True])
+def test_remove_patch_needs_no_replacement_value_and_keeps_every_valid_design_field(with_legacy_null):
+    original, evidence, _ = design_fixture(3)
+    value = deepcopy(original)
+    value['images'][2]['reference_usage'][0]['note'] = '仅解释已存在的布局策略，不是新字段。'
+    with pytest.raises(DesignValidationError) as raised:
+        validate_designs(value,evidence['input_snapshot'],evidence['product_selling_points'])
+    patch={'path':['images',2,'reference_usage',0,'note'],'op':'remove'}
+    if with_legacy_null:patch['value']=None
+    updated=apply_repair(value,{'patches':[patch],'review_records':original['review_records']},raised.value.issues)
+    assert updated==original
+    assert validate_designs(updated,evidence['input_snapshot'],evidence['product_selling_points'])==original
+    assert value['images'][2]['reference_usage'][0]['note']  # No mutation of the evidence draft.
+
+
+def test_replace_patch_still_requires_value_but_accepts_explicit_null():
+    from pydantic import ValidationError
+    from services.agent.image.ecommerce_planner.designs import FieldPatch
+    with pytest.raises(ValidationError,match='REPLACEMENT_VALUE_REQUIRED'):
+        FieldPatch.model_validate({'path':['page_plan'],'op':'replace'})
+    assert FieldPatch.model_validate({'path':['page_plan'],'op':'replace','value':None}).value is None
+
+
+async def test_real_remove_shape_finishes_the_original_stage_without_replanning():
+    original,evidence,refs=design_fixture(3)
+    broken=deepcopy(original)
+    broken['images'][2]['reference_usage'][0]['note']='仅解释原来的布局。'
+    repair={'patches':[{'path':['images',2,'reference_usage',0,'note'],'op':'remove'}],
+            'review_records':original['review_records']}
+    service=planner()
+    service._call=AsyncMock(side_effect=[(json.dumps(broken),{}),(json.dumps(repair),{})])
+    final,_=await service._stage_images({'id':str(uuid4())},'lease','rules',wrapper(3),evidence,
+        evidence['input_snapshot']['messages'],refs,['url'],
+        validator=lambda v:assemble_designs(v,evidence['input_snapshot'],evidence['product_selling_points']))
+    assert [item['design'] for item in final['images']]==original['images']
+    assert service._call.await_count==2
+    assert service._save_attempt.await_count==1
+
+
+@pytest.mark.parametrize('patch,valid',[
+    ({'path':['images',0,'note'],'op':'remove'},True),
+    ({'path':['images',0,'note'],'op':'remove','value':None},True),
+    ({'path':['page_plan'],'op':'replace'},False),
+    ({'path':['page_plan'],'op':'replace','value':None},True),
+    ({'path':['page_plan'],'value':None},True),
+])
+def test_patch_advertised_schema_and_local_validation_agree(patch,valid):
+    from jsonschema import Draft202012Validator
+    from pydantic import ValidationError
+    from services.agent.image.ecommerce_planner.designs import FieldPatch
+    assert Draft202012Validator(FieldPatch.model_json_schema()).is_valid(patch) is valid
+    if valid:FieldPatch.model_validate(patch)
+    else:
+        with pytest.raises(ValidationError):FieldPatch.model_validate(patch)
+
+
+def test_incomplete_group_reports_count_and_schema_together_and_reviews_have_one_output_channel():
+    from services.agent.image.ecommerce_planner.designs import repair_context
+    original,evidence,_=design_fixture(3)
+    broken=deepcopy(original)
+    broken['images']=broken['images'][:1]
+    del broken['images'][0]['execution_constraints']
+    del broken['review_records']
+    with pytest.raises(DesignValidationError) as raised:
+        validate_designs(broken,evidence['input_snapshot'],evidence['product_selling_points'])
+    assert {tuple(i['path']) for i in raised.value.issues}=={('images',),('review_records',)}
+    targets=repair_context(broken,raised.value.issues)
+    assert [t['path'] for t in targets]==[['images']]
+    # Review records already have their own required top-level field in DesignRepair.
+    fixed=apply_repair(broken,{'patches':[{'path':['images'],'value':original['images']}],
+        'review_records':original['review_records']},raised.value.issues)
+    assert validate_designs(fixed,evidence['input_snapshot'],evidence['product_selling_points'])==original

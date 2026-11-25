@@ -4,10 +4,10 @@ from ..spec import Exposure, ToolAvailability, ToolPolicyRules, ToolSpec
 
 def _planner_schema():
     return {"type":"function","function":{"name":"plan_ecommerce_images",
-        "description":("必须先 activate_skill 激活 ecommerce-main-images 并读取正文，再调用本工具。按用户需求调用服务器策划服务，内部串行执行商品卖点、整套视觉规范、逐图完整执行稿三阶段。"
+        "description":("仅用于当前适用的电商主图/详情页策划。方法正文尚未加载时先 activate_skill 激活 ecommerce-main-images；已经加载时直接调用，无需重复激活。内部串行执行商品卖点、整套视觉规范、逐图完整执行稿三阶段。"
             "用户原话由服务器从本轮真实消息直接读取，不能总结或重写。首次策划传references，必须按用户图片顺序标明role；商品图的role填写字符串product，风格参考填写字符串style_reference；例如references=[{\"role\":\"product\",\"file_id\":\"真实编号\"}]。服务器明确允许续接或用户重试失败方案时，以及回答needs_input时，传continue_plan_id和image_count（仅用户改了张数时填写），服务器沿用已保存的原图及其顺序。两种调用不能同时传。"
             "风格有要求时保留原文并按要求补充，没要求时依商品定位设计。默认10张，允许1至15。"
-            "不要在本工具前自行拆卖点或prompt。ready返回plan_id/revision与逐图item_id；随后按顺序为每项调用generate_image的plan_source。"
+            "不要在本工具前自行拆卖点或prompt。ready返回plan_id/revision与逐图item_id；只有用户要求出图时，才为其选择的条目调用generate_image的plan_source。"
             "needs_input时把问题直接问用户；insufficient时解释资料限制；error是调用失败，读取结构化retry_context.recovery.action决定下一步：repair_arguments只等价纠正一次参数；resume_plan只续接返回的plan_id；wait_existing等待已有执行；report_error准确反馈并停止。自动额度由服务端保存，不能另起调用绕过。不能当成缺资料，不能自行编写方案或绕过策划生图；只策划请求不要生成图片。"),
             "parameters":{"type":"object","additionalProperties":False,
         "oneOf":[{"required":["references"]},{"required":["continue_plan_id"]}],"properties":{
@@ -23,7 +23,8 @@ def _planner_schema():
                 "dependentRequired":{"message_id":["content_index"]}}},
             "source_message_ids":{"type":"array","maxItems":8,"items":{"type":"string"},
                 "description":"仅选定确需沿用的历史用户文字消息ID；当前消息由服务端读取。"},
-            "image_count":{"type":"integer","minimum":1,"maximum":15},
+            "image_count":{"type":"integer","minimum":1,"maximum":15,
+                "description":"本轮需要交付的逐图方案项总数。按完整用户要求理解数量和分组，多个方案组需计入各组图数；只追加图片、背景等要求不会重置原数量。只有完整请求均未指定数量时使用默认10。首次调用必须填写；续接时仅用户改变数量才填写。"},
             "task_type":{"type":"string","enum":["main_images","detail_page"]}},
         }}}
 

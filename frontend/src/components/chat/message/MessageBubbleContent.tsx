@@ -65,11 +65,11 @@ export default function MessageBubbleContent({
     : undefined;
   const thinkingText = streamingThinking || thinkingFromContent?.text || thinkingContent || '';
   const thinkingDurationMs = thinkingFromContent?.duration_ms;
-  const isThinkingNow = !!(isStreaming && !thinkingFromContent && !textContent);
+  const isThinkingNow = !!(isStreaming && !thinkingFromContent && !textContent && thinkingText);
   const shouldShowSingleThinking = !isUser
     && !hasMultiBlocks
     && (thinkingText || isThinkingNow || thinkingDurationMs != null);
-  const loadingText = agentStepHint || 'AI 正在思考';
+  const loadingText = agentStepHint || (isThinkingNow ? 'AI 正在思考' : 'AI 正在处理');
   const showPlainMarkdown = !isUser && !hasMultiBlocks && !bubbleTextInfo && !isErrorMessage;
   const [observed, setObserved] = useState({
     id: message.id, streaming: isStreaming, content: message.content, animateInitialTail: false,

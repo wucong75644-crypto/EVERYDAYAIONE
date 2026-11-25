@@ -56,6 +56,7 @@ def test_model_timing_uses_one_clock_and_fixed_scalar_state():
     assert timing.summary(held=False, review=False) == {
         'first_body_ms': 700.0, 'elapsed_ms': 1200.0, 'body_chunks': 2,
         'max_body_gap_ms': 200.0, 'held_for_knowledge': False, 'review': False,
+        'thinking_duration_ms': 0,
     }
 
 

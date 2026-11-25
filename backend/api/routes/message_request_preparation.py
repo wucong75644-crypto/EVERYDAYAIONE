@@ -1,7 +1,7 @@
 """消息生成请求在占位消息变更前的准备流程。"""
 
 import asyncio
-from typing import Any, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from loguru import logger
 
@@ -33,7 +33,15 @@ async def resolve_generation_context(request: Any, body: Any) -> GenerationType:
     elif body.generation_type:
         gen_type = body.generation_type
     else:
-        gen_type = infer_generation_type(body.content)
+        from services.adapters.factory import IMAGE_MODEL_REGISTRY, VIDEO_MODEL_REGISTRY
+        # An explicitly selected media model is protocol data, not an inferred
+        # action in the user's prose. Keep older clients without generation_type.
+        if body.model in IMAGE_MODEL_REGISTRY:
+            gen_type = GenerationType.IMAGE
+        elif body.model in VIDEO_MODEL_REGISTRY:
+            gen_type = GenerationType.VIDEO
+        else:
+            gen_type = infer_generation_type(body.content)
 
     try:
         user_location = await location_task
@@ -74,13 +82,30 @@ async def prepare_generation_request(
     conversation_service: Any,
     create_user_message_fn: Any,
     turn_id: Optional[str] = None,
+    before_message: Callable[[], Awaitable[None]] | None = None,
 ) -> tuple[Any, Dict[str, Any], Optional[Message]]:
     """完成权限校验、图片预检和可选用户消息创建。"""
     user_message: Optional[Message] = None
     no_user_message_operations = {MessageOperation.RETRY, MessageOperation.REGENERATE_SINGLE}
     needs_user_message = body.operation not in no_user_message_operations
 
-    if gen_type == GenerationType.IMAGE:
+    if before_message is not None:
+        # Preserve conversation authorization and image-credit preflight order;
+        # method validation happens before either message is written.
+        conversation = await conversation_service.get_conversation(
+            conversation_id, user_id, org_id,
+        )
+        if gen_type == GenerationType.IMAGE:
+            preflight_image_request(handler, user_id, body.content, body.params, body.model, body.operation)
+        await before_message()
+        if needs_user_message:
+            user_message = await create_user_message_fn(
+                db=db, conversation_id=conversation_id, content=body.content,
+                created_at=body.created_at, client_request_id=body.client_request_id,
+                turn_id=turn_id,
+                **({"knowledge_refs": [r.model_dump(mode="json") for r in body.knowledge_refs]} if body.knowledge_refs else {}),
+            )
+    elif gen_type == GenerationType.IMAGE:
         conversation = await conversation_service.get_conversation(
             conversation_id, user_id, org_id,
         )

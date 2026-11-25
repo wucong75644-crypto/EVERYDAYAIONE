@@ -182,11 +182,14 @@ export const createStreamingSlice: StateCreator<
         const existingIndex = content.findIndex((part) => (
           part.type === 'text' && part.content_artifact_id === block.content_artifact_id
         ));
-        const last = content[content.length - 1];
+        const lastTextIndex = content.map(part => part.type).lastIndexOf('text');
+        const last = content[lastTextIndex];
         if (existingIndex >= 0) {
           content[existingIndex] = block;
-        } else if (last?.type === 'text' && !last.content_artifact_id && last.text === block.text) {
-          content[content.length - 1] = block;
+        } else if (last?.type === 'text' && !last.content_artifact_id && (last.text === block.text ||
+          (block.content_replaces_text === last.text && block.text.startsWith(last.text + '\n\n')))) {
+          content.splice(lastTextIndex, 1);
+          content.push(block);
         } else {
           content.push(block);
         }

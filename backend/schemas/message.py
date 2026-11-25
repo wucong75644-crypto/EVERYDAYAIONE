@@ -575,17 +575,9 @@ class DeleteMessageResponse(BaseModel):
 
 def infer_generation_type(content: List[ContentPart]) -> GenerationType:
     """
-    根据内容推断生成类型
-
-    规则：
-    1. 包含 /image 或 "生成图片" 等关键词 -> image
-    2. 包含 /video 或 "生成视频" 等关键词 -> video
-    3. 包含图片 + "变成视频" -> video
-    4. 包含图片 + "编辑/修改" -> image
-    5. 其他 -> chat
+    仅识别明确命令语法；自由文本交给聊天模型选择结构化工具调用。
     """
     text_parts = [p for p in content if isinstance(p, TextPart)]
-    image_parts = [p for p in content if isinstance(p, ImagePart)]
 
     if not text_parts:
         return GenerationType.CHAT
@@ -593,16 +585,9 @@ def infer_generation_type(content: List[ContentPart]) -> GenerationType:
     text = text_parts[0].text.lower()
 
     # 显式指定
-    if text.startswith('/image') or any(kw in text for kw in ['生成图片', '画一', 'generate image']):
+    if text == '/image' or text.startswith('/image '):
         return GenerationType.IMAGE
-    if text.startswith('/video') or any(kw in text for kw in ['生成视频', '做个视频', 'generate video']):
+    if text == '/video' or text.startswith('/video '):
         return GenerationType.VIDEO
-
-    # 图片 + 关键词
-    if image_parts:
-        if any(kw in text for kw in ['变成视频', 'to video', '做成视频']):
-            return GenerationType.VIDEO
-        if any(kw in text for kw in ['修改', '修正', '编辑', '裁剪', '调整', '改大小', '改尺寸', 'edit', '重绘']):
-            return GenerationType.IMAGE
 
     return GenerationType.CHAT

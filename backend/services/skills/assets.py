@@ -43,6 +43,14 @@ class AssetSummary(Contract):
     kind: AssetKind
     summary: str = Field(min_length=1, max_length=500, pattern=r'\S')
     format: AssetFormat
+    loading: Literal['eager', 'on_demand'] = 'eager'
+
+    @model_serializer(mode='wrap')
+    def preserve_eager_manifest(self, handler):
+        result = handler(self)
+        if self.loading == 'eager':
+            result.pop('loading', None)
+        return result
 
 
 class AssetSource(Contract):
@@ -101,6 +109,8 @@ class AssetDraft(AssetSummary):
         result = handler(self)
         if self.source is None:
             result.pop('source', None)
+        if self.loading == 'eager':
+            result.pop('loading', None)
         return result
 
     @model_validator(mode='after')
