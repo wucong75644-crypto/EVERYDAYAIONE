@@ -32,23 +32,29 @@ def test_query_plan_tool_and_forced_choice_reach_the_existing_model_transport():
     body=adapter._request_body([],stream=True,reasoning_effort=None,thinking_mode='disabled',tools=[QUERY_PLAN_TOOL],tool_choice=choice)
     assert body['tools']==[QUERY_PLAN_TOOL] and body['tool_choice']==choice
     schema=QUERY_PLAN_TOOL['function']['parameters']
-    valid={'steps':[{'domain':'trade','params':{'doc_type':'order','order_scope':'valid','shop_name':'原店铺'}}]}
+    valid={'steps':[{'domain':'trade','params':{'doc_type':'order','order_scope':'valid','shop_name':'原店铺','time_range':'2026-10-01 ~ 2026-10-07','query_type':'summary'}}]}
     assert Draft202012Validator(schema).is_valid(valid)
     missing=copy.deepcopy(valid);del missing['steps'][0]['params']['order_scope']
     assert not Draft202012Validator(schema).is_valid(missing)
+    for field in ('time_range','query_type'):
+        incomplete=copy.deepcopy(valid);del incomplete['steps'][0]['params'][field]
+        assert not Draft202012Validator(schema).is_valid(incomplete)
     invalid=copy.deepcopy(valid);invalid['steps'][0]['params']['order_scope']='invented'
     assert not Draft202012Validator(schema).is_valid(invalid)
     ordinary=adapter._request_body([],stream=True,reasoning_effort=None,thinking_mode='disabled')
     assert 'tool_choice' not in ordinary
 
 
-async def image_wire_contracts(monkeypatch, text, *, single_image_edit=True):
+async def image_wire_contracts(monkeypatch, text, *, single_image_edit=True, intent=None):
     from core.config import get_settings
 
     monkeypatch.setattr(get_settings(), 'chat_inline_image_enabled', True)
     monkeypatch.setattr(get_settings(), 'chat_single_image_edit_enabled', single_image_edit)
     runtime, prepared, handler, request = case()
     request = replace(request, content=[TextPart(text=text)])
+    if intent is not None:
+        from tests.semantic_fixtures import semantic_request
+        request=semantic_request(request,intent)
     prepared.messages = [{'role': 'user', 'content': text}]
     prepared.core_tools = [build_legacy_catalog().require('generate_image').to_schema()]
     sent = []
@@ -72,16 +78,16 @@ async def wire_contracts(monkeypatch):
     return await image_wire_contracts(monkeypatch, '参考这张图的配色重新生成一张')
 
 
-@pytest.mark.parametrize(('text', 'enabled', 'simple'), [
-    ('把你刚生成的那张图的桌面颜色调浅一点', True, True),
-    ('把你刚生成的那张图的桌面颜色调浅一点', False, False),
-    ('把你生成的第二张图的桌面颜色调浅一点', True, True),
-    ('把你刚生成的那张图改成竖版', True, False),
-    ('把你刚生成的那张图调浅，并另外生成一张新图', True, False),
-    ('把你刚生成的那张图调浅，同时生成一段视频', True, False),
+@pytest.mark.parametrize(('text', 'enabled', 'simple','intent'), [
+    ('把你刚生成的那张图的桌面颜色调浅一点', True, True,'edit'),
+    ('把你刚生成的那张图的桌面颜色调浅一点', False, False,'edit'),
+    ('把你生成的第二张图的桌面颜色调浅一点', True, True,'edit'),
+    ('把你刚生成的那张图改成竖版', True, False,None),
+    ('把你刚生成的那张图调浅，并另外生成一张新图', True, False,None),
+    ('把你刚生成的那张图调浅，同时生成一段视频', True, False,None),
 ])
-async def test_single_edit_publishes_flat_contract_only_for_supported_requests(monkeypatch, text, enabled, simple):
-    contracts = await image_wire_contracts(monkeypatch, text, single_image_edit=enabled)
+async def test_single_edit_publishes_flat_contract_only_for_supported_requests(monkeypatch, text, enabled, simple,intent):
+    contracts = await image_wire_contracts(monkeypatch, text, single_image_edit=enabled,intent=intent)
     parameters = contracts['generate_image']
     if not simple:
         assert 'edit_instruction' not in parameters['properties']

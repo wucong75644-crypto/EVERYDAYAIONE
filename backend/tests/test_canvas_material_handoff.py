@@ -195,7 +195,19 @@ def test_explicit_analysis_material_is_not_sent_to_the_image_supplier():
     saved=bind_group(original,record.source_images,'只观察第一张，用第二张做主体。',semantic_context=context)
     assert [m.reference for m in saved.items[0].materials if m.usage=='input']==[materials[1].reference]
     per_item=original.model_copy(update={'items':(original.items[0].model_copy(update={'materials':(materials[1],)}),)})
-    assert bind_group(per_item,record.source_images,'',semantic_context=context).items[0].materials==(materials[1],)
+    scoped=bind_group(per_item,record.source_images,'',semantic_context=context)
+    # Shared analysis provenance stays readable but must never become supplier input.
+    assert scoped.items[0].materials==tuple(materials)
+    assert [m.reference for m in scoped.items[0].materials if m.usage=='input']==[materials[1].reference]
+    assert scoped.items[0].body==original.items[0].body
+    runtime,_,_,_=case()
+    call={'id':'analysis-only-binding','name':co.SAVE,'arguments':json.dumps({'document':per_item.model_dump(mode='json')})}
+    state,saved_artifact,_,_=co.save(runtime,call,build_capability_catalog(),has_image_attachments=True,
+        source_images=record.source_images,request_context=context)
+    outbound,_=co.compile_input(state,'generate_image',{},
+        {'artifact_id':saved_artifact.id,'item_index':1,'sha256':saved_artifact.sha256})
+    assert outbound['references']==[{**materials[1].reference.model_dump(exclude_none=True),'role':materials[1].role}]
+    assert outbound['prompt']==original.items[0].body
 
 
 def test_ready_server_plan_auto_reaches_dispatch_without_numeric_ratio_parsing():

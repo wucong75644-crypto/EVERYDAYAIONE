@@ -211,6 +211,7 @@ class MockSupabaseTable:
     def __init__(self, data: list = None):
         self._data = data or []
         self._filters = {}
+        self._neq_filters = {}
         self._in_filters = {}
         self._ilike_filters = {}
         self._gte_filters = {}
@@ -226,6 +227,7 @@ class MockSupabaseTable:
     def select(self, fields: str = "*", count: str | None = None):
         # 重置查询状态（每次 select 开始新查询链）
         self._filters = {}
+        self._neq_filters = {}
         self._in_filters = {}
         self._ilike_filters = {}
         self._gte_filters = {}
@@ -261,6 +263,10 @@ class MockSupabaseTable:
 
     def eq(self, field: str, value):
         self._filters[field] = value
+        return self
+
+    def neq(self, field: str, value):
+        self._neq_filters[field] = value
         return self
 
     def in_(self, field: str, values: list):
@@ -330,6 +336,10 @@ class MockSupabaseTable:
                     or (row.get("generation_params") or {}).get("origin") == "chat_image") == value]
                 continue
             filtered = [d for d in filtered if d.get(field) == value]
+
+        for field, value in self._neq_filters.items():
+            # SQL <> does not include NULL/missing values.
+            filtered = [d for d in filtered if d.get(field) is not None and d.get(field) != value]
 
         for field, values in self._in_filters.items():
             filtered = [d for d in filtered if d.get(field) in values]

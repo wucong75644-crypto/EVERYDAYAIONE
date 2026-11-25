@@ -447,9 +447,17 @@ class ChatImageInputResolver:
             "context_revision", self.base_revision).eq("message_kind", "conversation").in_(
             "status", ["completed", "interrupted"]).order("context_revision", desc=True).limit(50).execute().data or []
         previous = {}
-        siblings = self.owner.db.table("tasks").select("id,request_params,user_id,org_id,conversation_id").eq(
+        siblings_query = self.owner.db.table("tasks").select("id,request_params,user_id,org_id,conversation_id").eq(
             "request_params->'_media_request_v1'->'origin'->>'parent_task_id'", self.owner.task_id).eq(
-            "type", "image").order("created_at", desc=True).limit(1).execute().data or []
+            "type", "image")
+        # A replay cannot inherit settings from its own already accepted child.
+        # Other calls retain the original sequential canvas inheritance.
+        from services.tools.dispatcher import _dispatch_call_id
+        current_call = _dispatch_call_id.get()
+        if current_call:
+            siblings_query = siblings_query.neq(
+                "request_params->'_media_request_v1'->'origin'->>'tool_call_id'", current_call)
+        siblings = siblings_query.order("created_at", desc=True).limit(1).execute().data or []
         for sibling in siblings:
             if (sibling.get("user_id") == self.owner.user_id and sibling.get("org_id") == self.owner.org_id
                     and sibling.get("conversation_id") == self.owner.conversation_id):

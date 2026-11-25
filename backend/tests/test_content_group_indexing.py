@@ -35,7 +35,9 @@ def test_explicit_author_size_outranks_model_body_and_structured_options():
     from services.task_execution.content_objects import ContentDocument,ContentItem
     document=ContentDocument(title='原稿',items=(ContentItem(title='第一套',body='模型建议1:1、1K。',
         options={'aspect_ratio':'3:4','resolution':'4K'}),))
-    saved=bind_group(document,[],'每套输出16:9、2K。')
+    from services.agent.image.ecommerce_planner.workflow import ImageRequestContext
+    saved=bind_group(document,[],'每套输出16:9、2K。',
+        semantic_context=ImageRequestContext(size={'aspect_ratio':'16:9','resolution':'2K'}))
     assert saved.items[0].options=={'aspect_ratio':'16:9','resolution':'2K'}
     assert saved.items[0].body==document.items[0].body
 
@@ -54,11 +56,12 @@ def test_only_fresh_image_writing_uses_host_registration_without_model_save():
     from services.handlers.chat.content_tools import prefers_plain_image_text
     from tests.test_model_directed_loop import case
     runtime,_,_,_=case()
-    request=SimpleNamespace(content=[TextPart(text='帮我写5套图片提示词，先不要生图')])
+    from tests.semantic_fixtures import semantic_request
+    request=semantic_request(SimpleNamespace(content=[TextPart(text='帮我写5套图片提示词，先不要生图')]),'write')
     assert prefers_plain_image_text(request,runtime)
     assert not prefers_plain_image_text(request,runtime,saved_source_available=True)
     assert not prefers_plain_image_text(request,runtime,server_image_plan=True)
-    request.content=[TextPart(text='帮我把第一套生成图片')]
+    request=semantic_request(SimpleNamespace(content=[TextPart(text='帮我把第一套生成图片')]),'execute_saved')
     assert not prefers_plain_image_text(request,runtime)
 
 
@@ -68,11 +71,13 @@ def test_consumed_additional_material_does_not_transfer_writing_back_to_model_sa
     from services.handlers.chat.content_tools import prefers_plain_image_text
     from tests.test_model_directed_loop import case
     runtime,_,_,_=case()
-    request=SimpleNamespace(content=[TextPart(text='帮我写3套图片提示词，先不要生成图片')])
+    from tests.semantic_fixtures import semantic_request
+    request=semantic_request(SimpleNamespace(content=[TextPart(text='帮我写3套图片提示词，先不要生成图片')]),'write')
     runtime.task_user_changes=SimpleNamespace(items=(SimpleNamespace(owner_task_id=runtime.task_id,
         message='补充一张观察照片，背景浅灰色。',delivered=True),))
     assert prefers_plain_image_text(request,runtime)
     runtime.task_user_changes.items+=(SimpleNamespace(owner_task_id=runtime.task_id,message='现在生成第一套图片',delivered=True),)
+    runtime.workflow_projection={'intent':'execute_saved','request_context':{'media':{'tool':'generate_image','wait_for':[1]}}}
     assert not prefers_plain_image_text(request,runtime)
 
 
