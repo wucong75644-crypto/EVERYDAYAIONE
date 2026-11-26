@@ -110,7 +110,10 @@ class ChatGenerationExecutor:
                 )
                 if not recent or recent.data.get('version') != 1 or recent.data.get('input_message_id') != claim.input_message_id:
                     raise RuntimeError('REQUEST_CONTEXT_READ_UNCONFIRMED')
-                request_context = recent.data
+                # A resumed model window keeps its saved image vocabulary and
+                # exact snapshot. Only fresh windows adopt the short surface.
+                if request_context is None:
+                    request_context = {**recent.data, **({'image_reference_version': 1} if not saved_policy else {})}
                 if not plans or plans.data.get('outcome') not in {'found', 'not_found'}:
                     raise RuntimeError('TASK_WORKING_PLAN_CANDIDATES_UNCONFIRMED')
                 runtime.task_plan_candidates = {

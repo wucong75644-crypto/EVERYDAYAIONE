@@ -135,7 +135,7 @@ async def formal_entry_acceptance(content_db, monkeypatch, *, customer_suite=Non
                     async def capture_response(response):
                         row={'kind':'formal_model_response','model':model_id,'status':response.status_code,
                             'path':response.request.url.path,'request_id':response.headers.get('x-request-id'),
-                            'raw_sse':'','complete':False}
+                            'raw_sse':'','complete':False,'headers_at':time.monotonic()}
                         wire.append(row)
                         upstream=response.stream
                         class CaptureStream(httpx.AsyncByteStream):
@@ -143,10 +143,16 @@ async def formal_entry_acceptance(content_db, monkeypatch, *, customer_suite=Non
                                 chunks=[]
                                 try:
                                     async for data in upstream:
+                                        row.setdefault('first_frame_at',time.monotonic())
+                                        row['last_frame_at']=time.monotonic()
                                         chunks.append(data)
                                         yield data
                                     row['complete']=True
+                                except Exception as error:
+                                    row['stream_error_type']=type(error).__name__
+                                    raise
                                 finally:
+                                    row['ended_at']=time.monotonic()
                                     row['raw_sse']=b''.join(chunks).decode('utf-8',errors='replace')
                                     env['persist']()
                             async def aclose(self):
@@ -158,7 +164,10 @@ async def formal_entry_acceptance(content_db, monkeypatch, *, customer_suite=Non
                 return value
             adapter._get_client=client
             return adapter
-        gateway=ModelGateway(adapter_factory=factory,event_publisher=SimpleNamespace(publish=lambda *a,**k:None))
+        def capture_sampling(event):
+            wire.append({'kind':'formal_model_sampling','at':time.monotonic(),**event.log_fields()})
+            env['persist']()
+        gateway=ModelGateway(adapter_factory=factory,event_publisher=SimpleNamespace(publish=capture_sampling))
         monkeypatch.setattr('services.model_gateway._MODEL_GATEWAY',gateway)
         from services.agent.image.ecommerce_planner import workflow as workflow_module
         classify=workflow_module.classify_workflow
@@ -251,7 +260,8 @@ async def formal_entry_acceptance(content_db, monkeypatch, *, customer_suite=Non
             with psycopg.connect(content_db) as c:
                 c.execute('UPDATE users SET credits=10000 WHERE id=%s',(facts['user'],))
                 c.execute('UPDATE conversations SET scope_id=user_id::text WHERE id=%s',(facts['conv'],))
-            body={'content':[p.model_dump(mode='json') for p in content],'generation_type':'chat','model':'qwen3.8-max','params':params}
+            selected_model=os.environ.get('SKILL_FORMAL_CHAT_MODEL','qwen3.8-max')
+            body={'content':[p.model_dump(mode='json') for p in content],'generation_type':'chat','model':selected_model,'params':params}
             if selection:body['selected_skill']=selection
             response=await http.post(f"/conversations/{facts['conv']}/messages/generate",json=body)
             assert response.status_code==200,response.text
@@ -259,8 +269,11 @@ async def formal_entry_acceptance(content_db, monkeypatch, *, customer_suite=Non
             assert 'assistant_message' in reply, {'expected':'independent serial turn', 'actual':reply}
             output=reply['assistant_message']['id']
             claim=await service.claim_serial(facts['conv']);assert claim
+            if selected_model=='auto':
+                with psycopg.connect(content_db) as c:
+                    assert c.execute("SELECT request_params->>'_is_smart_mode' FROM tasks WHERE id=%s",(claim.task_id,)).fetchone()[0]=='true'
             facts.update(task=claim.task_id,turn=claim.turn_id,token=claim.execution_token,message=claim.input_message_id)
-            row={'request':text,'task_id':facts['task'],'selection':selection,'status':'running',
+            row={'request':text,'task_id':facts['task'],'selection':selection,'status':'running','requested_model':selected_model,
                 'planner_model':settings.ecom_image_planning_non_thinking_model};rows.append(row);record();started=time.monotonic()
             offset=len(wire)
             pending=asyncio.create_task(service.execute_claim(claim))

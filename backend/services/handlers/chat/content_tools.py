@@ -359,7 +359,7 @@ SCHEMAS = (
     READ_SCHEMA,
 )
 
-def model_tools(tools, *, selectable_source_images=False, saved_text_available=False, server_image_plan=False, reuse_source=False, first_delivery=False, current_images=(), inline_image=False, generated_image_edit=False, single_image_edit=False, inline_only=False, previous_image_reference=None, planned_image_count=None):
+def model_tools(tools, *, selectable_source_images=False, saved_text_available=False, server_image_plan=False, reuse_source=False, first_delivery=False, current_images=(), inline_image=False, generated_image_edit=False, single_image_edit=False, inline_only=False, previous_image_reference=None, planned_image_count=None, image_reference_catalog=None):
     """Project the one entry contract selected by the current workflow."""
     from services.task_execution.content_objects import ContentReference, ImageContentReference, selection_parameters
     from services.handlers.image_size_requirements import SIZE_GUIDANCE
@@ -413,7 +413,8 @@ def model_tools(tools, *, selectable_source_images=False, saved_text_available=F
                     '只交付文字时页面直接展示正文，后台保留当前原图待选。还要求执行时设continue_execution=true，'
                     '有上传图片则在每条的materials中绑定所用图片，保存后再调用目标工具。')
             if current_images and not reuse_source:
-                refs = json.dumps(material_candidates(current_images), ensure_ascii=False)
+                candidates = material_candidates(current_images)
+                refs = json.dumps(image_reference_catalog.encode(candidates) if image_reference_catalog else candidates, ensure_ascii=False)
                 function['description'] += (
                     ' 本轮上传图的可选 materials[].reference（仅按用户意图选择）：' + refs
                 )
@@ -501,7 +502,8 @@ def model_tools(tools, *, selectable_source_images=False, saved_text_available=F
                     if previous_image_reference:
                         tool['function']['description'] += (
                             ' 上一轮唯一已完成结果的候选引用（仅按用户指代选择，不是强制底图）：'
-                            + json.dumps(previous_image_reference, ensure_ascii=False))
+                            + json.dumps(image_reference_catalog.encode(previous_image_reference)
+                                         if image_reference_catalog else previous_image_reference, ensure_ascii=False))
                     result.append(tool)
                     continue
                 projected = tool['function']['parameters']

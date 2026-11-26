@@ -1052,6 +1052,7 @@ async def _run_loop(
                 from services.task_execution.inline_image_action import previous_result_reference
                 previous_image_reference = await asyncio.to_thread(previous_result_reference,
                     content_state, handler, request, prepared.execution_context)
+            from services.task_execution.image_reference_catalog import for_runtime
             tools = [*content_tools.model_tools(
                 tools, selectable_source_images=content_objects.has_selectable_source_images(content_state),
                 saved_text_available=saved_source_available,
@@ -1066,6 +1067,7 @@ async def _run_loop(
                 previous_image_reference=previous_image_reference,
                 current_images=content_objects.current_source_images(request),
                 first_delivery=first_delivery,
+                image_reference_catalog=for_runtime(runtime),
             ), *content_tools.SCHEMAS]
             from services.task_execution import item_confirmation
             media = item_confirmation.directive(request, runtime)
@@ -1564,6 +1566,17 @@ async def _read_turn_impl(
     model_messages = skills.model_messages(messages, tools) if skills else messages
     if not task_review and (visual_notice := content_tools.visual_context_notice(model_messages)):
         model_messages = [*model_messages, {'role': 'system', 'content': visual_notice}]
+    from services.task_execution.image_reference_catalog import for_runtime
+    image_references = for_runtime(runtime) if not task_review else None
+    if image_references is not None:
+        model_messages = image_references.messages(model_messages)
+        tools = image_references.tools(tools, plain_text_registration=getattr(prepared, 'plain_image_text_delivery', False))
+        if content_tools.semantic_intent(request, runtime) in {'generate', 'edit', 'write_then_submit_images'}:
+            model_messages.append({'role': 'system', 'content':
+                '当前语义动作包含实际图片交付。先核对所选需求及其等待条件；未要求等待确认时，'
+                '不要只返回提示词正文或只保存后结束。单图可用generate_image的编辑或draft形式；'
+                '需要先保存完整方案再执行时，用save_task_text显式continue_execution=true后按真实保存回执提交。'
+                '有用户等待条件时仍须遵守，不把这条说明当作批准，也不能执行无关历史稿。'})
     stream_kwargs = {
         "messages": model_messages,
         "tools": tools,
@@ -1975,6 +1988,45 @@ async def _execute_tools_impl(
     from services.task_execution.plan_facts import pending_review
     from services.task_execution.requirement_changes import refresh as refresh_user_changes,blocked as revision_blocked,phase_repair
     if runtime is not None:await refresh_user_changes(runtime)
+    from services.task_execution.image_reference_catalog import for_runtime
+    image_references = for_runtime(runtime)
+    if image_references is not None:
+        from services.task_execution.contracts import TaskError
+        from services.tools.argument_validation import decode_tool_arguments
+        decoded_calls = []
+        reference_error = None
+        for call in calls:
+            try:
+                raw = decode_tool_arguments(call.get('arguments') or '{}')
+                decoded = image_references.decode(raw)
+                decoded_calls.append({**call, 'arguments': json.dumps(decoded, ensure_ascii=False)} if decoded != raw else call)
+            except TaskError as error:
+                reference_error = str(error)
+                break
+            except (ValueError, TypeError):
+                decoded_calls.append(call)  # Existing strict argument validation owns malformed JSON.
+        if reference_error:
+            if any(call['name'] == content_objects.SAVE for call in calls):
+                from services.task_execution.content_delivery import finish_response
+                finish_response(runtime, None, {'ok': False, 'code': reference_error}, request=request)
+            prepared.messages.append(_assistant_tool_message(turn_text, calls))
+            for call in calls:
+                output = json.dumps({'ok': False, 'accepted': False, 'code': reference_error,
+                    'submission_state': 'not_dispatched', 'message': '短引用不存在、已过期或与真实ID冲突。请从当前图片目录重新选择image_ref，不猜测编号。'}, ensure_ascii=False)
+                prepared.messages.append({'role': 'tool', 'tool_call_id': call['id'], 'content': output})
+                block = next((b for b in blocks if b.get('tool_call_id') == call['id']), None)
+                if block is not None:
+                    block.update(status='error', output=output)
+                    await sink.on_block_update(block)
+                else:
+                    block = {'type': 'tool_step', 'tool_call_id': call['id'], 'tool_name': call['name'],
+                             'input': call['arguments'], 'status': 'error', 'output': output}
+                    blocks.append(block)
+                    await sink.on_block(block)
+            await runtime.safe_point(SafePoint.AFTER_TOOL, replay_payload=_build_replay_context(
+                prepared.messages, blocks, turn, next_model_round=next_model_round))
+            return None
+        calls = decoded_calls
     candidate_workflow = getattr(prepared, 'ecom_workflow_candidate', None)
     if candidate_workflow is not None and prepared.ecom_workflow is None:
         from services.agent.image.ecommerce_planner.workflow import SKILL as SERVER_PLANNER
@@ -2187,6 +2239,9 @@ async def _execute_tools_impl(
             for call in calls:
                 error = target_errors.get(call['id'], ('REQUEST_TARGET_BATCH_BLOCKED', '本批目标未核实，未派发任何业务操作。'))
                 result = {'ok': False, 'accepted': False, 'code': error[0], 'message': error[1]}
+                if call['name'] == content_objects.SAVE:
+                    from services.task_execution.content_delivery import finish_response
+                    finish_response(runtime, None, result, request=request)
                 output = json.dumps(result, ensure_ascii=False)
                 prepared.messages.append({'role': 'tool', 'tool_call_id': call['id'], 'content': output})
                 for block in blocks:
@@ -2369,6 +2424,11 @@ async def _execute_tools_impl(
                                                      '保持 document 的全部原文不变，重新登记；不要改成 continue_execution=true。')
                             if any('materials' in issue['loc'] for issue in result['issues']):
                                 result['message'] += content_objects.MATERIAL_GUIDANCE
+                        from services.task_execution.image_reference_catalog import for_runtime
+                        references = for_runtime(runtime)
+                        if references is not None and result['code'] == content_objects.INVALID_OBJECT and not content_output_registration:
+                            offered = getattr(prepared, 'content_visible_tools', {}).get(content_objects.SAVE)
+                            references.save_repair(result, offered)
                 if not content_output_registration:
                     prepared.messages.append({'role':'tool','tool_call_id':call['id'],'content':json.dumps(result,ensure_ascii=False)})
                 blocks[:] = [b for b in blocks if b.get('tool_call_id') != call['id']]

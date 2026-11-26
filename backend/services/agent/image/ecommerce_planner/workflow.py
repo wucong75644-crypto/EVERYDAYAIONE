@@ -147,7 +147,7 @@ async def store_binding(scope, task_id, token, value):
     return binding(saved)
 
 
-async def classify_workflow(text, previous=None, *, org_id=None, selected_skill=None, context=None):
+async def classify_workflow(text, previous=None, *, org_id=None, selected_skill=None, context=None, image_references=None):
     """Select specialized planning only on explicit intent; errors are not missing input."""
     from core.config import get_settings
     from services.intent_router import IntentRouter
@@ -191,7 +191,7 @@ async def classify_workflow(text, previous=None, *, org_id=None, selected_skill=
                     if 'message_id' in ref and 'content_index' in ref}
     results = ((context or {}).get('request_resolution') or {}).get('image_results', ())
     image_targets.update({f'result:{index}': {'message_id': image['source_message_id'], 'content_index': image['content_index']}
-                          for index, image in enumerate(results, 1)})
+                          for index, image in enumerate(results, 1) if 'source_message_id' in image})
     target_schema = tool['function']['parameters']['$defs']['Target']
     turn_catalog = ((context or {}).get('request_resolution') or {}).get('catalog_version') == 2
     if not turn_catalog:  # Complete already-created windows under their original wire contract.
@@ -207,7 +207,8 @@ async def classify_workflow(text, previous=None, *, org_id=None, selected_skill=
             if form['properties']['kind']['const'] == 'content':
                 form['required'].append('source_message_id')
     context = {**(context or {}), 'image_target_references': [
-        {'image_reference': key, **reference} for key, reference in image_targets.items()]}
+        ({'image_reference': key, **reference} if turn_catalog else {'image_reference': key})
+        for key, reference in image_targets.items()]}
     tool['function']['parameters']['properties']['request_context']['required'] = ['size','platform','media','deliveries','materials']
     if (context or {}).get('request_resolution') is not None:
         tool['function']['parameters']['properties']['request_context']['required'].extend(['target', 'focus'])
@@ -278,6 +279,31 @@ async def classify_workflow(text, previous=None, *, org_id=None, selected_skill=
             '执行历史稿或按原稿重做时，用户未要求改规格则size={}，保留稿件原规格，不根据素材重新推导inherit_reference。'
             'new_uploads、quoted_images、selected_images分别是当轮上传、客户端引用、模型解析记录；'
             '后者不是用户明确指定，不把本次上传自动当成编辑授权。')
+    if image_references is not None:
+        wire_context['materials'] = ImageRequestContext.model_json_schema()['properties']['materials']
+        def short_inputs(parts):
+            return [{**{key: value for key, value in part.items() if key != 'material_index'},
+                     **image_references.encode(route_refs[part['material_index'] - 1])}
+                    if part.get('material_index') else part for part in parts]
+        if isinstance(routed_input, list):
+            routed_input = short_inputs(routed_input)
+        if context.get('historical_materials'):
+            context = {**context, 'historical_materials': short_inputs(context['historical_materials'])}
+        tool = image_references.schema(tool)
+        context = image_references.encode(context)
+        prompt = prompt.replace('canvas_image只选本轮实际附件中的编辑目标，不选风格参考。',
+                                'canvas_ref只选本条实际附件中的编辑目标，不选风格参考。')
+        prompt = prompt.replace('origin=append的图片属于独立追加事件，选为底图时用canvas_resource填写image:<material_index>，不把它编号成原消息附件。',
+                                'origin=append的图片属于独立追加事件，复制其image_ref作为canvas_ref，不编造原消息附件序号。')
+        prompt = prompt.replace('用material_index选择当前、已送达追加或origin=history的历史图片',
+                                '用reference.image_ref选择当前、已送达追加或origin=history的历史图片')
+        prompt = prompt.replace('原样复制图片reference.message_id和content_index', '原样复制图片image_ref')
+        prompt = prompt.replace('图片target直接复制reference.message_id为source_message_id、reference.content_index为content_index，',
+                                '图片target只复制当前目录的image_ref，')
+        prompt += ('图片目标与其他素材统一填写image_ref，materials每项为reference:{image_ref}、role、usage；'
+            '不填material_index、canvas_image、canvas_resource或图片消息ID/位置。显式指定当前画布用canvas_ref。'
+            '后台按当前输入快照还原真实来源。')
+        prompt += 'routing_parameter_correction若存在，是上一调用的字段校验错误；只按当前Schema纠正参数，原始业务要求和可选对象不变。'
     router = IntentRouter()
     try:
         payload = await router.call_tool_model(api_key=settings.dashscope_api_key, model=settings.intent_router_model,
@@ -288,6 +314,8 @@ async def classify_workflow(text, previous=None, *, org_id=None, selected_skill=
         if len(calls) != 1 or calls[0]["function"]["name"] != "select_image_workflow":
             return {"kind": "unavailable"}
         args = json.loads(calls[0]["function"]["arguments"])
+        if image_references is not None:
+            args = image_references.decode(args)
         if (not isinstance(args, dict) or set(args) - {'kind','mode','reuse_through_stage','intent','image_count','request_context'}
                 or not {'kind','mode','reuse_through_stage','intent','image_count'} <= args.keys()
                 or args.get('kind') not in {'main_images','ordinary_image','needs_input','unrelated'}
@@ -311,7 +339,7 @@ async def classify_workflow(text, previous=None, *, org_id=None, selected_skill=
                         raw_target.update(source_message_id=selected['message_id'], content_index=selected['content_index'])
                     elif image_key is not None:
                         return {'kind': 'unavailable'}
-                if raw_context.get('materials') is not None:
+                if raw_context.get('materials') is not None and image_references is None:
                     raw_context['materials'] = [
                         {'reference':route_refs[material['material_index']-1],
                          'role':material['role'],'usage':material['usage']}
@@ -403,6 +431,16 @@ async def classify_workflow(text, previous=None, *, org_id=None, selected_skill=
             await router.close()
         except Exception:
             logger.warning("IMAGE_WORKFLOW_ROUTER_CLOSE_FAILED")
+
+
+async def classify_current_window(text, previous=None, **kwargs):
+    """One bounded schema repair for new short windows; no business action."""
+    route = await classify_workflow(text, previous, **kwargs)
+    if (kwargs.get('image_references') is not None and route.get('kind') == 'unavailable'
+            and (route.get('rejection') or {}).get('code') == 'IMAGE_WORKFLOW_ARGUMENTS_INVALID'):
+        kwargs['context'] = {**(kwargs.get('context') or {}), 'routing_parameter_correction': route['rejection']}
+        route = await classify_workflow(text, previous, **kwargs)
+    return route
 
 
 async def restore_retry_binding(db, *, user_id, org_id, conversation_id, message_id, operation):
@@ -608,10 +646,12 @@ class EcommerceWorkflow:
     async def identify(self):
         from services.task_execution.content_delivery import input_revision
         if self.route is None:
+            from services.task_execution.image_reference_catalog import for_runtime
             prior = self.previous["plan"] if self.previous else None
             selection = getattr(self.request, 'selected_skill', None)
-            self.route = await classify_workflow(self.action_input(), prior, org_id=self.handler.org_id,
-                selected_skill=selection.skill_id if selection else None, context=self.action_context())
+            self.route = await classify_current_window(self.action_input(), prior, org_id=self.handler.org_id,
+                selected_skill=selection.skill_id if selection else None, context=self.action_context(),
+                image_references=for_runtime(self.runtime))
         from services.task_execution import request_resolution
         if request_resolution.context(self.runtime) is not None:
             from services.task_execution.contracts import TaskError
