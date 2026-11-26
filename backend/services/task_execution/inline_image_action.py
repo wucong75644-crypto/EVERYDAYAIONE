@@ -3,7 +3,7 @@ from dataclasses import replace
 import json
 from uuid import UUID
 
-from pydantic import Field, StrictInt
+from pydantic import Field, StrictInt, model_validator
 
 from services.tools.argument_validation import _issues, validate_model_image_arguments
 from services.tools.policy import ToolPolicy
@@ -43,26 +43,63 @@ class InlineRequest(Fact):
 
 
 class SingleImageEdit(Fact):
-    source_message_id: UUID = Field(description='原样复制已选成图的 reference.message_id。')
+    source_message_id: UUID = Field(description='原样复制所选编辑底图的 reference.message_id；可选当前附件或可访问的历史图片。')
     source_content_index: StrictInt = Field(ge=0, description='原样复制 reference.content_index，从 0 开始。')
     edit_instruction: str = Field(min_length=1, max_length=20000, description='本次修改以及需要保留的内容。')
+    materials: tuple[content.Material, ...] = Field(default=(), max_length=15,
+        description='其他参考图及用途，不重复填写编辑底图。' + content.MATERIAL_GUIDANCE)
 
     def content_item(self):
         reference = content.MaterialReference(message_id=str(self.source_message_id),
                                               content_index=self.source_content_index)
-        return content.ContentItem(title='编辑成图', body=self.edit_instruction, materials=(
+        additional = []
+        for material in self.materials:
+            if material.reference == reference:
+                if material.usage != 'input':
+                    raise TaskError('CHAT_INLINE_IMAGE_SELECTION_CONFLICT')
+                continue  # Same base named twice is one input, never two images.
+            additional.append(material)
+        return content.ContentItem(title='编辑图片', body=self.edit_instruction, materials=(
             content.Material(reference=reference, role='编辑底图', usage='input'),
+            *additional,
         ))
 
 
 class PreviousResultEdit(Fact):
+    """Private admission for old calls; never advertised to new model requests."""
     previous_result_edit: str = Field(min_length=1, max_length=20000,
         description='编辑上一轮唯一图片任务的已完成结果：写本次修改与保留要求。后台按原回执绑定底图，不重复使用它的输入图片。')
+    edit_instruction: str | None = Field(default=None, min_length=1, max_length=20000)
+    source_message_id: UUID | None = None
+    source_content_index: StrictInt | None = Field(default=None, ge=0)
+    materials: tuple[content.Material, ...] = Field(default=(), max_length=15)
+
+    @model_validator(mode='after')
+    def consistent(self):
+        if self.edit_instruction is not None and self.edit_instruction != self.previous_result_edit:
+            raise ValueError('两份编辑要求冲突，请只保留 edit_instruction 中的本轮完整要求。')
+        if (self.source_message_id is None) != (self.source_content_index is None):
+            raise ValueError('底图引用不完整，source_message_id 和 source_content_index 必须成对填写。')
+        return self
+
+
+EDIT_GUIDANCE = ('编辑图片统一填写 source_message_id、source_content_index 和 edit_instruction；'
+    '其他参考图放 materials，并注明用途。底图引用从图片目录原样复制；'
+    '“刚生成那张”选对应已完成结果，不使用旧输入图；多个候选无法确定时读取会话或询问用户。'
+)
+
+
+def validation_parameters(parameters, arguments):
+    # Keep legacy calls explicit and private without publishing conflicting schemas.
+    if ('edit_instruction' in parameters.get('properties', {})
+            and isinstance(arguments, dict) and 'previous_result_edit' in arguments):
+        return PreviousResultEdit.model_json_schema()
+    return parameters
 
 
 def request_type(properties, arguments=None):
     if arguments is not None and 'previous_result_edit' in arguments:
-        return PreviousResultEdit if 'previous_result_edit' in properties else None
+        return PreviousResultEdit if 'edit_instruction' in properties else None
     if 'edit_instruction' in properties:
         return SingleImageEdit
     if 'draft' in properties:
@@ -171,7 +208,7 @@ async def complete_transfer_materials(item, handler, request, context, *, runtim
     return item.model_copy(update={'materials': tuple(materials)})
 
 
-async def label_current_inputs(item, handler, request, context, *, runtime=None):
+async def label_current_inputs(item, handler, request, context, *, runtime=None, edit_reference=None):
     """Label verified positions; preserve the model's instruction and image order."""
     import asyncio
     from .image_resources import native_resolver
@@ -201,6 +238,15 @@ async def label_current_inputs(item, handler, request, context, *, runtime=None)
             number=matches[0]
             lines.append(f'输入图片{position}对应用户图{number}。' if number<=len(images)
                 else f'输入图片{position}对应追加图{number-len(images)}（用户图{number}）。')
+    if lines and edit_reference:
+        positions = [i for i, source in enumerate(selected, 1)
+                     if all(source.get(key) == value for key, value in edit_reference.items())]
+        if len(positions) != 1:
+            raise TaskError('CHAT_INLINE_IMAGE_SELECTION_CONFLICT')
+        number = next((n for n, original in enumerate(current, 1)
+                       if all(original.get(key) == value for key, value in edit_reference.items())), None)
+        suffix = f'（用户图{number}）' if number is not None else ''
+        lines.append(f'编辑底图为输入图片{positions[0]}{suffix}。')
     legend = '\n'.join(lines)
     if not legend or item.body.startswith(legend+'\n\n'):
         return item
@@ -251,16 +297,29 @@ async def prepare(runtime, handler, request, prepared, call, args, registry, *, 
     edit = None
     if 'previous_result_edit' in args:
         from .direct_loop import content_followup_state
-        instruction = PreviousResultEdit.model_validate(args).previous_result_edit
+        legacy = PreviousResultEdit.model_validate(args)
         source = await asyncio.to_thread(previous_result_reference,
             runtime.task_execution_state or content_followup_state(runtime), handler, request, context)
         if source is None:
             raise TaskError('CHAT_INLINE_IMAGE_GENERATED_SOURCE_REQUIRED')
+        if legacy.source_message_id is not None and (
+                str(legacy.source_message_id), legacy.source_content_index) != (
+                    source['message_id'], source['content_index']):
+            error = TaskError('CHAT_INLINE_IMAGE_SELECTION_CONFLICT')
+            error.guidance = '上一轮结果与明确填写的底图不同。本次未提交；请按用户指代只填写一份底图引用及 edit_instruction。'
+            raise error
         edit = SingleImageEdit(source_message_id=source['message_id'], source_content_index=source['content_index'],
-                               edit_instruction=instruction)
+                               edit_instruction=legacy.previous_result_edit, materials=legacy.materials)
     elif 'edit_instruction' in args:
         edit = SingleImageEdit.model_validate(args)
     item = edit.content_item() if edit is not None else InlineRequest.model_validate(args).draft
+    if edit is not None:
+        from services.handlers.chat.content_tools import semantic_context
+        frame = semantic_context(request, runtime)
+        if frame is not None:
+            explicit_size = frame.size.model_dump(exclude_none=True)
+            item = item.model_copy(update={'options': {key: explicit_size[key]
+                for key in ('aspect_ratio', 'resolution') if key in explicit_size}})
     current=current_attachment_edit(request) if edit is not None else None
     if current is not None:
         message,index,target,text,images=current
@@ -275,35 +334,42 @@ async def prepare(runtime, handler, request, prepared, call, args, registry, *, 
             if str(ref.get('message_id')) == message and ref.get('content_index') in images)})
         if any(number>len(images) for number in ordinals):
             raise TaskError('CHAT_INLINE_IMAGE_REFERENCE_REQUIRED')
-        materials=tuple(content.Material(reference=content.MaterialReference(message_id=message,content_index=images[n-1]),
-            role=f'用户图{n}'+('（编辑底图）' if n==target else '（用户明确参考素材）'),usage='input') for n in ordinals)
-        legend='\n'.join(f'输入图片{i}对应用户图{n}。' for i,n in enumerate(ordinals,1))
-        legend+=f'\n编辑底图为输入图片{ordinals.index(target)+1}（用户图{target}）。'
-        # Bind verified image numbers without replacing the model's edit.
-        # Source ownership, stale-input checks and original upload order stay above.
-        item=content.ContentItem(title='编辑本轮指定图片',
-            body=legend+'\n\n'+edit.edit_instruction,materials=materials)
-    if edit is None:
-        from services.handlers.chat.content_tools import semantic_intent
-        item = await complete_transfer_materials(item, handler, request, context, runtime=runtime)
-        if semantic_intent(request, runtime) == 'edit':
-            item = await label_current_inputs(item, handler, request, context, runtime=runtime)
+        materials=[material.model_copy(update={'role': f'用户图{target}（编辑底图）'})
+                   if material.reference.message_id == message and material.reference.content_index == index
+                   else material for material in item.materials]
+        for n in ordinals:
+            reference = content.MaterialReference(message_id=message, content_index=images[n-1])
+            if not any(material.reference == reference for material in materials):
+                materials.append(content.Material(reference=reference, role=f'用户图{n}（用户明确参考素材）', usage='input'))
+        # Preserve original attachment order even when the second image is the base.
+        materials.sort(key=lambda material: images.index(material.reference.content_index)
+            if material.reference.message_id == message and material.reference.content_index in images else len(images))
+        # Keep the instruction intact; label_current_inputs describes actual resolved positions below.
+        item=content.ContentItem(title='图片编辑稿',
+            body=edit.edit_instruction, options=item.options, materials=tuple(materials))
+    from services.handlers.chat.content_tools import semantic_intent
+    item = await complete_transfer_materials(item, handler, request, context, runtime=runtime)
     if edit is not None:
-        def verify_generated_source():
+        base = next(m for m in item.materials if m.reference.message_id == str(edit.source_message_id)
+                    and m.reference.content_index == edit.source_content_index)
+        if base.usage != 'input':
+            raise TaskError('CHAT_INLINE_IMAGE_SELECTION_CONFLICT')
+    if semantic_intent(request, runtime) == 'edit':
+        item = await label_current_inputs(item, handler, request, context, runtime=runtime, edit_reference=({'message_id': str(edit.source_message_id),
+                'content_index': edit.source_content_index} if edit is not None else None))
+    if edit is not None:
+        def verify_edit_source():
             resolver = native_resolver(handler, request, context)
             material=next(material for material in item.materials if str(material.reference.message_id)==str(edit.source_message_id)
                           and material.reference.content_index==edit.source_content_index)
-            original, = resolver.resolve([
+            resolver.resolve([
                 {**material.reference.model_dump(mode='json', exclude_none=True), 'role': material.role},
             ])
-            is_current=(current is not None and original.get('message_id')==current[0]
-                        and original.get('content_index')==current[1])
-            if not is_current and (original.get('source') != 'generated' or not original.get('task_id')
-                    or original.get('message_id') == resolver.input_message_id):
-                raise TaskError('CHAT_INLINE_IMAGE_GENERATED_SOURCE_REQUIRED')
+            # Native resolution owns scope, version and byte checks for both
+            # uploaded originals and generated results. Never substitute another image.
 
         try:
-            await asyncio.to_thread(verify_generated_source)
+            await asyncio.to_thread(verify_edit_source)
         except (ValueError, PermissionError, OSError) as error:
             raise TaskError('CHAT_INLINE_IMAGE_GENERATED_SOURCE_REQUIRED') from error
     from services.tools.argument_validation import ToolArgumentValidationError

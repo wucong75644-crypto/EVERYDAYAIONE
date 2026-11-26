@@ -219,7 +219,7 @@ async def test_dashscope_download_failure_retries_only_before_any_stream_and_pre
 @pytest.mark.parametrize('answer,expected', [
     ({'kind': 'main_images', 'mode': 'retry', 'reuse_through_stage': 2, 'intent': 'write_then_submit_images'}, 'main_images'),
     ({'kind': 'ordinary_image', 'mode': 'new', 'reuse_through_stage': 0, 'intent': 'generate'}, 'ordinary_image'),
-    ({'kind': 'ordinary_image', 'mode': 'retry', 'reuse_through_stage': 2, 'intent': 'write_then_submit_images'}, 'unavailable'),
+    ({'kind': 'ordinary_image', 'mode': 'retry', 'reuse_through_stage': 2, 'intent': 'write_then_submit_images'}, 'ordinary_image'),
     ({'kind': 'main_images', 'mode': 'new', 'reuse_through_stage': 2, 'intent': 'write_then_submit_images'}, 'unavailable'),
     ({'kind': 'main_images', 'mode': 'retry', 'reuse_through_stage': True, 'intent': 'write'}, 'unavailable'),
     ({'kind': 'main_images', 'mode': 'retry', 'reuse_through_stage': 2, 'intent': 'write_then_submit_images', 'prompt': 'injected'}, 'unavailable'),
@@ -232,7 +232,11 @@ async def test_semantic_route_is_one_call_and_strict(monkeypatch, answer, expect
     router = SimpleNamespace(close=AsyncMock(), call_tool_model=AsyncMock(return_value={'choices': [
         {'message': {'tool_calls': [{'function': {'name': 'select_image_workflow', 'arguments': json.dumps(answer)}}]}}]}))
     monkeypatch.setattr('services.intent_router.IntentRouter', lambda: router)
-    assert (await classify_workflow('用户原文不整理', {'status': 'failed'}))['kind'] == expected
+    result = await classify_workflow('用户原文不整理', {'status': 'failed'})
+    assert result['kind'] == expected
+    if expected == 'ordinary_image':
+        assert result['mode'] == 'new' and result['reuse_through_stage'] == 0
+        assert 'plan_id' not in result and 'source_task_id' not in result
     router.call_tool_model.assert_awaited_once()
     assert router.call_tool_model.await_args.kwargs['timeout'] == 5
     assert json.loads(router.call_tool_model.await_args.kwargs['text'])['raw_user_input'] == '用户原文不整理'

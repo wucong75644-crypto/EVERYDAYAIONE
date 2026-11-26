@@ -58,7 +58,13 @@ def model_argument_error(name, arguments, parameters):
 
 
 def offered_argument_error(name, arguments, parameters, *, input_type=None):
-    issues = _issues(arguments, parameters, image_hints=False)
+    validation_schema = parameters
+    if name == 'generate_image':
+        from services.task_execution.inline_image_action import validation_parameters, PreviousResultEdit
+        validation_schema = validation_parameters(parameters, arguments)
+        if validation_schema is not parameters:
+            input_type = PreviousResultEdit
+    issues = _issues(arguments, validation_schema, image_hints=False)
     if not issues and input_type is not None:
         from pydantic import ValidationError
 
@@ -92,8 +98,12 @@ def _rejection(name, issues, parameters):
         from services.handlers.chat.content_tools import READ_MODE_GUIDANCE
 
         guidance += READ_MODE_GUIDANCE
+    if name == 'generate_image' and 'edit_instruction' in (parameters or {}).get('properties', {}):
+        from services.task_execution.inline_image_action import EDIT_GUIDANCE
+        guidance += EDIT_GUIDANCE
     if name == 'generate_image' and any(
-        issue['path'] == '$.draft.materials' or issue['path'].startswith(('$.draft.materials.', '$.draft.materials['))
+        issue['path'] in {'$.draft.materials', '$.materials'}
+        or issue['path'].startswith(('$.draft.materials.', '$.draft.materials[', '$.materials.', '$.materials['))
         for issue in issues
     ):
         from services.task_execution.content_objects import MATERIAL_GUIDANCE

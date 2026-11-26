@@ -80,7 +80,7 @@ async def wire_contracts(monkeypatch):
 
 @pytest.mark.parametrize(('text', 'enabled', 'simple','intent'), [
     ('把你刚生成的那张图的桌面颜色调浅一点', True, True,'edit'),
-    ('把你刚生成的那张图的桌面颜色调浅一点', False, False,'edit'),
+    ('把你刚生成的那张图的桌面颜色调浅一点', False, True,'edit'),
     ('把你生成的第二张图的桌面颜色调浅一点', True, True,'edit'),
     ('把你刚生成的那张图改成竖版', True, False,None),
     ('把你刚生成的那张图调浅，并另外生成一张新图', True, False,None),
@@ -98,8 +98,9 @@ async def test_single_edit_publishes_flat_contract_only_for_supported_requests(m
         'source_content_index': 0,
         'edit_instruction': '桌面调浅，保留福字主体',
     }
-    assert set(parameters['properties']) == set(parameters['required']) == set(arguments)
-    assert '$defs' not in parameters
+    assert set(parameters['properties']) == {*arguments, 'materials'}
+    assert set(parameters['required']) == set(arguments)
+    assert 'Material' in parameters['$defs']
     validator = Draft202012Validator(parameters)
     assert validator.is_valid(arguments)
     assert offered_argument_error('generate_image', arguments, parameters) is None
@@ -294,18 +295,25 @@ def test_previous_result_source_is_the_receipt_output_and_not_its_old_input(monk
     assert selected==({'message_id':'new-output','content_index':2} if scenario=='unique' else None)
 
 
-@pytest.mark.parametrize('previous',[False,True])
-def test_previous_result_is_an_explicit_model_choice_not_a_user_keyword_rule(previous):
-    from services.task_execution.inline_image_action import PreviousResultEdit, request_type, is_inline_call
-    native=build_legacy_catalog().require('generate_image').to_schema()
-    projected,=content_tools.model_tools([native],inline_image=True,previous_result=previous)
-    schema=projected['function']['parameters']
-    args={'previous_result_edit':'背景改为浅灰，保留主体。'}
-    assert Draft202012Validator(schema).is_valid(args) is previous
-    assert request_type(schema['properties'],args) is (PreviousResultEdit if previous else None)
-    assert is_inline_call({'name':'generate_image','arguments':json.dumps(args)})
-    assert Draft202012Validator(schema).is_valid({'content_source':{'artifact_id':'saved','item_index':1}})
-    assert not Draft202012Validator(schema).is_valid({**args,'draft':{'title':'new','body':'new'}})
+@pytest.mark.parametrize('previous', [False, True])
+def test_previous_result_is_a_candidate_not_a_second_edit_contract(previous):
+    from services.task_execution.inline_image_action import request_type, is_inline_call
+    native = build_legacy_catalog().require('generate_image').to_schema()
+    reference = {'message_id': '4825ec68-a21c-49d0-b941-f3668ea7c228', 'content_index': 2}
+    projected, = content_tools.model_tools([native], inline_image=True, generated_image_edit=True,
+        previous_image_reference=reference if previous else None)
+    schema = projected['function']['parameters']
+    assert set(schema['properties']) == {'source_message_id', 'source_content_index', 'edit_instruction', 'materials'}
+    assert 'oneOf' not in schema
+    assert ('上一轮唯一已完成结果的候选引用' in projected['function']['description']) is previous
+    args = {'source_message_id': reference['message_id'], 'source_content_index': 2,
+            'edit_instruction': '背景改为浅灰，保留主体。'}
+    assert Draft202012Validator(schema).is_valid(args)
+    assert request_type(schema['properties'], args) is SingleImageEdit
+    assert offered_argument_error('generate_image', args, schema, input_type=SingleImageEdit) is None
+    assert is_inline_call({'name': 'generate_image', 'arguments': json.dumps(args)})
+    assert not Draft202012Validator(schema).is_valid({'previous_result_edit': args['edit_instruction']})
+    assert not Draft202012Validator(schema).is_valid({'content_source': {'artifact_id': 'saved', 'item_index': 1}})
 
 
 def test_new_planner_calls_require_explicit_count_but_native_legacy_schema_stays_compatible():

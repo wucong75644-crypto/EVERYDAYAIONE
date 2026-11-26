@@ -142,6 +142,9 @@ async def _real_supplier_acceptance(content_db, monkeypatch, *, canvas_only=Fals
     assert not (canvas_only and resume_input), 'A fresh material-binding check cannot reuse an old submission'
     skip_canvas=os.environ.get('SKILL_SUPPLIER_SKIP_CANVAS')=='1'
     maximum = 64 if suite is not None else 1 if canvas_only else 4 if skip_canvas else 5
+    if os.environ.get('SKILL_SUPPLIER_MAX_POSTS'):
+        maximum = int(os.environ['SKILL_SUPPLIER_MAX_POSTS'])
+        assert 0 <= maximum <= 64
     max_new_supplier_posts = maximum - (len(resume_input['cases']) if resume_input else 0)
     assert 0 <= max_new_supplier_posts <= maximum
     phase = 'setup'

@@ -118,16 +118,23 @@ async def test_failed_initial_save_restores_uninitialized_state_and_transcript()
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('mode', ['new_enabled', 'new_model_directed', 'legacy_enabled', 'resume_disabled', 'tampered'])
+@pytest.mark.parametrize('mode', ['new_enabled', 'new_model_directed', 'legacy_enabled', 'resume_disabled', 'tampered',
+                                'missing_context', 'wrong_context', 'bad_context_version', 'resume_uuid_window', 'resume_short_window'])
 async def test_actual_executor_admission_and_frozen_bootstrap_recovery(monkeypatch, mode):
     from core.config import get_settings
     from services.conversation_execution import GenerationClaim
     from services.handlers.chat.execution_engine import ChatExecutionResult
     from services.handlers.chat.executor import ChatGenerationExecutor
     from tests.test_chat_generation_executor import _DB, _ReplayCheckpointStore
+    from dataclasses import replace
     source, s, anchor, scope = bootstrap()
+    resume_window = mode in {'resume_uuid_window', 'resume_short_window'}
+    if resume_window:
+        source = replace(source, model_directed=True)
     actor, conversation, task_id = str(s.actor_user_id), str(s.conversation_id), str(s.root_task_id)
     message_id = str(s.source_message_ids[0])
+    context_failure = mode in {'missing_context', 'wrong_context', 'bad_context_version'}
+    model_directed = mode == 'new_model_directed' or context_failure or resume_window
     db = _DB({'id': message_id, 'conversation_id': conversation, 'turn_id': 'turn', 'role': 'user',
         'content': [{'type': 'text', 'text': source.original_goal}]}, conversation={
         'id': conversation, 'org_id': None, 'user_id': actor, 'source': 'web', 'scope_type': 'user'})
@@ -137,8 +144,20 @@ async def test_actual_executor_admission_and_frozen_bootstrap_recovery(monkeypat
     def followup_rpc(name, parameters):
         assert parameters == {'p_task_id': task_id, 'p_execution_token': 'token'}
         if name == 'read_agent_working_plan_candidates':
-            assert mode == 'new_model_directed'
+            assert model_directed
             data = {'outcome': 'found', 'candidates': [plan]}
+        elif name == 'read_agent_request_context':
+            assert model_directed
+            data = {'version': 1, 'catalog_version': 2, 'input_message_id': message_id,
+                    'requests': [{'message_id': message_id, 'root_task_id': task_id,
+                                  'source_sha256': 'a' * 64, 'text_excerpt': source.original_goal, 'images': []}],
+                    'image_results': []}
+            if mode == 'missing_context':
+                data = {}
+            elif mode == 'wrong_context':
+                data['input_message_id'] = str(uuid4())
+            elif mode == 'bad_context_version':
+                data['version'] = 999
         else:
             assert name == 'read_agent_task_followup'
             data = {'outcome': 'not_found'}
@@ -146,20 +165,29 @@ async def test_actual_executor_admission_and_frozen_bootstrap_recovery(monkeypat
     db.rpc = followup_rpc
     store = _ReplayCheckpointStore()
     store.write = AsyncMock(return_value={'outcome': 'saved'})
-    if mode not in {'new_enabled','new_model_directed'}:
+    if mode not in {'new_enabled','new_model_directed'} and not context_failure:
         payload = {'messages': [], 'content_blocks': [], 'turn_index': 0, 'tool_call_ids': []}
-        if mode in {'resume_disabled', 'tampered'}:
+        if mode in {'resume_disabled', 'tampered'} or resume_window:
             payload['_task_bootstrap'] = source.checkpoint()
+        if resume_window:
+            payload['_request_context_v1'] = {'version': 1, 'catalog_version': 2,
+                'input_message_id': message_id, 'requests': [], 'saved_snapshot': 'must-not-be-rebuilt'}
+            if mode == 'resume_short_window':
+                payload['_request_context_v1']['image_reference_version'] = 1
         if mode == 'tampered':
             payload['_task_bootstrap']['input']['original_goal'] = '替换原始用户目标'
         store.read_result = {'outcome': 'found', 'payload': payload}
     monkeypatch.setattr(get_settings(), 'agent_task_execution_enabled', mode != 'resume_disabled')
-    monkeypatch.setattr(get_settings(), 'agent_task_model_directed_enabled', mode in {'new_model_directed','resume_disabled'})
+    monkeypatch.setattr(get_settings(), 'agent_task_model_directed_enabled', model_directed or mode == 'resume_disabled')
     captured = []
 
     async def execute_chat(**kwargs):
         runtime = kwargs['runtime']
-        assert runtime.task_plan_candidates == ({plan_id: plan} if mode == 'new_model_directed' else {})
+        assert runtime.task_plan_candidates == ({plan_id: plan} if model_directed else {})
+        if resume_window:
+            assert runtime.checkpoint_base['_request_context_v1'] == payload['_request_context_v1']
+        elif mode == 'new_model_directed':
+            assert runtime.checkpoint_base['_request_context_v1']['image_reference_version'] == 1
         captured.append(runtime.task_bootstrap)
         return ChatExecutionResult(parts=[TextPart(text='结果')], content_blocks=[],
             usage={'prompt_tokens': 0, 'completion_tokens': 0}, credits_cost=0, tool_digest=None)
@@ -172,7 +200,11 @@ async def test_actual_executor_admission_and_frozen_bootstrap_recovery(monkeypat
         context_through_message_id=None, execution_attempt=1, execution_mode='serial')
     task = {'id': task_id, 'conversation_id': conversation, 'assistant_message_id': str(uuid4()),
         'user_id': actor, 'org_id': None, 'model_id': 'auto', 'request_params': {}}
-    if mode == 'tampered':
+    if context_failure:
+        with pytest.raises(RuntimeError, match='REQUEST_CONTEXT_READ_UNCONFIRMED'):
+            await executor.execute(task, claim, asyncio.Event())
+        assert captured == []
+    elif mode == 'tampered':
         with pytest.raises(RuntimeError, match='BOOTSTRAP_REPLAY_MISMATCH'):
             await executor.execute(task, claim, asyncio.Event())
         assert captured == []
@@ -181,7 +213,7 @@ async def test_actual_executor_admission_and_frozen_bootstrap_recovery(monkeypat
         assert (captured[0] is not None) == (mode != 'legacy_enabled')
         if captured[0] is not None:
             from dataclasses import replace
-            expected=replace(source,require_coverage_review=mode=='new_enabled',model_directed=mode=='new_model_directed').checkpoint()
+            expected=replace(source,require_coverage_review=mode=='new_enabled',model_directed=model_directed).checkpoint()
             assert captured[0].checkpoint() == expected
             assert store.write.call_args.kwargs['payload']['_task_bootstrap'] == expected
 

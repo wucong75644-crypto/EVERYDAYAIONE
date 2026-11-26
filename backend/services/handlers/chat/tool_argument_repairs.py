@@ -74,7 +74,9 @@ def _operation(args, parameters):
 _SOURCE_RECOVERY = {
     'IMAGE_CANVAS_BINDING_INVALID': ('stop', CANVAS_STOP),
     'CONTENT_IMAGE_REGENERATION_UNCONFIRMED': ('repair_arguments',
-        'regenerate只用于按原稿再生成。修改图片时使用当前工具的编辑形式；继续上一轮结果时用previous_result_edit，不重新执行旧提示词。'),
+        'regenerate只用于按原稿再生成。修改图片时填写底图 source_message_id、source_content_index 及 edit_instruction；不重新执行旧提示词。'),
+    'CHAT_INLINE_IMAGE_SELECTION_CONFLICT': (
+        'repair_arguments', '编辑底图与其他素材选择冲突。本次未提交；核对用户指定图片，只保留其真实引用和 edit_instruction。'),
     'IMAGE_CANVAS_REFERENCE_REQUIRED': (
         'repair_arguments', '绑定用户已指定的编辑底图，保留风格输入；在 size_requirement.reference_index 填写执行参考图的零基索引。不要改写方案或随意改比例。'),
     'IMAGE_DIMENSIONS_UNAVAILABLE': (

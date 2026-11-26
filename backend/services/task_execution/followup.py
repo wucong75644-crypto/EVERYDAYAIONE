@@ -37,6 +37,11 @@ def payload(source,current,*,task_id,turn_id,model_round,usage,observation):
         result['_task_followup_window_history']=[*result.get('_task_followup_window_history',[]),
             {'owner_task_id':source['source_owner_task_id'],'checkpoint':copy.deepcopy(result['_task_followup_input_checkpoint'])}]
     result['_task_followup_input_checkpoint']=copy.deepcopy(current)
+    for key in ('_request_context_v1', '_request_resolution_v1', '_request_response_v1'):
+        if key in current:
+            result[key] = copy.deepcopy(current[key])
+        else:
+            result.pop(key, None)
     result['messages']=[*copy.deepcopy(previous['messages']),*copy.deepcopy(current['messages']),
         {'role':'system','content':'[New authenticated user Turn]\n'+('原目标/成果及未决操作继续保留；根据最新真实用户文字调整工作，旧调用不可沿用新授权，禁止重发未决操作。' if old.model_directed else '原目标/成果及未决操作继续保留；本条新用户文字须经原要求修订核验，禁止沿旧派发或重发未决操作。')}]
     result['content_blocks']=[]

@@ -255,7 +255,10 @@ async def test_literal_edit_projects_verified_target_and_limited_reference_roles
         ImagePart(workspace_path='two.png')],context_anchor=SimpleNamespace(input_message_id=message))
     request = semantic_request(request, 'edit', canvas_image=target, materials=[
         {'reference':{'message_id':message,'content_index':n},'role':f'图{n}','usage':'input'} for n in (1,2)])
-    native=SimpleNamespace(resolve=lambda _: [{'message_id':message,'content_index':target}])
+    native=SimpleNamespace(resolve=lambda refs: [
+        {'message_id': message, 'content_index': ref['content_index'],
+         'workspace_path': f"{ref['content_index']}.png", 'content_sha256': str(ref['content_index']) * 64}
+        for ref in refs])
     monkeypatch.setattr('services.task_execution.image_resources.native_resolver',lambda *_:native)
     captured=[]
     class CapturedDraft(Exception):pass
