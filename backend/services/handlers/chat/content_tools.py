@@ -13,7 +13,7 @@ from services.tools.runtime_context import _check_identity
 
 DISCOVER = 'find_available_tools'
 READ = 'read_conversation_text'
-CONTROLS = frozenset({DISCOVER, READ})
+CONTROLS = frozenset({DISCOVER, READ, 'respond_without_execution', 'resolve_request_target'})
 INPUT_TOOLS = frozenset({'generate_video', 'generate_image', 'code_execute'})
 MEDIA_TOOLS = frozenset({'generate_video', 'generate_image'})
 STATE = '_chat_content_tools'
@@ -71,6 +71,7 @@ def image_regeneration_variant(request, evidence=None, runtime=None):
 
 
 IMAGE_NOT_SUBMITTED = '本轮没有提交图片任务。你可以重新发送生成要求。'
+IMAGE_STATUS_NOT_SUBMITTED = '本轮尚未提交图片任务。'
 
 
 IMAGE_CALL_REPAIR = (
@@ -245,11 +246,13 @@ def selects_previous_item(request, runtime=None):
 
 
 
-def unconfirmed_image_reply(text, has_calls):
+def unconfirmed_image_reply(text, has_calls, *, structured_status=False):
     if has_calls:
         return ''
-    # Preserve authored content independently of punctuation. Acceptance is a
-    # server receipt, not a claim inferred from the model's prose.
+    # This path has no accepted operation. Never publish speculative acceptance
+    # prose and then contradict it; authored drafts use the content path instead.
+    if structured_status:
+        return IMAGE_STATUS_NOT_SUBMITTED
     return text + '\n\n' + IMAGE_NOT_SUBMITTED if text.strip() else IMAGE_NOT_SUBMITTED
 
 
@@ -356,7 +359,7 @@ SCHEMAS = (
     READ_SCHEMA,
 )
 
-def model_tools(tools, *, selectable_source_images=False, saved_text_available=False, server_image_plan=False, reuse_source=False, first_delivery=False, current_images=(), inline_image=False, generated_image_edit=False, single_image_edit=False, inline_only=False, previous_result=False, planned_image_count=None):
+def model_tools(tools, *, selectable_source_images=False, saved_text_available=False, server_image_plan=False, reuse_source=False, first_delivery=False, current_images=(), inline_image=False, generated_image_edit=False, single_image_edit=False, inline_only=False, previous_image_reference=None, planned_image_count=None, image_reference_catalog=None):
     """Project the one entry contract selected by the current workflow."""
     from services.task_execution.content_objects import ContentReference, ImageContentReference, selection_parameters
     from services.handlers.image_size_requirements import SIZE_GUIDANCE
@@ -410,7 +413,8 @@ def model_tools(tools, *, selectable_source_images=False, saved_text_available=F
                     '只交付文字时页面直接展示正文，后台保留当前原图待选。还要求执行时设continue_execution=true，'
                     '有上传图片则在每条的materials中绑定所用图片，保存后再调用目标工具。')
             if current_images and not reuse_source:
-                refs = json.dumps(material_candidates(current_images), ensure_ascii=False)
+                candidates = material_candidates(current_images)
+                refs = json.dumps(image_reference_catalog.encode(candidates) if image_reference_catalog else candidates, ensure_ascii=False)
                 function['description'] += (
                     ' 本轮上传图的可选 materials[].reference（仅按用户意图选择）：' + refs
                 )
@@ -481,7 +485,7 @@ def model_tools(tools, *, selectable_source_images=False, saved_text_available=F
             if name == 'generate_image' and inline_image:
                 from services.task_execution.inline_image_action import InlineRequest, SingleImageEdit
 
-                if single_image_edit:
+                if single_image_edit or generated_image_edit:
                     tool['function']['parameters'] = SingleImageEdit.model_json_schema()
                     tool['function']['description'] = (
                         '编辑用户明确指定的图片（本轮附件底图或已有成图）。按用户指代找到确切的图片，'
@@ -493,53 +497,32 @@ def model_tools(tools, *, selectable_source_images=False, saved_text_available=F
                         '本轮明确指定附件底图时，可整理为直接执行的修改指令，不凭空补商品身份、材质、功能或营销参数；后台核验图片绑定，不覆盖你的编辑指令。'
                         '本工具保存编辑要求并提交一次。'
                     )
-                    if previous_result:
-                        from services.task_execution.inline_image_action import PreviousResultEdit
-                        parameters = tool['function']['parameters']
-                        selected_required = parameters.pop('required')
-                        parameters['properties']['previous_result_edit'] = PreviousResultEdit.model_json_schema()['properties']['previous_result_edit']
-                        parameters['oneOf'] = [{'required': selected_required}, {'required': ['previous_result_edit']}]
-                        tool['function']['description'] += (' 继续上一轮唯一图片结果时，只填previous_result_edit，后台绑定真实输出；'
-                            '用户明确指向其他成图时才填写该图的source_message_id、source_content_index和edit_instruction。')
+                    from services.task_execution.inline_image_action import EDIT_GUIDANCE
+                    tool['function']['description'] += ' ' + EDIT_GUIDANCE
+                    if previous_image_reference:
+                        tool['function']['description'] += (
+                            ' 上一轮唯一已完成结果的候选引用（仅按用户指代选择，不是强制底图）：'
+                            + json.dumps(image_reference_catalog.encode(previous_image_reference)
+                                         if image_reference_catalog else previous_image_reference, ensure_ascii=False))
                     result.append(tool)
                     continue
                 projected = tool['function']['parameters']
                 draft, definitions = InlineRequest.parameters(parameters['properties'])
-                if generated_image_edit:
-                    projected['properties'] = {'draft': draft}
-                    projected['required'] = ['draft']
-                    tool['function']['description'] = (
-                        '编辑本轮用户指定的图片。使用 draft.body 写清本轮修改、保留要求及每张输入图的作用，'
-                        '在 draft.materials 按输入顺序以 usage=input 绑定实际使用的图片。'
-                        '直接复制会话中真实的 message_id 与 content_index；定位缺失时先查会话图片。'
-                        '本工具保存编辑稿并提交一次。' + SIZE_GUIDANCE
-                    )
-                else:
-                    projected.pop('required')
-                    projected['properties']['draft'] = draft
-                    projected['oneOf'] = [{'required': ['content_source']}, {'required': ['draft']}]
+                projected.pop('required')
+                projected['properties']['draft'] = draft
+                projected['oneOf'] = [{'required': ['content_source']}, {'required': ['draft']}]
                 if definitions:
                     projected['$defs'] = definitions
-                if not generated_image_edit:
-                    tool['function']['description'] += (
-                        ' 用户要求创作单张新图或编辑一张已选图时，单独调用本工具传draft。'
-                        '用户指定已有提示词时先定位原稿，找不到就请用户补充。'
-                        '填写完整编辑要求body，并按draft.materials的字段说明绑定所用图片。'
-                        '画布与分辨率由后台依据用户明确要求、编辑底图和默认规则确定；'
-                        '用户未明确规格时，不在body或options自行声明比例、像素或分辨率。'
-                        '系统保存原稿并提交，不需要先调用save_task_text。'
-                        '只改提示词时使用保存工具；多张图或已有策划继续用content_source。'
-                    )
-                if previous_result:
-                    from services.task_execution.inline_image_action import PreviousResultEdit
-                    projected['properties']['previous_result_edit'] = PreviousResultEdit.model_json_schema()['properties']['previous_result_edit']
-                    forms = projected.pop('oneOf', None)
-                    if forms is None:
-                        forms = [{'required': projected.pop('required', ['draft'])}]
-                    projected['oneOf'] = [*forms, {'required': ['previous_result_edit']}]
-                    tool['function']['description'] += (
-                        ' 继续编辑上一轮唯一图片结果时，传previous_result_edit，仅写修改与保留要求，后台绑定实际成图。'
-                        '更换颜色等画面修改属于编辑，不能用content_source.regenerate重跑原稿。')
+                tool['function']['description'] += (
+                    ' 用户要求创作单张新图时，单独调用本工具传draft。'
+                    '用户指定已有提示词时先定位原稿，找不到就请用户补充。'
+                    '填写完整创作要求body，并按draft.materials的字段说明绑定所用图片。'
+                    '画布与分辨率由后台依据用户明确要求、编辑底图和默认规则确定；'
+                    '用户未明确规格时，不在body或options自行声明比例、像素或分辨率。'
+                    '系统保存原稿并提交，不需要先调用save_task_text。'
+                    '只改提示词时使用保存工具；多张图或已有策划继续用content_source。'
+                )
+
         else:
             if constraints:
                 parameters['anyOf']=[constraints,{'required':['content_source',*[key for key in constraints.get('required',[]) if key!='prompt']]}]

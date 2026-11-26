@@ -235,6 +235,7 @@ async def execute_chat(
     handler._pending_change_set_blocks = []
     handler._terminal_change_set_pending = False
     handler._tool_result_stop_reason = ""
+    handler._request_response_stop = False
     # 保留 T3 的跨 Task 关联出口；模型 retry 已在 Gateway 内执行。
     handler._last_model_attempt_context = None
     totals = StreamTotals()
@@ -268,7 +269,9 @@ async def execute_chat(
             pending_state = runtime.task_execution_state or content_followup_state(runtime)
             groups = content_objects.catalog(pending_state,for_model=True) if pending_state else getattr(runtime,'task_content_groups',())
             pending_media = any(g.get('confirmation_tool') and any(i.get('awaiting_confirmation') for i in g.get('items',())) for g in groups)
-        if (runtime is not None and hasattr(handler, "db") and prepared.execution_context is not None and (planning_entry or pending_media)
+        from services.task_execution.request_resolution import context as request_context
+        if (runtime is not None and hasattr(handler, "db") and prepared.execution_context is not None
+                and (planning_entry or pending_media or request_context(runtime) is not None)
                 and prepared.execution_context.execution_mode == "interactive"):
             from services.agent.image.ecommerce_planner.workflow import KEY as ECOM_WORKFLOW_KEY, SKILL as SERVER_PLANNER
             workflow = EcommerceWorkflow(handler, request, runtime, prepared)
@@ -645,12 +648,54 @@ async def _run_loop(
                 'credits_cost': handler._calculate_credits(totals.usage) if request.calculate_credits else 0,
                 'tool_digest': _build_digest(prepared.messages, request.conversation_id, prepared.budget.turns_used)
                     if parts or getattr(runtime, 'task_image_completion', None) is None else None}
+    async def finish_inline_receipt(turn_index, next_round):
+        from services.task_execution import request_resolution, inline_image_action
+        from services.task_execution.content_delivery import input_revision
+        from services.task_execution.model_bridge import review_model_completion
+        if (request_resolution.context(runtime) is None
+                or content_tools.requires_continued_delivery(request, runtime)):
+            return False
+        target = request_resolution.binding(runtime)
+        state = runtime.task_execution_state
+        record = inline_image_action.read_record(runtime)
+        if (not target or target['input_revision'] != input_revision(runtime, request)
+                or state is None):
+            return False
+        from services.task_execution.reducer import digest
+        single_saved = target['target']['kind'] == 'content' and len(target['target']['item_indices']) == 1
+        calls = [b for b in state.call_bindings if b.tool_name == 'generate_image'
+                 and b.input_sha256 == digest(sorted(getattr(runtime, 'task_direct_seen', ())))
+                 and (record is not None and b.call_id == record.call_id or single_saved)]
+        accepted = [op for op in state.operations if op.step_id in {b.step_id for b in calls} and op.status == 'accepted'
+                    and str(op.owner_task_id) == target['execution_task_id'] and op.receipt_ref]
+        if len(accepted) != 1:
+            return False
+        status_key = accepted[0].id
+        if not any(block.get('image_receipt_status') == status_key for block in blocks):
+            notice = {'type': 'text', 'text': request_resolution.image_status_reply(runtime, request),
+                      'image_receipt_status': status_key}
+            blocks.append(notice); totals.text += notice['text']
+            await sink.on_block(notice)
+        await review_model_completion(runtime=runtime, prepared=prepared, blocks=blocks,
+            build_checkpoint=_build_replay_context, turn=turn_index, next_model_round=next_round,
+            repeated_tool_call_guard=repeated_tool_call_guard, sink=sink, terminal_result=terminal_task_result)
+        return True
     thinking_mode = request.thinking_mode
     entry_question = next((b for b in blocks if b.get("ecom_entry_question") is True), None)
     if entry_question:
         totals.text += entry_question["text"]
         return None
     empty_output_retried = False
+    from services.task_execution.content_delivery import input_revision as request_input_revision
+    response = getattr(runtime, 'checkpoint_base', {}).get('_request_response_v1')
+    if response and response['input_revision'] == request_input_revision(runtime, request):
+        if not any(block.get('request_response_final') for block in blocks):
+            notice = {'type': 'text', 'text': response.get('rendered_text', response['text'] + '\n\n本轮未提交新的图片任务。'),
+                      'request_response_final': True}
+            blocks.append(notice)
+            totals.text += notice['text']
+            await sink.on_block(notice)
+        return None
     repeated_tool_call_guard = repeated_tool_call_guard or _RepeatedToolCallGuard()
     from services.handlers.chat.image_argument_correction import ImageArgumentCorrection
     image_arguments = ImageArgumentCorrection(blocks)
@@ -663,6 +708,8 @@ async def _run_loop(
         await recover_pending_batch(prepared=prepared, runtime=runtime, request=request, handler=handler,
             sink=sink, totals=totals, blocks=blocks, cancellation_event=cancellation_event,
             model_round=model_round, execute_tools=_execute_tools, repeated_tool_call_guard=repeated_tool_call_guard)
+        if await finish_inline_receipt(prepared.budget.turns_used, model_round):
+            return None
         if runtime.task_execution_state is not None and runtime.task_execution_state.status != 'active':
             return None
     while not prepared.budget.stop_reason:
@@ -676,6 +723,9 @@ async def _run_loop(
         workflow = getattr(prepared, "ecom_workflow", None)
         prepared.defer_ecom_narrative = False
         if workflow:
+            if (runtime is not None and runtime.skill_runtime is not None and hasattr(workflow, 'coordinate')
+                    and not getattr(workflow, '_coordinated', False)):
+                await workflow.coordinate(runtime.skill_runtime)
             prepared.defer_ecom_narrative = await workflow.needs_planner(blocks)
             message = workflow.context_message()
             prepared.messages[:] = [m for m in prepared.messages if not (
@@ -977,7 +1027,7 @@ async def _run_loop(
         prepared.saved_delivery_available = False
         if prepared.content_controls_available:
             from services.task_execution.direct_loop import content_followup_state
-            from services.task_execution.inline_image_action import allowed_for_offer, previous_result_task
+            from services.task_execution.inline_image_action import allowed_for_offer
             content_state = runtime.task_execution_state or content_followup_state(runtime)
             server_image_plan = content_tools.uses_server_image_plan(prepared)
             saved_source_available = bool(
@@ -992,12 +1042,17 @@ async def _run_loop(
             from core.config import get_settings
             single_image_edit = (inline_image and get_settings().chat_single_image_edit_enabled
                                  and not content_tools.has_newer_image_input(runtime)
-                                 and (not content_tools.semantic_runtime(runtime) or bool(previous_result_task(content_state)))
                                  and content_tools.is_single_generated_image_edit(request, runtime))
             explicit_edit = (content_tools.semantic_intent(request, runtime) == 'edit'
                 and len(content_objects.current_source_images(request)) == 1)
             single_image_edit = single_image_edit or (inline_image and explicit_edit
                 and get_settings().chat_single_image_edit_enabled and not content_tools.has_newer_image_input(runtime))
+            previous_image_reference = None
+            if inline_image and content_tools.requests_generated_image_edit(request, runtime=runtime):
+                from services.task_execution.inline_image_action import previous_result_reference
+                previous_image_reference = await asyncio.to_thread(previous_result_reference,
+                    content_state, handler, request, prepared.execution_context)
+            from services.task_execution.image_reference_catalog import for_runtime
             tools = [*content_tools.model_tools(
                 tools, selectable_source_images=content_objects.has_selectable_source_images(content_state),
                 saved_text_available=saved_source_available,
@@ -1009,9 +1064,10 @@ async def _run_loop(
                              and not content_tools.requested_delivery_tools(request, runtime)),
                 generated_image_edit=(content_tools.requests_generated_image_edit(request, runtime=runtime)
                     and not any(str(a.source_task_id) == str(runtime.task_id) for a in content_objects.objects(content_state))),
-                previous_result=bool(previous_result_task(content_state)) and not content_objects.current_source_images(request),
+                previous_image_reference=previous_image_reference,
                 current_images=content_objects.current_source_images(request),
                 first_delivery=first_delivery,
+                image_reference_catalog=for_runtime(runtime),
             ), *content_tools.SCHEMAS]
             from services.task_execution import item_confirmation
             media = item_confirmation.directive(request, runtime)
@@ -1347,12 +1403,22 @@ async def _run_loop(
         if image_metrics is not None:
             totals.usage["image_argument_metrics"] = image_metrics
         resource_stop = getattr(getattr(executor, "_tool_runtime", None), "resource_stop_reason", "")
+        if await finish_inline_receipt(turn, model_round):
+            return None
         result_stop = getattr(handler, "_tool_result_stop_reason", "")
+        if getattr(handler, '_request_response_stop', False):
+            response = getattr(runtime, 'checkpoint_base', {}).get('_request_response_v1')
+            if response and response['input_revision'] != request_input_revision(runtime, request):
+                handler._request_response_stop = False
+                handler._tool_result_stop_reason = ''
+                continue  # A delivered answer/attachment superseded the question.
         if getattr(handler, "_terminal_image_pending", False) and not resource_stop and not direct_enabled(runtime):
             return None
         stop_message = resource_stop or result_stop
         if isinstance(stop_message, str) and stop_message:
             blocks.append({"type": "text", "text": stop_message})
+            if getattr(runtime, 'checkpoint_base', {}).get('_request_response_v1'):
+                blocks[-1]['request_response_final'] = True
             totals.text += stop_message
             await sink.on_block(blocks[-1])
             return None
@@ -1500,6 +1566,17 @@ async def _read_turn_impl(
     model_messages = skills.model_messages(messages, tools) if skills else messages
     if not task_review and (visual_notice := content_tools.visual_context_notice(model_messages)):
         model_messages = [*model_messages, {'role': 'system', 'content': visual_notice}]
+    from services.task_execution.image_reference_catalog import for_runtime
+    image_references = for_runtime(runtime) if not task_review else None
+    if image_references is not None:
+        model_messages = image_references.messages(model_messages)
+        tools = image_references.tools(tools, plain_text_registration=getattr(prepared, 'plain_image_text_delivery', False))
+        if content_tools.semantic_intent(request, runtime) in {'generate', 'edit', 'write_then_submit_images'}:
+            model_messages.append({'role': 'system', 'content':
+                '当前语义动作包含实际图片交付。先核对所选需求及其等待条件；未要求等待确认时，'
+                '不要只返回提示词正文或只保存后结束。单图可用generate_image的编辑或draft形式；'
+                '需要先保存完整方案再执行时，用save_task_text显式continue_execution=true后按真实保存回执提交。'
+                '有用户等待条件时仍须遵守，不把这条说明当作批准，也不能执行无关历史稿。'})
     stream_kwargs = {
         "messages": model_messages,
         "tools": tools,
@@ -1723,9 +1800,13 @@ async def _read_turn_impl(
     logger.info('Chat model timing | task={} | round={} | metrics={}',
                 request.task_id if request else None, model_round, timing)
     if image_reply and not content_output:
+        from services.task_execution.request_resolution import context as request_context, image_status_reply
+        if request_context(runtime) is not None:
+            turn_text = '' if ordered_calls else image_status_reply(runtime, request)
         if not getattr(prepared, 'image_receipt_seen', False) and not any(
                 c['name'] == content_objects.SAVE for c in ordered_calls):
-            turn_text = content_tools.unconfirmed_image_reply(turn_text, bool(ordered_calls))
+            if request_context(runtime) is None or ordered_calls:
+                turn_text = content_tools.unconfirmed_image_reply(turn_text, bool(ordered_calls))
             if (not ordered_calls
                     and getattr(prepared, 'allow_image_call_repair', False)
                     and totals.last_finish_reason != 'length'
@@ -1907,6 +1988,45 @@ async def _execute_tools_impl(
     from services.task_execution.plan_facts import pending_review
     from services.task_execution.requirement_changes import refresh as refresh_user_changes,blocked as revision_blocked,phase_repair
     if runtime is not None:await refresh_user_changes(runtime)
+    from services.task_execution.image_reference_catalog import for_runtime
+    image_references = for_runtime(runtime)
+    if image_references is not None:
+        from services.task_execution.contracts import TaskError
+        from services.tools.argument_validation import decode_tool_arguments
+        decoded_calls = []
+        reference_error = None
+        for call in calls:
+            try:
+                raw = decode_tool_arguments(call.get('arguments') or '{}')
+                decoded = image_references.decode(raw)
+                decoded_calls.append({**call, 'arguments': json.dumps(decoded, ensure_ascii=False)} if decoded != raw else call)
+            except TaskError as error:
+                reference_error = str(error)
+                break
+            except (ValueError, TypeError):
+                decoded_calls.append(call)  # Existing strict argument validation owns malformed JSON.
+        if reference_error:
+            if any(call['name'] == content_objects.SAVE for call in calls):
+                from services.task_execution.content_delivery import finish_response
+                finish_response(runtime, None, {'ok': False, 'code': reference_error}, request=request)
+            prepared.messages.append(_assistant_tool_message(turn_text, calls))
+            for call in calls:
+                output = json.dumps({'ok': False, 'accepted': False, 'code': reference_error,
+                    'submission_state': 'not_dispatched', 'message': '短引用不存在、已过期或与真实ID冲突。请从当前图片目录重新选择image_ref，不猜测编号。'}, ensure_ascii=False)
+                prepared.messages.append({'role': 'tool', 'tool_call_id': call['id'], 'content': output})
+                block = next((b for b in blocks if b.get('tool_call_id') == call['id']), None)
+                if block is not None:
+                    block.update(status='error', output=output)
+                    await sink.on_block_update(block)
+                else:
+                    block = {'type': 'tool_step', 'tool_call_id': call['id'], 'tool_name': call['name'],
+                             'input': call['arguments'], 'status': 'error', 'output': output}
+                    blocks.append(block)
+                    await sink.on_block(block)
+            await runtime.safe_point(SafePoint.AFTER_TOOL, replay_payload=_build_replay_context(
+                prepared.messages, blocks, turn, next_model_round=next_model_round))
+            return None
+        calls = decoded_calls
     candidate_workflow = getattr(prepared, 'ecom_workflow_candidate', None)
     if candidate_workflow is not None and prepared.ecom_workflow is None:
         from services.agent.image.ecommerce_planner.workflow import SKILL as SERVER_PLANNER
@@ -1988,7 +2108,35 @@ async def _execute_tools_impl(
                         args = json.loads(call.get('arguments') or '{}')
                         if not isinstance(args, dict):
                             raise ValueError('CHAT_CONTENT_ARGUMENTS_INVALID')
-                        if call['name'] == content_tools.DISCOVER and set(args) == {'query'}:
+                        if call['name'] == 'respond_without_execution':
+                            from services.task_execution.request_resolution import context as request_context, RESPONSE_SCHEMA
+                            from services.task_execution.content_delivery import input_revision
+                            if (len(calls) != 1 or request_context(runtime) is None
+                                    or offered_argument_error(call['name'], args, RESPONSE_SCHEMA['function']['parameters'])):
+                                raise ValueError('CHAT_RESPONSE_CONTROL_INVALID')
+                            from services.task_execution.request_resolution import image_status_reply, binding
+                            selected = binding(runtime) or {}
+                            effect = any(op.tool_name == 'generate_image' and str(op.owner_task_id) == selected.get('execution_task_id')
+                                         for op in runtime.task_execution_state.operations) if runtime.task_execution_state else False
+                            rendered = (image_status_reply(runtime, request) if args['purpose'] == 'explanation'
+                                        else args['text'] + '\n\n' + image_status_reply(runtime, request)) if effect else args['text'] + '\n\n本轮未提交新的图片任务。'
+                            runtime.checkpoint_base['_request_response_v1'] = {
+                                'input_revision': input_revision(runtime, request),
+                                'purpose': args['purpose'], 'text': args['text'], 'status': 'native_effect' if effect else 'not_submitted',
+                                'rendered_text': rendered}
+                            handler._tool_result_stop_reason = rendered
+                            handler._request_response_stop = True
+                            result = {'ok': True, 'accepted': False, 'status': 'not_submitted'}
+                        elif call['name'] == 'resolve_request_target':
+                            from services.task_execution import request_resolution
+                            if len(calls) != 1 or request_resolution.context(runtime) is None:
+                                raise ValueError('CHAT_TARGET_CONTROL_INVALID')
+                            rejection = offered_argument_error(call['name'], args, request_resolution.selection_schema(runtime)['function']['parameters'])
+                            if rejection:
+                                result = {**json.loads(rejection), 'ok': False, 'accepted': False}
+                            else:
+                                result = await request_resolution.select(runtime, request, prepared, args)
+                        elif call['name'] == content_tools.DISCOVER and set(args) == {'query'}:
                             from services.tools.runtime_context import _check_identity
                             from types import SimpleNamespace
                             await asyncio.to_thread(_check_identity, SimpleNamespace(db=handler.db), context)
@@ -2021,6 +2169,10 @@ async def _execute_tools_impl(
                             viewed_images.append(url)
                             result = {'ok': True, **image}
                         elif call['name'] == content_tools.READ and set(args) == {'show_image'}:
+                            from services.task_execution.request_resolution import check_display, recover_display_selection
+                            if len(calls) == 1:
+                                await recover_display_selection(runtime, request, prepared, args['show_image'])
+                            check_display(runtime, request, args['show_image'])
                             image = await asyncio.to_thread(content_tools.show_image,
                                 handler, request, context, args['show_image'])
                             if not any(block.get('source_message_id') == image['source_message_id']
@@ -2044,7 +2196,7 @@ async def _execute_tools_impl(
                             result = {'ok': True, **await asyncio.to_thread(content_tools.source_text,
                                 handler.db, request.task_id, context, args)}
                             for part in result.get('messages', ()):
-                                if part['role'] == 'assistant' and not part.get('requires_explicit_read'):
+                                if not part.get('requires_explicit_read'):
                                     observed[f"{part['message_id']}:{part['content_index']}"] = {
                                         k: part[k] for k in ('sha256', 'context_revision')
                                     }
@@ -2052,7 +2204,11 @@ async def _execute_tools_impl(
                             raise ValueError('CHAT_CONTENT_ARGUMENTS_INVALID')
                     except (ValueError, TypeError, PermissionError, KeyError) as error:
                         code = str(error)
-                        result = {'ok': False, 'code': code if code.startswith('CHAT_') else 'CHAT_CONTENT_UNAVAILABLE'}
+                        result = {'ok': False, 'code': code if code.startswith(('CHAT_', 'REQUEST_TARGET_')) else 'CHAT_CONTENT_UNAVAILABLE'}
+                        if call['name'] == 'resolve_request_target':
+                            from services.task_execution.request_resolution import selection_schema
+                            result.update(parameters=selection_schema(runtime)['function']['parameters'],
+                                message='按参数定义复制真实目标。source_sha256、root_task_id和输入版本由后台填写；继续最近需求用active_request，不把历史图片编号当成本轮附件。')
                         if result['code'] == 'CHAT_IMAGE_VISUAL_BUDGET_EXHAUSTED':
                             result['message'] = '本轮视觉预算已用完。现有定位仍可用，但不要声称看到了未加载的图。'
                         elif call['name'] == content_tools.READ:
@@ -2074,6 +2230,28 @@ async def _execute_tools_impl(
                     await sink.on_block_update(block)
             for image in delivered_images:
                 await sink.on_block(image)
+            return None
+        from services.task_execution import request_resolution
+        target_errors = {call['id']: error for call in calls
+                         if (error := request_resolution.check(runtime, request, call)) is not None}
+        if target_errors and not recovery_only and not content_output_registration:
+            prepared.messages.append(assistant)
+            for call in calls:
+                error = target_errors.get(call['id'], ('REQUEST_TARGET_BATCH_BLOCKED', '本批目标未核实，未派发任何业务操作。'))
+                result = {'ok': False, 'accepted': False, 'code': error[0], 'message': error[1]}
+                if call['name'] == content_objects.SAVE:
+                    from services.task_execution.content_delivery import finish_response
+                    finish_response(runtime, None, result, request=request)
+                output = json.dumps(result, ensure_ascii=False)
+                prepared.messages.append({'role': 'tool', 'tool_call_id': call['id'], 'content': output})
+                for block in blocks:
+                    if block.get('tool_call_id') == call['id']:
+                        block.update(status='error', output=output)
+            await runtime.safe_point(SafePoint.AFTER_TOOL, replay_payload=_build_replay_context(
+                prepared.messages, blocks, turn, next_model_round=next_model_round))
+            for block in blocks:
+                if block.get('tool_call_id') in previewed_call_ids:
+                    await sink.on_block_update(block)
             return None
         original_owner = getattr(runtime, 'task_followup_candidate', None)
         if scoped_content and not recovery_only and not content_output_registration:
@@ -2246,6 +2424,11 @@ async def _execute_tools_impl(
                                                      '保持 document 的全部原文不变，重新登记；不要改成 continue_execution=true。')
                             if any('materials' in issue['loc'] for issue in result['issues']):
                                 result['message'] += content_objects.MATERIAL_GUIDANCE
+                        from services.task_execution.image_reference_catalog import for_runtime
+                        references = for_runtime(runtime)
+                        if references is not None and result['code'] == content_objects.INVALID_OBJECT and not content_output_registration:
+                            offered = getattr(prepared, 'content_visible_tools', {}).get(content_objects.SAVE)
+                            references.save_repair(result, offered)
                 if not content_output_registration:
                     prepared.messages.append({'role':'tool','tool_call_id':call['id'],'content':json.dumps(result,ensure_ascii=False)})
                 blocks[:] = [b for b in blocks if b.get('tool_call_id') != call['id']]
@@ -2365,7 +2548,6 @@ async def _execute_tools_impl(
                         properties = offer.get('parameters', {}).get('properties', {})
                         input_type = inline_image_action.request_type(properties, draft_args)
                         if (not scoped_content or input_type is None
-                                or (input_type is inline_image_action.SingleImageEdit) != ('edit_instruction' in draft_args)
                                 or not inline_image_action.allowed_for_offer(runtime, server_image_plan=server_image_plan,
                                     reuse_source=content_tools.selects_previous_item(request, runtime))):
                             raise PermissionError('CHAT_INLINE_IMAGE_UNAVAILABLE')

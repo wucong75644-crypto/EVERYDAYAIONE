@@ -284,9 +284,9 @@ def test_semantic_previous_result_binds_the_receipt_but_explicit_old_image_stays
     from services.tools.catalog import build_tool_catalog
     image = build_tool_catalog().require('generate_image').to_schema()
     tool, = model_tools([image], inline_image=True, generated_image_edit=True,
-        previous_result=True, single_image_edit=True)
+        previous_image_reference={'message_id': 'prior', 'content_index': 0}, single_image_edit=True)
     properties = tool['function']['parameters']['properties']
-    assert set(properties) == {'previous_result_edit', 'source_message_id', 'source_content_index', 'edit_instruction'}
+    assert set(properties) == {'materials', 'source_message_id', 'source_content_index', 'edit_instruction'}
     from pydantic import ValidationError
     with pytest.raises(ValidationError):
         request_type(properties, {'draft': {'title': '旧底图'}}).model_validate({'draft': {'title': '旧底图'}})

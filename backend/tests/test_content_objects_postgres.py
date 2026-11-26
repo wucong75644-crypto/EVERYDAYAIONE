@@ -19,13 +19,13 @@ from tests.test_task_execution_followup_reuse_postgres import (followup_db,new_t
 def content_db(dispatch_db):
     root=__import__('pathlib').Path(__file__).parents[1]
     with psycopg.connect(dispatch_db) as c:
-        for migration in ('347_agent_task_image_reconciliation','376_agent_task_image_method_handoff','377_agent_task_content_objects','378_agent_content_followup_groups','381_agent_media_confirmation_slots','382_agent_semantic_media_confirmations'):
+        for migration in ('347_agent_task_image_reconciliation','376_agent_task_image_method_handoff','377_agent_task_content_objects','378_agent_content_followup_groups','381_agent_media_confirmation_slots','382_agent_semantic_media_confirmations','384_agent_request_resolution'):
             c.execute((root/f'migrations/{migration}.sql').read_text())
     yield dispatch_db
     with psycopg.connect(dispatch_db) as c:
         c.execute("DELETE FROM conversation_turn_checkpoints WHERE state ? '_task_execution'")
         c.execute('DELETE FROM agent_task_events');c.execute('DELETE FROM agent_task_states');c.execute('SET CONSTRAINTS ALL IMMEDIATE')
-        for migration in ('382_agent_semantic_media_confirmations','381_agent_media_confirmation_slots','378_agent_content_followup_groups','377_agent_task_content_objects','376_agent_task_image_method_handoff','347_agent_task_image_reconciliation'):
+        for migration in ('384_agent_request_resolution','382_agent_semantic_media_confirmations','381_agent_media_confirmation_slots','378_agent_content_followup_groups','377_agent_task_content_objects','376_agent_task_image_method_handoff','347_agent_task_image_reconciliation'):
             c.execute((root/f'migrations/rollback/{migration}_rollback.sql').read_text())
 
 @pytest.mark.asyncio
@@ -181,9 +181,13 @@ async def test_direct_content_selection_adopts_saved_task_before_business_dispat
 @pytest.mark.asyncio
 @pytest.mark.parametrize('scenario', [
     'text-to-image', 'image-to-image', 'inline-text-to-image', 'inline-image-to-image', 'inline-first-turn-upload',
+    'inline-unsubmitted-request', 'inline-unsubmitted-request-resume-before-reserve', 'inline-unsubmitted-request-resume-after-acceptance',
     'inline-edit-selected-output', 'inline-edit-latest-output', 'inline-edit-selected-legacy', 'inline-edit-reload-source',
     'inline-edit-resume-before-reserve', 'inline-edit-resume-after-acceptance',
     'inline-edit-previous-output', 'inline-edit-previous-resume-before-reserve', 'inline-edit-previous-resume-after-acceptance',
+    'inline-edit-previous-mixed', 'inline-edit-previous-explicit',
+    'inline-edit-previous-mixed-resume-before-reserve', 'inline-edit-previous-mixed-resume-after-acceptance',
+    'inline-image-to-image-multi', 'inline-image-to-image-multi-second-base',
     'inline-repair-then-image', 'inline-resume-before-reserve', 'inline-resume-after-acceptance',
     'recorded-first', 'recorded-fifth', 'recorded-sixth-size', 'recorded-write-once', 'recorded-retired',
     'recorded-third-output', 'new-third-output', 'new-regeneration-output', 'recorded-quoted-output',
@@ -243,7 +247,10 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
     monkeypatch.setattr(FileExecutor, 'get_cdn_url', lambda self, path: 'https://local.invalid/' + path)
 
     inline = scenario.startswith('inline-')
+    request_followup = scenario.startswith('inline-unsubmitted-request')
     image_repair = scenario == 'inline-repair-then-image'
+    multi_edit = scenario.startswith('inline-image-to-image-multi')
+    second_base = scenario.endswith('-second-base')
     before_reserve = scenario.endswith('-resume-before-reserve')
     after_acceptance = scenario.endswith('-resume-after-acceptance')
     interrupted = before_reserve or after_acceptance
@@ -255,7 +262,7 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
     flat_edit = edit_selected and scenario != 'inline-edit-selected-legacy' and not previous_edit
     if not flat_edit:
         monkeypatch.setattr(settings, 'chat_single_image_edit_enabled', False)
-    with_original = edit_selected or (scenario not in {'text-to-image', 'inline-text-to-image'} and not interrupted)
+    with_original = edit_selected or request_followup or (scenario not in {'text-to-image', 'inline-text-to-image'} and not interrupted)
     recorded = scenario.startswith('recorded-')
     history_import = scenario.endswith('-history')
     recorded_output = scenario in {'recorded-third-output', 'recorded-third-history'}
@@ -273,11 +280,11 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
     retired = scenario == 'recorded-retired'
     item_index = 3 if recorded_output or new_output else 2 if write_once else 6 if sixth else 5 if fifth else 1
     body = '  纸品封面，保留细纹理。\n避免改变装订孔及商标。  '
-    synthetic_original = scenario in {'image-to-image', 'inline-image-to-image', 'inline-first-turn-upload'} or image_repair or sixth or edit_selected
+    synthetic_original = scenario in {'image-to-image', 'inline-image-to-image', 'inline-first-turn-upload'} or image_repair or sixth or edit_selected or multi_edit or request_followup
     ratio = 'auto' if inline and not with_original or edit_selected and not previous_edit else '3:4' if synthetic_original or new_output else '1:1'
     resolution = '4K' if edit_latest else '2K' if new_output or edit_selected else '1K'
     question = '参考这张原图修改封面，只生成一张' if with_original else '帮我直接生成一张纸品封面图'
-    if scenario == 'inline-image-to-image' or image_repair:
+    if scenario.startswith('inline-image-to-image') or image_repair or request_followup:
         question += '，输出比例3:4。'
     if first_upload:
         question = '这个是图片。你用你写的提示词帮我生成新的图片'
@@ -443,12 +450,32 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
         original_path.write_bytes(original)
         parts.append(ImagePart(url='https://local.invalid/'+file_path, workspace_path=file_path, name=source_name))
         materials.append({'usage':'input', 'role':'原图', 'reference':{'message_id':f['message'], 'content_index':1}})
+    if multi_edit:
+        style_path = '上传/style.png'
+        style_original = FileExecutor(str(tmp_path), f['user'], None).resolve_safe_path(style_path)
+        style_original.parent.mkdir(parents=True, exist_ok=True)
+        style_original.write_bytes(original)
+        parts.append(ImagePart(url='https://local.invalid/' + style_path, workspace_path=style_path, name='style.png'))
+        materials.append({'usage': 'input', 'role': '配色与风格参考',
+                          'reference': {'message_id': f['message'], 'content_index': 2}})
     original_message = f['message']
     with psycopg.connect(content_db) as connection:
         initial_credits, = connection.execute('SELECT credits FROM users WHERE id=%s',
                                              (f['user'],)).fetchone()
         connection.execute("UPDATE messages SET status='completed', context_revision=0, turn_id=%s, content=%s WHERE id=%s",
             (f['turn'], json.dumps([p.model_dump(mode='json', exclude_none=True) for p in parts]), f['message']))
+        if request_followup:
+            original_message, source_task = str(uuid4()), str(uuid4())
+            connection.execute("INSERT INTO messages(id,conversation_id,role,content,status,context_revision) VALUES(%s,%s,'user',%s,'completed',1)",
+                (original_message, f['conv'], json.dumps([part.model_dump(mode='json', exclude_none=True) for part in parts])))
+            connection.execute("INSERT INTO tasks(id,user_id,conversation_id,type,status,input_message_id,execution_mode,request_params) VALUES(%s,%s,%s,'chat','completed',%s,'serial',%s)",
+                (source_task, f['user'], f['conv'], original_message, Jsonb({'_ecom_workflow': {'intent': 'generate'}})))
+            connection.execute("UPDATE tasks SET queue_sequence=nextval('task_queue_sequence_seq'),base_context_revision=2 WHERE id=%s", (f['task'],))
+            connection.execute("UPDATE conversations SET scope_type='user',context_revision=2 WHERE id=%s", (f['conv'],))
+            parts = [TextPart(text='没问题，开始生成吧')]
+            connection.execute("UPDATE messages SET content=%s,context_revision=2 WHERE id=%s", (json.dumps([part.model_dump(mode='json') for part in parts]), f['message']))
+            for material in materials:
+                material['reference']['message_id'] = original_message
         if edit_selected:
             generated_messages = [str(uuid4()), str(uuid4())]
             for revision, (message, tier) in enumerate(zip(generated_messages, ('2K', '4K'))):
@@ -497,13 +524,13 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
                     context_anchor=SimpleNamespace(input_message_id=f['message'],
                         base_revision=1 if edit_selected else 0 if first_upload else None))
         from services.agent.image.ecommerce_planner.workflow import WorkflowBinding, ImageRequestContext
-        action = intent or ('write' if followup else 'edit' if edit_selected or with_original else 'generate')
-        requested_size = ({'aspect_ratio':'3:4'} if scenario == 'inline-image-to-image' or image_repair
+        action = intent or ('write' if followup else 'generate' if first_upload else 'edit' if edit_selected or with_original else 'generate')
+        requested_size = ({'aspect_ratio':'3:4'} if scenario.startswith('inline-image-to-image') or image_repair or request_followup
             else {'mode':'auto'} if edit_selected and not previous_edit else
             {'aspect_ratio':'3:4','resolution':'2K'} if new_output else {})
         if sixth:
             requested_size = {'mode':'inherit_reference'}
-        frame = ImageRequestContext(size=requested_size,
+        frame = ImageRequestContext(size=requested_size, canvas_image=(2 if second_base else 1) if multi_edit else None,
             reference_usage='input' if automatic_output else None)
         value = WorkflowBinding(kind='ordinary_image', root_task_id=str(r.task_bootstrap.task_id),
             window_task_id=f['task'], generation_run_id=f['task'], intent=action, request_context=frame)
@@ -518,6 +545,12 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
         return r, p, h, q
 
     r, p, h, q = runtime_case(parts)
+    if request_followup:
+        from services.task_execution import request_resolution
+        with connect(f) as connection:
+            snapshot = connection.execute('SELECT read_agent_request_context(%s,%s)', (f['task'], f['token'])).fetchone()[0]
+        r.checkpoint_base[request_resolution.CONTEXT] = snapshot
+        request_resolution.freeze(r, q, {'kind': 'request', 'basis': 'active_request', 'source_message_id': original_message})
     if previous_edit:
         from tests.test_model_directed_records import operation_state
         _, previous_state = operation_state('accepted')
@@ -697,7 +730,7 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
         assert len(calls) == 1
         raw = calls[0]
         native = json.loads(raw['arguments'])
-        assert native['prompt'] == body
+        assert native['prompt'] == (execution_body if multi_edit else body)
         if 'aspect_ratio' in native:
             assert native['aspect_ratio'] == ratio
         if followup:
@@ -757,16 +790,21 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
             'size_requirement': {'mode': 'inherit_reference'}, 'resolution': '1K' if first_upload else '4K',
         }
     execution_body = ('保留产品结构。画布尺寸按平台输出规格适配。输出比例以平台输出规格为准。'
-                      if sixth else body)
+                      if sixth else ('输入图片1对应用户图1。\n输入图片2对应用户图2。\n编辑底图为输入图片' + ('2（用户图2）' if second_base else '1（用户图1）') + '。\n\n' + body) if multi_edit else body)
     model_arguments = {'draft': doc['items'][0]}
-    if flat_edit:
+    if inline and q.params['_ecom_workflow']['intent'] == 'edit' and not previous_edit:
         model_arguments = {
-            'source_message_id': materials[0]['reference']['message_id'],
-            'source_content_index': materials[0]['reference']['content_index'],
+            'source_message_id': materials[1 if second_base else 0]['reference']['message_id'],
+            'source_content_index': materials[1 if second_base else 0]['reference']['content_index'],
             'edit_instruction': body,
+            **({'materials': materials[:1] if second_base else materials[1:]} if multi_edit else {}),
         }
     if previous_edit:
         model_arguments = {'previous_result_edit': body}
+        if 'mixed' in scenario or scenario.endswith('-explicit'):
+            model_arguments['edit_instruction'] = body
+        if scenario.endswith('-explicit'):
+            model_arguments.update(source_message_id=materials[0]['reference']['message_id'], source_content_index=0)
     seen = 0
     if not followup:
         row = selection = None
@@ -774,6 +812,12 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
     async def model(**kwargs):
         nonlocal seen, row, selection
         seen += 1
+        if request_followup and seen == 1:
+            visible = {tool['function']['name'] for tool in kwargs['tools']}
+            assert {'resolve_request_target', 'respond_without_execution'} <= visible
+            facts = next(json.loads(message['content'].split('\n')[-1]) for message in reversed(kwargs['messages'])
+                         if message.get('role') == 'system' and message.get('content', '').startswith('[Model-directed execution]'))
+            assert facts['current_request']['resolution']['target']['source_message_id'] == original_message
         if history_import:
             if seen == 1:
                 yield tool_chunk('read_conversation_text', arguments=json.dumps({'message_id': history_message}))
@@ -836,14 +880,11 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
                     assert not receipts and not co.objects(r.task_execution_state)
                 offered = next(tool['function']['parameters'] for tool in kwargs['tools']
                                if tool['function']['name'] == 'generate_image')
-                if flat_edit:
-                    assert set(offered['properties']) == set(model_arguments)
+                if 'edit_instruction' in model_arguments or previous_edit:
+                    assert set(offered['properties']) == {'source_message_id', 'source_content_index', 'edit_instruction', 'materials'}
+                    assert 'previous_result_edit' not in offered['properties']
                 else:
                     assert 'draft' in offered['properties']
-                    if previous_edit:
-                        assert 'previous_result_edit' in offered['properties']
-                    elif edit_selected:
-                        assert list(offered['properties']) == ['draft']
                     assert offered['$defs']
                 yield tool_chunk('generate_image', arguments=json.dumps(model_arguments, ensure_ascii=False))
             else:
@@ -886,7 +927,7 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
         else:
             restored = {}
         sink, blocks, _ = await run_content_loop(r, p, h, q, model, blocks=copy.deepcopy(restored.get('content_blocks', [])))
-        expected_rounds = 4 if history_import else 1 if followup else 2 if inline and not repairs_arguments else 3
+        expected_rounds = 1 if request_followup else 4 if history_import else 1 if followup else 2 if inline and not repairs_arguments else 3
         assert seen == expected_rounds and len(receipts) == 1, blocks
         if inline:
             from services.task_execution.inline_image_action import read_record
@@ -909,7 +950,7 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
         assert snapshot['mode'] == ('image_to_image' if with_original else 'text_to_image')
         assert snapshot['prompt_sha256'] == hashlib.sha256(execution_body.encode()).hexdigest()
         assert [(x['workspace_path'],x['content_sha256']) for x in snapshot['references']] == (
-            [(file_path, input_sha)] if with_original else [])
+            [(file_path, input_sha), *([(style_path, input_sha)] if multi_edit else [])] if with_original else [])
         expected_ratio = 'auto' if inline and not with_original else ratio
         assert (snapshot['aspect_ratio'],snapshot['resolution'],snapshot['output_format']) == (expected_ratio,resolution,'png')
         assert snapshot['origin']['input_message_id'] == f['message']
@@ -931,7 +972,8 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
             assert serialized['prompt'] == execution_body
             assert serialized.get('aspect_ratio', serialized.get('image_size')) == expected_ratio
             assert serialized['resolution'] == resolution
-            assert (['https://local.invalid/'+file_path] in serialized.values()) == with_original
+            urls = ['https://local.invalid/' + file_path, *(['https://local.invalid/' + style_path] if multi_edit else [])]
+            assert (urls in serialized.values()) == with_original
             requests.append(serialized)
             return httpx.Response(200, json={'code':200, 'msg':'success', 'data':{'taskId':external_id}})
 
