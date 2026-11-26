@@ -319,6 +319,16 @@ def selection_parameters(model=ContentReference):
     return parameters
 
 
+IMAGE_REVISION_GUIDANCE = (
+    ' 用户要求旧图片方案修改比例、清晰度或内容并出图时，不是原样执行：先读取所选条目的完整正文、options和素材，'
+    '用save_task_text的base及updates修订同一稿件，保存成功后再提交新回执中的content_source。'
+    '比例修改包括旧options.aspect_ratio为auto的情况；同时修订body、display_prefix内与新规格冲突的竖版/横版等要求。'
+    'updates[].item.options会整体替换旧options，须复制完整原options再只改用户指定字段，保留未改的分辨率和输出格式；'
+    '未要求换素材就省略materials，由后台保留。用户已要求修订并出图时continue_execution=true，'
+    '无需让用户再说一次先改方案；已有等待确认条件仍有效，不将本说明作为批准。'
+    '用户只要求改方案或先看文字时不提交图片。')
+
+
 SCHEMA = {'type': 'function', 'function': {'name': SAVE,
     'description': '保存或修订结构化稿件。新写分条方案、提示词或脚本可直接回复编号标题与完整正文，后台自动登记，无需重复保存。'
         '明确结构化保存时提交document，每条写title和body，页面展示原文。整组优先一次保存；分次交付时前几次delivery_complete=false，最后一次才为true，不能用continue_execution表示继续写稿。'

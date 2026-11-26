@@ -2225,6 +2225,10 @@ async def _execute_tools_impl(
                             from services.task_execution.request_resolution import selection_schema
                             result.update(parameters=selection_schema(runtime)['function']['parameters'],
                                 message='按参数定义复制真实目标。source_sha256、root_task_id和输入版本由后台填写；继续最近需求用active_request，不把历史图片编号当成本轮附件。')
+                            if code == 'REQUEST_TARGET_FOCUS_CONFLICT':
+                                result.update(issues=[{'path': '$.request_context.focus',
+                                    'reason': '执行或重做已保存稿件时必须为selected_target'}],
+                                    message='本次未执行。保留所选稿件身份及用户要求，将request_context.focus改为selected_target后单独重试目标纠正。')
                         if result['code'] == 'CHAT_IMAGE_VISUAL_BUDGET_EXHAUSTED':
                             result['message'] = '本轮视觉预算已用完。现有定位仍可用，但不要声称看到了未加载的图。'
                         elif call['name'] == content_tools.READ:

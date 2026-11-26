@@ -438,6 +438,9 @@ def model_tools(tools, *, selectable_source_images=False, saved_text_available=F
                 function['description'] += (
                     ' 本轮上传图的可选 materials[].reference（仅按用户意图选择）：' + refs
                 )
+            if saved_text_available:
+                from services.task_execution.content_objects import IMAGE_REVISION_GUIDANCE
+                function['description'] += IMAGE_REVISION_GUIDANCE
             # Definitions for other forms can include long reference/patch schemas.
             # Only publish definitions reachable from the advertised arguments.
             definitions = parameters.pop('$defs', {})
@@ -496,6 +499,12 @@ def model_tools(tools, *, selectable_source_images=False, saved_text_available=F
                    '每次调用处理一张图。多张已选且相互独立的图片按条目顺序在同一轮提交各自的调用。' + SIZE_GUIDANCE
                    if name == 'generate_image' else ' 仅接受文字脚本，不传图片素材；不支持视频剪辑。')
             )
+            if name == 'generate_image':
+                from services.task_execution.content_objects import IMAGE_REVISION_GUIDANCE
+                tool['function']['description'] = tool['function']['description'].replace(
+                    '直接把该条的content_source作为同名参数提交，无需重新保存。',
+                    '用户未修改该条内容或规格时，直接把该条的content_source作为同名参数提交，无需重新保存。')
+                tool['function']['description'] += IMAGE_REVISION_GUIDANCE
             if name == 'generate_image' and reuse_source:
                 tool['function']['description'] += (
                     ' 这轮要沿用已有原稿。目录未定位时先查会话原文；'

@@ -133,7 +133,7 @@ class ImageReferences:
         if isinstance(result.get('description'), str):
             from .content_objects import MATERIAL_REFERENCE_GUIDANCE
             result['description'] = result['description'].replace(MATERIAL_REFERENCE_GUIDANCE,
-                '图片复制当前目录的image_ref；其他已核验文件可使用resource_ref、file_id或asset_id。')
+                'reference是JSON对象；图片填写{"image_ref":"当前目录编号"}，不是编号字符串；其他已核验文件可使用resource_ref、file_id或asset_id。')
             result['description'] = result['description'].replace(
                 '从该图的 reference 原样复制 message_id 和 content_index 到对应字段。', '复制该图的image_ref。').replace(
                 '编辑图片统一填写 source_message_id、source_content_index 和 edit_instruction；',
@@ -163,9 +163,15 @@ class ImageReferences:
             function['description'] += (' 单图编辑格式示例（不代表替用户选图）：' + json.dumps(example, ensure_ascii=False)
                 + '。底图只填image_ref，不复制目录中的name、task_id等元数据。'
                 'materials只用于其他参考图，每项仅填写reference、role、usage。')
+            function['description'] += (' 无其他参考图时省略materials，不重复填写底图。其他参考图的完整结构示例：'
+                + json.dumps({'materials': [{'reference': {'image_ref': next(iter(self.references))},
+                    'role': '其他图片的颜色参考', 'usage': 'input'}]}, ensure_ascii=False)
+                + '。示例仅说明嵌套结构，实际参考图须按用户要求选择，不能照抄示例编号。')
         props = result.get('properties', {})
         if {'body', 'title'} <= props.keys():
-            props['title']['description'] = '条目标题，必填title；不要使用heading等未定义字段。正文放body。'
+            props['title']['description'] = ('条目标题，必填title；不要使用heading等未定义字段。正文放body。'
+                if 'title' in result.get('required', ()) else
+                '仅修改条目标题时填写title；否则省略以保留原标题。不要使用heading。')
         if {'tool', 'wait_for', 'wait_all', 'approved', 'confirmation_only'} <= props.keys():
             props['tool'] = {'type': 'string', 'enum': ['generate_image', 'generate_video'],
                              'description': '这些等待/批准条件所针对的交付工具。无等待也明确填写，不能以null配合非空等待。'}
@@ -278,10 +284,15 @@ class ImageReferences:
                 if details:
                     rejection['issues'] = [{'path': '$.request_context.target' + issue['path'][1:],
                                              'reason': issue['reason']} for issue in details]
-        rejection.update(parameters=public,
-            message='本次未执行。按issues指出的字段修正，保留用户指定的图片与修改要求。'
+        guidance = ('content目标从真实稿件目录复制artifact_id、revision、item_indices及来源source_message_id；'
+                    '执行或重做保存稿时focus=selected_target。'
+                    if isinstance(target, dict) and target.get('kind') == 'content' else
                     'image目标填写kind、basis和单个image_ref；basis从枚举复制，不使用image_refs或item_indices代替图片引用。'
-                    '不要重新编写或丢弃原稿。')
+                    if isinstance(target, dict) and target.get('kind') == 'image' else
+                    '按所选target.kind对应的字段定义填写，不混用图片引用和稿件引用。')
+        rejection.update(parameters=public,
+            message='本次未执行。按issues指出的字段修正，保留用户指定的目标与要求。'
+                    + guidance + '不要重新编写或丢弃原稿。')
         return rejection
 
     def messages(self, messages):
@@ -305,9 +316,14 @@ class ImageReferences:
                     function['arguments'] = self.text(function['arguments'])
             if message.get('role') in {'system', 'tool'} and isinstance(message.get('content'), str):
                 message['content'] = self.text(message['content'])
+            elif message.get('role') in {'system', 'tool'} and isinstance(message.get('content'), list):
+                for part in message['content']:
+                    if isinstance(part, dict) and part.get('type') in {'text', 'input_text'} and isinstance(part.get('text'), str):
+                        part['text'] = self.text(part['text'])
         result.append({'role': 'system', 'content':
             '图片选择统一复制当前目录的image_ref；编辑用image_ref和edit_instruction，'
-            '素材reference、view_image、show_image也填写image_ref。不要填写图片消息ID和位置。'
+            '素材项的reference必须是对象{"image_ref":"当前目录编号"}，不能直接填编号字符串；'
+            'view_image、show_image填写对象中的image_ref。不要填写图片消息ID和位置。'
             '后台还原真实身份并核验来源、权限和版本；短引用不代表执行授权。'
             '短引用仅用于工具参数，不向用户展示内部编号；用户看旧图时直接交付图片。'})
         return result
@@ -316,6 +332,18 @@ class ImageReferences:
         # Host facts are JSON, sometimes preceded by a system instruction line.
         # User prose and authored prompt bodies are never rewritten.
         prefix, sep, tail = text.rpartition('\n')
+        # Legacy tool messages append one or more platform fact blocks to the
+        # original result. Project each known block before recombining; never
+        # treat arbitrary authored lines as JSON fragments to rewrite.
+        if sep:
+            try:
+                metadata = json.loads(tail)
+            except (ValueError, TypeError):
+                metadata = None
+            if (isinstance(metadata, dict) and set(metadata) == {'platform_metadata'}
+                    and isinstance(metadata['platform_metadata'], dict)
+                    and metadata['platform_metadata'].get('source') == 'platform_tool_context'):
+                return self.text(prefix) + sep + json.dumps(metadata, ensure_ascii=False)
         for candidate, head in ((text, ''), (tail, prefix + sep)):
             try:
                 parsed = json.loads(candidate)
@@ -326,10 +354,16 @@ class ImageReferences:
                 if isinstance(projected.get('message'), str):
                     from .content_objects import MATERIAL_REFERENCE_GUIDANCE
                     projected['message'] = projected['message'].replace(MATERIAL_REFERENCE_GUIDANCE,
-                        '图片素材的reference只填当前目录image_ref，并保留role和usage。')
+                        '图片素材填写reference:{"image_ref":"当前目录编号"}，reference不是字符串；保留role和usage。')
                     projected['message'] = projected['message'].replace(
                         '编辑图片统一填写 source_message_id、source_content_index 和 edit_instruction；',
                         '编辑图片统一填写image_ref和edit_instruction；')
+                allowed = projected.get('allowed_fields')
+                if isinstance(allowed, list) and {'source_message_id', 'source_content_index', 'edit_instruction'} <= set(allowed):
+                    projected['allowed_fields'] = [key for key in allowed if key not in {'source_message_id', 'source_content_index'}] + ['image_ref']
+                    for issue in projected.get('issues', ()):
+                        if issue.get('path') in {'$.source_message_id', '$.source_content_index'}:
+                            issue['path'] = '$.image_ref'
                 if isinstance(projected.get('tools'), list):
                     projected['tools'] = self.schema(projected['tools'])
                 if isinstance(projected.get('parameters'), dict):

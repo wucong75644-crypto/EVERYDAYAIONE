@@ -65,7 +65,10 @@ class ImageRequestContext(BaseModel):
         description='本轮新稿共同采用的真实图片及用途，按实际输入顺序填写，逐字复制素材reference；主体与风格参考均为input，排除的图片不填。非图片写作或沿用已有稿件时可为null。')
     continue_delivery: bool = False
     target: Target | None = None
-    focus: Literal['current_request', 'selected_target', 'retain_previous'] | None = None
+    focus: Literal['current_request', 'selected_target', 'retain_previous'] | None = Field(default=None,
+        description='current_request用于独立新需求；selected_target用于选定历史图片或保存稿。'
+                    'target.kind=content且intent=execute_saved或repeat时必须selected_target；'
+                    'retain_previous仅用于保留已有焦点，不代表选择最新图片。')
 
     @model_serializer(mode='wrap')
     def compatible_canvas(self,handler):
