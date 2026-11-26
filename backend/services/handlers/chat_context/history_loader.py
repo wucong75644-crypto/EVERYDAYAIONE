@@ -57,10 +57,12 @@ def _append_image_locators(messages, row, *, org_id=None, visible_indices=()):
     sources = row.get("_trusted_image_sources")
     if sources is None:
         sources = image_sources(row, org_id)
-    text = format_image_sources([
+    projected_sources = [
         {**source, "visually_present": source.get("content_index") in visible_indices}
         for source in sources
-    ])
+    ]
+    image_text = format_image_sources(projected_sources)
+    text = image_text
     import hashlib
     text_sources = [{'message_id': str(row['id']), 'content_index': i, 'role': row['role'],
                      'context_revision': row.get('context_revision'), 'chars': len(part['text']),
@@ -80,6 +82,9 @@ def _append_image_locators(messages, row, *, org_id=None, visible_indices=()):
         target["content"].append({"type": "text", "text": text})
     else:
         target["content"] += "\n\n" + text
+    if image_text:
+        (target if target is not None else messages[-1])['_image_locator_projection'] = {
+            'text': image_text, 'sources': projected_sources}
 
 
 def _row_to_oai_messages(

@@ -5,6 +5,7 @@ from copy import deepcopy
 def chat_messages(messages):
     result = deepcopy(messages)
     for message in result:
+        message.pop('_image_locator_projection', None)
         if message.get("role") == "developer":
             message["role"] = "system"
         if not isinstance(message.get("content"), list):

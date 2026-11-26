@@ -1103,7 +1103,8 @@ async def _run_loop(
                 input_id and not server_image_plan and not input_changed
                 and getattr(runtime, 'task_image_completion', None) is None
                 and content_tools.checkpoint_state(runtime).get('image_call_repair_input') != input_id
-                and saved_source_available and reuse_source
+                and (saved_source_available and reuse_source or single_image_edit)
+                and not (media.wait_for or media.wait_all)
                 and not any(block.get('type') == 'tool_step' and block.get('tool_name') not in content_tools.CONTROLS
                             for block in blocks))
         from services.tools.model_contracts import project_model_tool
@@ -1357,6 +1358,8 @@ async def _run_loop(
                 totals.text += fallback_text
                 blocks.append({"type": "text", "text": fallback_text})
                 await sink.on_block(blocks[-1])
+            return None
+        if content_tools.repeats_delivered_image(runtime, request, calls):
             return None
         guard_calls=calls
         if direct_enabled(runtime):
@@ -1990,6 +1993,7 @@ async def _execute_tools_impl(
     if runtime is not None:await refresh_user_changes(runtime)
     from services.task_execution.image_reference_catalog import for_runtime
     image_references = for_runtime(runtime)
+    model_call_arguments = {}
     if image_references is not None:
         from services.task_execution.contracts import TaskError
         from services.tools.argument_validation import decode_tool_arguments
@@ -1998,6 +2002,7 @@ async def _execute_tools_impl(
         for call in calls:
             try:
                 raw = decode_tool_arguments(call.get('arguments') or '{}')
+                model_call_arguments[call['id']] = raw
                 decoded = image_references.decode(raw)
                 decoded_calls.append({**call, 'arguments': json.dumps(decoded, ensure_ascii=False)} if decoded != raw else call)
             except TaskError as error:
@@ -2134,6 +2139,10 @@ async def _execute_tools_impl(
                             rejection = offered_argument_error(call['name'], args, request_resolution.selection_schema(runtime)['function']['parameters'])
                             if rejection:
                                 result = {**json.loads(rejection), 'ok': False, 'accepted': False}
+                                if image_references is not None:
+                                    result = image_references.selection_repair(result,
+                                        model_call_arguments[call['id']],
+                                        request_resolution.selection_schema(runtime)['function']['parameters'])
                             else:
                                 result = await request_resolution.select(runtime, request, prepared, args)
                         elif call['name'] == content_tools.DISCOVER and set(args) == {'query'}:
@@ -2181,7 +2190,14 @@ async def _execute_tools_impl(
                                 blocks.append(image)
                                 delivered_images.append(image)
                             result = {'ok': True, 'status': 'delivered_existing', 'accepted': False,
-                                      'message': '已展示已有图片。没有创建新的图片任务。'}
+                                      'delivery_complete': True,
+                                      'message': '已有图片已经交付给用户，没有创建新的图片任务。不要重复展示；没有其他要求时结束本轮。'}
+                            from services.task_execution.content_delivery import input_revision
+                            runtime.checkpoint_base['_displayed_image_delivery_v1'] = {
+                                'input_revision': input_revision(runtime, request),
+                                'owner_task_id': str(runtime.task_id),
+                                'source_message_id': image['source_message_id'],
+                                'source_content_index': image['source_content_index']}
                         elif call['name'] == content_tools.READ and set(args) == {'image_task_status'}:
                             result = {'ok': True, **await asyncio.to_thread(content_tools.read_image_task_status,
                                 runtime, handler.db, context, args['image_task_status'])}

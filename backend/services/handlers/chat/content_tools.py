@@ -44,6 +44,26 @@ def requests_generated_image_edit(request, *, allow_named_output=False, runtime=
     return semantic_intent(request, runtime) == 'edit'
 
 
+def repeats_delivered_image(runtime, request, calls):
+    """A completed display is not another operation, even after recovery."""
+    from services.task_execution.content_delivery import input_revision
+    from services.task_execution.image_reference_catalog import for_runtime
+    record = (getattr(runtime, 'checkpoint_base', {}) or {}).get('_displayed_image_delivery_v1')
+    if (not record or record.get('input_revision') != input_revision(runtime, request)
+            or record.get('owner_task_id') != str(runtime.task_id)
+            or semantic_intent(request, runtime) != 'explain' or len(calls) != 1
+            or calls[0]['name'] != READ):
+        return False
+    try:
+        args = json.loads(calls[0]['arguments'])
+        refs = for_runtime(runtime)
+        args = refs.decode(args) if refs else args
+    except (ValueError, TypeError):
+        return False
+    return args == {'show_image': {'message_id': record['source_message_id'],
+                                  'content_index': record['source_content_index']}}
+
+
 def is_single_generated_image_edit(request, runtime=None):
     return semantic_intent(request, runtime) == 'edit' and not any(
         part.type != 'text' for part in request.content)

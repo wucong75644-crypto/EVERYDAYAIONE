@@ -102,6 +102,7 @@ class OpenRouterChatAdapter(BaseChatAdapter):
         """Project compatible tool IDs and Responses content into chat messages."""
         result = []
         for message in messages:
+            message = {key: value for key, value in message.items() if key != '_image_locator_projection'}
             if message.get("role") == "assistant" and message.get("tool_calls"):
                 message = {**message, "tool_calls": [
                     {**call, "id": cls._provider_call_id(call["id"])}
