@@ -116,6 +116,45 @@ async def test_registered_object_survives_real_new_turn_and_patch_without_new_re
 
 
 @pytest.mark.asyncio
+async def test_revised_size_approval_keeps_the_real_database_confirmation_contract(content_db):
+    import hashlib
+    from psycopg.types.json import Jsonb
+    from tests.semantic_fixtures import semantic_request
+    r, p, h, q = case()
+    p.content_controls_available = True
+    draft = document()
+    draft['items'][2]['options']['aspect_ratio'] = '3:4'
+    await execute(r, p, h, q, [call(co.SAVE, {'document': draft,
+        'confirmation': {'tool': 'generate_image', 'wait_all': True}}, 'waiting')])
+    old, = co.catalog(r.task_execution_state)
+    q = semantic_request(q, 'execute_saved', size={'aspect_ratio': '1:1'}, media={
+        'tool': 'generate_image', 'approved': [3], 'artifact_id': old['artifact_id'],
+        'revision': old['revision'], 'confirmation_only': False})
+    message = '第三个方案改成正方形，再帮我出一张图。'
+    event = {'event_id': 'current-event', 'owner_task_id': str(r.task_id),
+        'message': message, 'message_sha256': hashlib.sha256(message.encode()).hexdigest(), 'delivered': True}
+    r.checkpoint_base['_task_user_changes'] = {'items': [event]}
+    r.checkpoint_base['_media_decisions_v1'] = {'version': 1, 'items': [{
+        'event_id': event['event_id'], 'owner_task_id': event['owner_task_id'],
+        'message_sha256': event['message_sha256'], 'artifact_id': old['artifact_id'],
+        'object_key': old['object_key'], 'revision': old['revision'],
+        'tool': 'generate_image', 'approved_items': [3]}]}
+    await execute(r, p, h, q, [call(co.SAVE, {'base': ref(old, 3), 'updates': [
+        {'item_index': 3, 'item': {'body': '正方形画布，其他图案与结构保持原样。',
+            'options': {**draft['items'][2]['options'], 'aspect_ratio': '1:1'}}}],
+        'continue_execution': True}, 'approved-revision')])
+    assert __import__('json').loads(p.messages[-1]['content'])['ok'] is True
+    with psycopg.connect(content_db) as db:
+        state = r.task_execution_state.model_dump(mode='json')
+        assert db.execute('SELECT agent_media_decision_items(%s,%s,%s)',
+            (Jsonb(state), Jsonb(r.checkpoint_base), event['event_id'])).fetchone()[0] == [3]
+        forged = copy.deepcopy(r.checkpoint_base)
+        forged['_media_decisions_v1']['items'][0]['revision'] = old['revision']
+        assert db.execute('SELECT agent_media_decision_items(%s,%s,%s)',
+            (Jsonb(state), Jsonb(forged), event['event_id'])).fetchone()[0] == []
+
+
+@pytest.mark.asyncio
 async def test_older_catalog_exposes_each_actual_item_specification(content_db):
     async def publish(turn, draft):
         r, p, h, q = case()

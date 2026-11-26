@@ -137,3 +137,71 @@ async def test_repeated_old_source_stops_without_dispatching_a_valid_sibling():
         assert results[1]['code'] == 'CONTENT_IMAGE_REVISION_BATCH_BLOCKED'
         assert bool(getattr(h, '_tool_result_stop_reason', '')) == (attempt == 2)
     h._execute_tool_calls.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('confirmation_only', [True, False])
+async def test_user_can_approve_one_waiting_plan_with_a_size_change_in_the_same_input(confirmation_only):
+    from tests.test_content_objects import document
+    from tests.test_model_directed_loop import case
+    from services.task_execution import item_confirmation
+    r, p, h, q = case()
+    p.content_controls_available = True
+    draft = document()
+    draft['items'][2]['options']['aspect_ratio'] = '3:4'
+    await execute(r, p, h, q, [call(co.SAVE, {'document': draft,
+        'confirmation': {'tool': 'generate_image', 'wait_all': True}}, 'waiting')])
+    old, = co.catalog(r.task_execution_state)
+    q = semantic_request(q, 'execute_saved', size={'aspect_ratio': '1:1'}, media={
+        'tool': 'generate_image', 'approved': [3], 'confirmation_only': confirmation_only,
+        'artifact_id': old['artifact_id'], 'revision': old['revision']})
+    decision = {'owner_task_id': str(r.task_id), 'event_id': 'event', 'message_sha256': 'a' * 64,
+        'artifact_id': old['artifact_id'], 'revision': old['revision'], 'tool': 'generate_image',
+        'approved_items': [3], 'object_key': old['object_key']}
+    r.checkpoint_base['_media_decisions_v1'] = {'version': 1, 'items': [decision]}
+    await execute(r, p, h, q, [call(co.SAVE, {'base': ref(old, 3), 'updates': [
+        {'item_index': 3, 'item': {'body': '正方形封面，保留原图结构与图案。',
+            'options': {**draft['items'][2]['options'], 'aspect_ratio': '1:1'}}}],
+        'continue_execution': True}, 'revise-approved')])
+    result = json.loads(p.messages[-1]['content'])
+    assert result['ok'] is True, result
+    assert result['approved_execution']['item_indices'] == [3]
+    new, = co.catalog(r.task_execution_state)
+    assert [i['item_index'] for i in new['items']] == [1, 2, 3]
+    directive = item_confirmation.directive(q, r)
+    assert directive.artifact_id == new['artifact_id'] and directive.revision == new['revision']
+    assert item_confirmation.check(call('generate_image', {'content_source': ref(new, 3)}),
+        r.task_execution_state, '', semantic=directive) is None
+    assert item_confirmation.check(call('generate_image', {'content_source': ref(new, 1)}),
+        r.task_execution_state, '', semantic=directive)[0] == 'CONTENT_CONFIRMATION_DIFFERENT_ITEM'
+    assert decision['artifact_id'] == new['artifact_id']
+    previous = r.checkpoint_base[revision.KEY]['approval_revision']['previous_decision']
+    assert previous['artifact_id'] == old['artifact_id']
+    # New input cannot inherit the previous window's version bridge.
+    next_input = replace(q, context_anchor=SimpleNamespace(input_message_id='other', base_revision=100))
+    assert item_confirmation.directive(next_input, r).artifact_id == old['artifact_id']
+    h._execute_tool_calls.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('has_size_change', [True, False])
+async def test_revision_bridge_cannot_invent_execution_or_change_a_pure_confirmation(has_size_change):
+    from tests.test_content_objects import document
+    from tests.test_model_directed_loop import case
+    r, p, h, q = case()
+    p.content_controls_available = True
+    await execute(r, p, h, q, [call(co.SAVE, {'document': document(),
+        'confirmation': {'tool': 'generate_image', 'wait_all': True}}, 'waiting')])
+    old, = co.catalog(r.task_execution_state)
+    before = copy.deepcopy(r.task_execution_state)
+    q = semantic_request(q, 'execute_saved', size={'aspect_ratio': '3:4'} if has_size_change else {},
+        media={'tool': 'generate_image', 'approved': [3], 'confirmation_only': True,
+               'artifact_id': old['artifact_id'], 'revision': old['revision']})
+    await execute(r, p, h, q, [call(co.SAVE, {'base': ref(old, 3), 'updates': [
+        {'item_index': 3, 'item': {'body': '竖版画布，保留原图。',
+            'options': {**document()['items'][2]['options'], 'aspect_ratio': '3:4'}}}],
+        'continue_execution': not has_size_change}, 'unauthorized-change')])
+    assert json.loads(p.messages[-1]['content'])['code'] == 'CONTENT_CONFIRMATION_EXISTING_ITEM_REQUIRED'
+    assert r.task_execution_state == before
+    assert not (r.checkpoint_base.get(revision.KEY) or {}).get('approval_revision')
+    h._execute_tool_calls.assert_not_awaited()

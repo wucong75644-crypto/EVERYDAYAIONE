@@ -28,7 +28,9 @@ class MediaDirective(BaseModel):
 def directive(request, runtime):
     projection = getattr(runtime, 'workflow_projection', None) or (getattr(request, 'params', None) or {}).get('_ecom_workflow') or {}
     raw = (projection.get('request_context') or {}).get('media')
-    return MediaDirective.model_validate(raw) if raw is not None else MediaDirective()
+    value = MediaDirective.model_validate(raw) if raw is not None else MediaDirective()
+    from .saved_image_revision import revised_approval
+    return revised_approval(runtime, request, value)
 
 
 def record_decision(runtime, request, state, value):

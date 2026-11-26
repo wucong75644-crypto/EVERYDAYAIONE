@@ -251,6 +251,8 @@ async def classify_workflow(text, previous=None, *, org_id=None, selected_skill=
     prompt += ("无论新写作还是已有图片/视频待确认项，media都要表达用户明确设置的后续等待条件；尚无已保存方案也可填写wait_for或wait_all。"
         "wait_for为需要用户后续确认的编号；整组等待用wait_all。只有本轮确实同意当前已保存条目才填写approved，"
         "引用目录里的artifact_id和revision；仅确认、不含修改/新素材/其他新要求时confirmation_only=true。"
+        "用户明确要求某待确认稿改规格并出图时，approved保留本次明确同意出图的编号，confirmation_only=false；"
+        "后续后台会将本次批准限定到修订保存成功的对应条目，不批准其他条目。"
         "否定、解释或修改正文不是批准；确认不能授权旧版方案。用户说等我点头、说可以再做等含义一样的要求均属于等待，"
         "按完整条件含义理解，不要求固定说法。用户没设等待条件时不新增确认。已保存等待条件继续有效，且media.tool必须使用原工具。")
     prompt += ("deliveries只列用户本轮明确要求实际交付的视频generate_video或文件code_execute；"

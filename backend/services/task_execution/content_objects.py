@@ -329,7 +329,9 @@ IMAGE_REVISION_GUIDANCE = (
     '用户只要求改方案或先看文字时不提交图片。'
     '目录items[].options是各条实际保存规格，不以整组标题推断其他条目的规格。'
     '收到CONTENT_IMAGE_REVISION_REQUIRED表示尚未派发，可在同一轮按recovery读取并修订保存；'
-    '必须用保存成功回执中的新artifact_id执行，不能再次提交旧content_source。')
+    '必须用保存成功回执中的新artifact_id执行，不能再次提交旧content_source。'
+    '待确认条目若在本次明确要求改规格并出图，后台仅将本次已确认条目绑定到保存成功的新版本，'
+    '回执approved_execution给出可执行条目；其他条目的等待条件保留。修改但未明确出图不算批准。')
 
 
 SCHEMA = {'type': 'function', 'function': {'name': SAVE,

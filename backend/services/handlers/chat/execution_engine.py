@@ -2391,7 +2391,10 @@ async def _execute_tools_impl(
                         if server_image_plan and not content_output_registration:
                             raise TaskError('ECOM_PLAN_SERVER_AUTHOR_REQUIRED')
                         save_value = content_objects.SaveContent.model_validate_json(call['arguments'])
-                        if media.approved and media.confirmation_only:
+                        from services.task_execution.saved_image_revision import approves_revision, bind_approval
+                        if (media.approved and media.confirmation_only
+                                and not approves_revision(candidate or content_followup_state(runtime), save_value,
+                                    content_tools.semantic_context(request, runtime))):
                             raise TaskError('CONTENT_CONFIRMATION_EXISTING_ITEM_REQUIRED')
                         conditions = save_value.confirmation or media
                         wait_all = conditions.wait_all
@@ -2456,6 +2459,9 @@ async def _execute_tools_impl(
                         )
                         result = {'ok':True,'object':next(row for row in content_objects.catalog(candidate, for_model=True)
                                                          if row['artifact_id']==artifact.id)}
+                        approval = bind_approval(runtime, request, related_state, save_value, artifact, candidate)
+                        if approval is not None:
+                            result['approved_execution'] = approval
                         if not value.continue_execution or value.show_content:
                             record = content_objects.ContentRecord.model_validate_json(artifact.inline_text)
                             saved_block = {'type': 'text', 'text': content_objects.render(document, record.display_gaps),
