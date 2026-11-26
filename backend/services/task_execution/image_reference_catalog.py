@@ -150,6 +150,11 @@ class ImageReferences:
                     '{"tool":"generate_image","wait_for":[1]}，不是序列化后的字符串；等待条目按实际要求填写。')
         if isinstance(function, dict) and function.get('name') in {'generate_image', 'resolve_request_target', 'read_conversation_text'}:
             function['description'] = function.get('description', '') + ' 图片选择使用当前目录image_ref，后台解析真实图片身份，不填写图片消息ID和位置。'
+        if isinstance(function, dict) and function.get('name') == 'read_conversation_text' and self.references:
+            example = {'show_image': {'image_ref': next(iter(self.references))}}
+            function['description'] += (' 已有图片展示参数示例（从目录选择用户指定图，不默认选示例）：'
+                + json.dumps(example, ensure_ascii=False)
+                + '。view_image同样填写对象，但只供模型分析，不能代替向用户展示。')
         if isinstance(function, dict) and function.get('name') == 'resolve_request_target' and self.references:
             example = {'intent': 'edit', 'request_context': {'focus': 'selected_target',
                 'target': {'kind': 'image', 'basis': 'explicit_reference', 'image_ref': next(iter(self.references))}}}

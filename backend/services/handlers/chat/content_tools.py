@@ -44,7 +44,7 @@ def requests_generated_image_edit(request, *, allow_named_output=False, runtime=
     return semantic_intent(request, runtime) == 'edit'
 
 
-def repeats_delivered_image(runtime, request, calls):
+def repeats_delivered_image(runtime, request, calls, blocks=None):
     """A completed display is not another operation, even after recovery."""
     from services.task_execution.content_delivery import input_revision
     from services.task_execution.image_reference_catalog import for_runtime
@@ -59,6 +59,11 @@ def repeats_delivered_image(runtime, request, calls):
         refs = for_runtime(runtime)
         args = refs.decode(args) if refs else args
     except (ValueError, TypeError):
+        return False
+    if blocks is not None and not any(
+            b.get('type') == 'image' and b.get('url')
+            and b.get('source_message_id') == record['source_message_id']
+            and b.get('source_content_index') == record['source_content_index'] for b in blocks):
         return False
     return args == {'show_image': {'message_id': record['source_message_id'],
                                   'content_index': record['source_content_index']}}
@@ -342,7 +347,7 @@ READ_MODE_GUIDANCE = (
 READ_SCHEMA = schema(READ, '在当前会话固定历史中读取资料。修订已保存提示词时用content_source读取指定版本的完整条目。'
                  '按原图重做用image_task_id读取所选成图的原始输入、实际提示词和规格。查询当前任务内已登记的图片受理或结果用image_task_status。'
                  '用message_id查看指定消息。定位历史图时设list_images=true，仅返回图片分组和定位。图片序号只在所属消息或成果组内有效，仍有多个候选时请用户选择。'
-                 '模型需要看图分析时用view_image。用户要看旧图时用show_image交付，两个参数都复制所选图片的reference。只读动作不会提交生成。'
+                 '模型需要看图分析时用view_image。用户要看旧图时用show_image交付，两个参数都复制所选图片的reference。view_image只供模型看图，不向用户发图；show_image成功并保存本轮图片内容块才算交付。结构化image_action=analyze时不回显；display_existing时后台可直接交付，收到delivered_existing后不要重复展示。只读动作不会提交生成。'
                  'text_exact/text_exacts读取逐字片段。'
                  '执行已登记稿件时把其content_source交给目标工具。' + READ_MODE_GUIDANCE,
            {'content_source': {'type': 'object', 'additionalProperties': False,
@@ -711,7 +716,7 @@ def read_image_view(handler, request, context, reference):
 
 def show_image(handler, request, context, reference):
     locator, image, url = _resolve_image_view(handler, request, context, reference)
-    return {'type': 'image', 'url': url, 'alt': '会话中的已有图片',
+    return {'type': 'image', 'url': url, 'alt': '会话中的已有图片', 'image_presentation': 'existing_image',
             'width': image.get('width'), 'height': image.get('height'),
             'source_message_id': locator['message_id'], 'source_content_index': locator['content_index']}
 

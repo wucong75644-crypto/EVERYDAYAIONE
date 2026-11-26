@@ -56,7 +56,8 @@ vi.mock('../message/LoadingPlaceholder', () => ({
   default: ({ text }: { text: string }) => <span>{text}</span>,
 }));
 
-vi.mock('../../../utils/settingsStorage', () => ({
+vi.mock('../../../utils/settingsStorage', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../../utils/settingsStorage')>(),
   getSavedSettings: () => ({
     image: { aspectRatio: '1:1' },
     video: { aspectRatio: 'landscape' },
@@ -662,4 +663,30 @@ it('retains original resume actions for an interrupted progress-only message', (
   })} onResume={vi.fn()} />);
   expect(container.querySelector('[data-message-id]')).toBeInTheDocument();
   expect(screen.getByTestId('message-actions')).toBeInTheDocument();
+});
+
+
+describe('已有图片交付的缩略图', () => {
+  it.each([true, false])('新旧展示消息都使用媒体缩略图：新标记=%s', (marked) => {
+    const { container } = render(<MessageItem message={makeMessage({
+      generation_params: { type: 'chat' },
+      content: [{ type: 'image', url: 'https://cdn/original.png', width: 1024, height: 1024,
+        source_message_id: 'historical-message', source_content_index: 0,
+        ...(marked ? { image_presentation: 'existing_image' as const } : {}),
+      }],
+    })} allImageAssets={[{ originalUrl: 'https://cdn/original.png' }]} currentImageIndex={0} />);
+    const image = container.querySelector('img');
+    expect(image).toBeTruthy();
+    expect(image?.parentElement?.style.getPropertyValue('--max-width')).toBe('180px');
+    expect(screen.getByRole('button', { name: '查看大图' })).toBeInTheDocument();
+    expect(screen.queryByTestId('message-media')).not.toBeInTheDocument();
+  });
+
+  it('真正的图表保持原来的500宽度', () => {
+    const { container } = render(<MessageItem message={makeMessage({
+      generation_params: { type: 'chat' },
+      content: [{ type: 'image', url: 'https://cdn/chart.png', width: 1024, height: 1024, alt: '销售图表' }],
+    })} />);
+    expect(container.querySelector('img')?.parentElement?.style.width).toBe('500px');
+  });
 });

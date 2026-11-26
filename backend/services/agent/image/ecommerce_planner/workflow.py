@@ -59,6 +59,8 @@ class ImageRequestContext(BaseModel):
         description='用户明确选中追加图片作为底图时，复制该追加项真实resource_ref。与canvas_image互斥；历史成图使用成果目录，不填写当前附件序号。')
     media: MediaDirective = Field(default_factory=MediaDirective)
     deliveries: list[Literal['generate_video', 'code_execute']] = Field(default_factory=list, max_length=2)
+    image_action: Literal['analyze', 'display_existing'] | None = Field(default=None,
+        description='intent=explain时：analyze表示看图分析并文字回答；display_existing表示把所选已有图片实际展示给用户，不重新生成。其他意图填null；不以模型已看图代表用户已收到。')
     reference_usage: Literal['input', 'analysis'] | None = Field(default=None,
         description='未来执行稿的原图来源用途，独立于本轮是否立即生图；只写提示词不等于图片仅用于分析。')
     materials: list[Material] | None = Field(default=None, max_length=16,
@@ -212,7 +214,7 @@ async def classify_workflow(text, previous=None, *, org_id=None, selected_skill=
     context = {**(context or {}), 'image_target_references': [
         ({'image_reference': key, **reference} if turn_catalog else {'image_reference': key})
         for key, reference in image_targets.items()]}
-    tool['function']['parameters']['properties']['request_context']['required'] = ['size','platform','media','deliveries','materials']
+    tool['function']['parameters']['properties']['request_context']['required'] = ['size','platform','media','deliveries','materials','image_action']
     if (context or {}).get('request_resolution') is not None:
         tool['function']['parameters']['properties']['request_context']['required'].extend(['target', 'focus'])
     tool['function']['parameters']['$defs']['MediaDirective']['required'] = ['tool','wait_for','wait_all','approved','confirmation_only']
@@ -254,6 +256,12 @@ async def classify_workflow(text, previous=None, *, org_id=None, selected_skill=
     prompt += ("deliveries只列用户本轮明确要求实际交付的视频generate_video或文件code_execute；"
         "讨论、引用、否定和待后续确认的动作不列入。其他发送/发布等本轮额外交付用continue_delivery=true。"
         "额外交付不改变图片intent；只写方案并导出文件时intent=write、deliveries含code_execute，不创建图片。")
+    prompt += ('image_action独立区分看图分析和已有图片交付：用户要求解释、评价、分析图片时intent=explain、image_action=analyze；'
+        '用户要求找回、再次发送或展示已有图时intent=explain、image_action=display_existing，并明确target。'
+        '例如“这张图有什么问题”是analyze；“最早那张灯塔图再发一下，不用重新做”是display_existing。'
+        '这不是关键词规则，按用户完整语义判断；否定、举例和后续待确认动作不构成展示要求。其他意图填null。'
+        '单图展示优先复制该图reference选择image目标；无法唯一定位用ambiguous，不自动选最近图片。'
+        '后台只在本轮目标校验通过后交付；只有本轮图片内容块及交付回执才代表完成，历史成功说明和模型看到图片均不代表本轮已交付。')
     prompt += ("reference_usage说明保存的执行稿是否应关联原图：根据商品图写后续可执行图片提示词时input，明确仅分析且不用于后续生图才analysis。"
         "这与本轮是否立即生图独立，纯文字交付也应保留已明确的未来原图来源；不涉及图片创作时null。"
         "materials记录新稿共同使用的图片角色和用途，用material_index选择当前、已送达追加或origin=history的历史图片；只写提示词也应记录主体和风格参考，不因不立即执行而省略。"
@@ -267,7 +275,7 @@ async def classify_workflow(text, previous=None, *, org_id=None, selected_skill=
         '编辑本轮上传/引用的图可用image与basis=current_input；历史结果用active_request或explicit_reference。image目标不要填写source_message_id或content_index。'
         '没有明确历史指向的后续确认应承接active_request_message_id；它没有执行稿时先准备该需求，不能跨过它执行更旧的完成稿。'
         '只有用户实际明确指向历史对象时basis=explicit_reference，不因历史稿唯一或已完成就使用explicit_reference。'
-        '多个目标均合理或引用无法定位时kind与basis均用ambiguous，不编造引用。只读查看用explain；明确重画用repeat；普通执行已有稿才execute_saved。'
+        '多个目标均合理或引用无法定位时kind与basis均用ambiguous，不编造引用。只读查看用explain并填写image_action区分分析与展示；明确重画用repeat；普通执行已有稿才execute_saved。'
         'request_context中的素材、画布和规格必须属于所选需求；历史图片不是本条附件，不能填canvas_image。'
         '没有request_resolution的旧调用可省略target。')
     if turn_catalog:
@@ -388,6 +396,8 @@ async def classify_workflow(text, previous=None, *, org_id=None, selected_skill=
                 # a pending call. The stored catalog owns that distinction.
                 raw_context = {**raw_context, 'media':{**raw_context['media'],'approved':[],
                     'confirmation_only':False,'artifact_id':None,'revision':None}}
+            if isinstance(raw_context, dict) and args['intent'] != 'explain':
+                raw_context = {**raw_context, 'image_action': None}
             frame = ImageRequestContext.model_validate(raw_context)
             if (context or {}).get('request_resolution') is not None and (frame.target is None or frame.focus is None):
                 return {'kind': 'unavailable'}
@@ -895,7 +905,9 @@ class EcommerceWorkflow:
             return {'role':'system','content':'[Server main-image workflow]\n'+json.dumps({
                 'intent':self.value.intent, 'request_context':context.model_dump(exclude_none=True),
                 'instruction':'这是模型解析的候选选择，引用校验不代表语义正确，不授予权限。对照用户原话和轮次来源核对；有矛盾先纠正目标，不能直接执行。空字段不取消用户原话中的要求；新稿件等待条件用save_task_text.confirmation表达。按真实成果目录选择条目和素材；保留用户明确要求的规格。'
-                    '等待条件和确认必须绑定原对象版本，不能重新保存旧稿来绕过。未提交、已受理和已完成以工具真实回执为准。'},ensure_ascii=False)}
+                    '等待条件和确认必须绑定原对象版本，不能重新保存旧稿来绕过。未提交、已受理和已完成以工具真实回执为准。'
+                    'image_action=analyze只分析，不自动回显；display_existing要求实际展示所选已有图片，后台按校验后的目标交付。'
+                    '目标或动作有误先用resolve_request_target纠正image_action和target；缺图或目标有歧义则澄清，不能只说已发送。'},ensure_ascii=False)}
         if self.value is None or self.value.kind != "main_images":
             if self.route and self.route["kind"] == "unavailable":
                 return {"role": "system", "content": "[Server main-image workflow]\n电商策划路由暂不可用，这是系统状态，不是用户缺少用途信息。普通生图和执行已有最终提示词可以按当前工具继续。明确要求电商策划时报告服务暂不可用，不伪造方案或要求用户重新选择用途。"}

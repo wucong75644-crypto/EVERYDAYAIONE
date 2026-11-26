@@ -28,6 +28,7 @@ class ImagePart(BaseModel):
     source_task_id: Optional[str] = None
     source_message_id: Optional[str] = None
     source_content_index: Optional[int] = None
+    image_presentation: Optional[Literal['existing_image']] = None
     has_transparency: Optional[bool] = None
     quality_checks: Optional[dict] = None
     width: Optional[int] = None

@@ -66,6 +66,7 @@ export interface ImagePart {
   source_task_id?: string;
   source_message_id?: string;
   source_content_index?: number;
+  image_presentation?: 'existing_image';
   has_transparency?: boolean;
   quality_checks?: { file_integrity?: boolean; alpha_min?: number; alpha_max?: number;
     product_fidelity?: { status: 'checking' | 'approved' | 'rejected' | 'uncertain';

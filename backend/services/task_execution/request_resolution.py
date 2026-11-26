@@ -84,7 +84,7 @@ def selection_schema(runtime=None):
     frame['required'] = ['target', 'focus']
     return {'type': 'function', 'function': {'name': SELECT,
         'description': '核对最近请求或读取来源后，明确选择/纠正本次动作与目标。只单独调用，不执行业务；'
-                       'request_context填写所选需求的规格、素材和target，不沿用无关旧方案。未准备执行稿、未派发且没有接回旧任务时可纠正。',
+                       'request_context填写所选需求的规格、素材和target，不沿用无关旧方案。intent=explain时用image_action=analyze表示分析，display_existing表示实际向用户展示已有图；改成其他意图时image_action填null。未准备执行稿、未派发且没有接回旧任务时可纠正。',
         'parameters': {'type': 'object', 'additionalProperties': False, 'required': ['intent', 'request_context'],
                        '$defs': definitions,
                        'properties': {'intent': {'type': 'string', 'enum': list(IMAGE_INTENTS)}, 'request_context': frame}}}}
@@ -115,6 +115,8 @@ async def select(runtime, request, prepared, args):
                     or old_source and new_source and old_source != new_source):
                 merged.pop('media', None)
         raw_frame = {**merged, **raw_frame}
+    if args['intent'] != 'explain':
+        raw_frame = {**raw_frame, 'image_action': None}
     frame = ImageRequestContext.model_validate(raw_frame)
     if frame.target is None or frame.focus is None or workflow is None or workflow.value is None or workflow.value.kind != 'ordinary_image':
         raise TaskError('REQUEST_TARGET_CONTROL_UNAVAILABLE')
@@ -472,17 +474,24 @@ def check_display(runtime, request, reference):
             or value['input_revision'] != input_revision(runtime, request)
             or semantic_intent(request, runtime) != 'explain'):
         raise TaskError('REQUEST_TARGET_EXISTING_RESULT_NOT_REQUESTED')
+    from services.handlers.chat.existing_image_delivery import action
+    if action(runtime, request) == 'analyze':
+        raise TaskError('REQUEST_TARGET_EXISTING_RESULT_NOT_REQUESTED')
     target = value['target']
     if target['kind'] == 'image' and (reference.get('message_id'), reference.get('content_index')) != (
             target['source_message_id'], target['content_index']):
         raise TaskError('REQUEST_TARGET_IMAGE_MISMATCH')
     if target['kind'] == 'request':
         row = next((r for r in context(runtime)['requests'] if r['message_id'] == target['source_message_id']), None)
+        if action(runtime, request) == 'display_existing' and len((row or {}).get('images', ())) != 1:
+            raise TaskError('REQUEST_TARGET_IMAGE_SELECTION_REQUIRED')
         if not any(image['reference'] == reference for image in (row or {}).get('images', ())):
             raise TaskError('REQUEST_TARGET_IMAGE_MISMATCH')
 
     if target['kind'] == 'content':
         selected = next((g for g in groups(runtime) if g['artifact_id'] == target['artifact_id']), None)
+        if action(runtime, request) == 'display_existing' and (selected or {}).get('revision') != target['revision']:
+            raise TaskError('REQUEST_TARGET_CONTENT_CHANGED')
         task_ids = {i.get('image_task_id') for i in (selected or {}).get('items', ()) if i['item_index'] in target['item_indices']}
         if not any(i.get('task_id') in task_ids and i.get('task_id') is not None
                    and (i['source_message_id'], i['content_index']) == (reference.get('message_id'), reference.get('content_index'))

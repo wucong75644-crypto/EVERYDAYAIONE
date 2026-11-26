@@ -1120,6 +1120,26 @@ async def _run_loop(
             prepared.messages.append(direct_context(runtime))
         direct_snapshot=tuple(str(i.event_id) for i in runtime.task_user_changes.items if i.delivered) if (
             direct_enabled(runtime) and runtime.task_user_changes is not None) else ()
+        from . import existing_image_delivery
+        async def display_calls(calls):
+            prepared.last_provider_output = None
+            prepared.last_reasoning_content = ''
+            await _execute_tools(handler=handler, request=request, prepared=prepared,
+                turn=turn, turn_text='', calls=calls, previewed_call_ids=set(),
+                next_model_round=model_round, cancellation_event=cancellation_event,
+                sink=sink, blocks=blocks, runtime=runtime, totals=totals,
+                repeated_tool_call_guard=repeated_tool_call_guard)
+        async def display_failure(text):
+            block = {'type': 'text', 'text': text}
+            blocks.append(block)
+            totals.text += text
+            await runtime.safe_point(SafePoint.AFTER_TOOL, replay_payload=_build_replay_context(
+                prepared.messages, blocks, turn, next_model_round=model_round,
+                repeated_tool_call_guard=repeated_tool_call_guard))
+            await sink.on_block(block)
+        if await existing_image_delivery.deliver(runtime, request, prepared, blocks,
+                execute=display_calls, finish=display_failure):
+            return None
         before_usage = dict(totals.usage) if correcting else {}
         try:
             restored = []
@@ -1359,7 +1379,7 @@ async def _run_loop(
                 blocks.append({"type": "text", "text": fallback_text})
                 await sink.on_block(blocks[-1])
             return None
-        if content_tools.repeats_delivered_image(runtime, request, calls):
+        if content_tools.repeats_delivered_image(runtime, request, calls, blocks):
             return None
         guard_calls=calls
         if direct_enabled(runtime):
@@ -1538,7 +1558,10 @@ async def _read_turn_impl(
     video_receipts = set(getattr(prepared, 'video_acceptance_by_task', {}).values()) if (
         not task_review and not native_continuation) else set()
     video_pending = delivery_status.get('generate_video') == 'accepted' or bool(video_receipts)
-    defer_narrative = defer_narrative or image_reply or silent_delivery or bool(missing_delivery) or video_pending
+    from . import existing_image_delivery
+    display_pending = (existing_image_delivery.action(runtime, request) == 'display_existing'
+                       and not existing_image_delivery.complete(runtime, request, blocks))
+    defer_narrative = defer_narrative or image_reply or silent_delivery or bool(missing_delivery) or video_pending or display_pending
     from services.handlers.interrupt_anchor import project_interrupt_history
 
     skills = runtime.skill_runtime if runtime and not task_review else None
@@ -1834,6 +1857,8 @@ async def _read_turn_impl(
                 turn_text = ''
             else:
                 turn_text = '\n\n'.join(filter(None, (turn_text, content_tools.delivery_notice(missing_delivery, attempted))))
+    if display_pending:
+        turn_text = '' if ordered_calls else existing_image_delivery.MISSING
     if silent_delivery:
         if turn_text.strip() == _IMAGE_DELIVERY_COMPLETE:
             turn_text = ''
@@ -1845,7 +1870,7 @@ async def _read_turn_impl(
         confirmed_item = media.approved[0] if media and media.confirmation_only and len(media.approved) == 1 else None
         turn_text = content_tools.verified_video_status_text(
             turn_text, fresh=video_receipts == {'new'}, confirmed_item=confirmed_item)
-    if (image_reply or silent_delivery or missing_delivery or video_pending) and not content_output and turn_text:
+    if (image_reply or silent_delivery or missing_delivery or video_pending or display_pending) and not content_output and turn_text:
         totals.text += turn_text
         await sink.on_text(turn_text)
     return turn_text, turn_thinking, ordered_calls, previewed_call_ids
@@ -2101,6 +2126,7 @@ async def _execute_tools_impl(
             read_parameters = visible.get(content_tools.READ, {}).get('parameters', content_tools.READ_PARAMETERS)
             viewed_images = []
             delivered_images = []
+            from . import existing_image_delivery
             for call in calls:
                 result = {'ok': False, 'code': 'CHAT_CONTENT_CONTROL_BARRIER'}
                 if inline_barrier:
@@ -2125,6 +2151,11 @@ async def _execute_tools_impl(
                                          for op in runtime.task_execution_state.operations) if runtime.task_execution_state else False
                             rendered = (image_status_reply(runtime, request) if args['purpose'] == 'explanation'
                                         else args['text'] + '\n\n' + image_status_reply(runtime, request)) if effect else args['text'] + '\n\n本轮未提交新的图片任务。'
+                            from . import existing_image_delivery
+                            if (args['purpose'] == 'explanation'
+                                    and existing_image_delivery.action(runtime, request) == 'display_existing'
+                                    and not existing_image_delivery.complete(runtime, request, blocks)):
+                                rendered = existing_image_delivery.MISSING
                             runtime.checkpoint_base['_request_response_v1'] = {
                                 'input_revision': input_revision(runtime, request),
                                 'purpose': args['purpose'], 'text': args['text'], 'status': 'native_effect' if effect else 'not_submitted',
@@ -2193,7 +2224,15 @@ async def _execute_tools_impl(
                                       'delivery_complete': True,
                                       'message': '已有图片已经交付给用户，没有创建新的图片任务。不要重复展示；没有其他要求时结束本轮。'}
                             from services.task_execution.content_delivery import input_revision
+                            previous = runtime.checkpoint_base.get('_displayed_image_delivery_v1') or {}
+                            same_input = (previous.get('input_revision') == input_revision(runtime, request)
+                                          and previous.get('owner_task_id') == str(runtime.task_id))
+                            images = list(previous.get('images', ())) if same_input else []
+                            reference = {'message_id': image['source_message_id'], 'content_index': image['source_content_index']}
+                            if reference not in images:
+                                images.append(reference)
                             runtime.checkpoint_base['_displayed_image_delivery_v1'] = {
+                                'images': images,
                                 'input_revision': input_revision(runtime, request),
                                 'owner_task_id': str(runtime.task_id),
                                 'source_message_id': image['source_message_id'],
@@ -2231,6 +2270,16 @@ async def _execute_tools_impl(
                                     message='本次未执行。保留所选稿件身份及用户要求，将request_context.focus改为selected_target后单独重试目标纠正。')
                         if result['code'] == 'CHAT_IMAGE_VISUAL_BUDGET_EXHAUSTED':
                             result['message'] = '本轮视觉预算已用完。现有定位仍可用，但不要声称看到了未加载的图。'
+                        elif result['code'] == 'REQUEST_TARGET_IMAGE_SELECTION_REQUIRED':
+                            result['message'] = ('本轮尚未展示图片。所选请求包含多张图片；先单独用resolve_request_target选择具体image目标，'
+                                                 '保留image_action=display_existing，再展示。不默认选择第一张或最近一张。')
+                        elif result['code'] == 'REQUEST_TARGET_CONTENT_CHANGED':
+                            result['message'] = ('所选保存稿版本已变化，本轮尚未展示。先读取并核对用户指定版本，'
+                                                 '用resolve_request_target纠正目标；不自动用新版本代替旧版本。')
+                        elif (result['code'] == 'REQUEST_TARGET_EXISTING_RESULT_NOT_REQUESTED'
+                              and existing_image_delivery.action(runtime, request) == 'analyze'):
+                            result['message'] = ('本轮仅分析图片，不向用户回显。模型需要看图时用view_image；'
+                                                 '用户实际要求展示时先用resolve_request_target纠正image_action与目标。')
                         elif call['name'] == content_tools.READ:
                             result['message'] = '无法核对所选来源。请使用当前目录中的明确引用，仍有歧义时请用户选择。'
                 output = json.dumps(result, ensure_ascii=False)

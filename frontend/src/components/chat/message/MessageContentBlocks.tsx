@@ -11,6 +11,8 @@ import ChartBlock from './ChartBlock';
 import EcomPlanBlock from './EcomPlanBlock';
 import FormBlock from './FormBlock';
 import InlineChartImage from './InlineChartImage';
+import { AiGeneratedImage } from './MessageImageBlocks';
+import { getImagePlaceholderSize } from '../../../utils/settingsStorage';
 import LoadingPlaceholder from './LoadingPlaceholder';
 import MarkdownRenderer from './MarkdownRenderer';
 import { TableBlock } from './TableBlock';
@@ -156,6 +158,22 @@ export default function MessageContentBlocks({
           const originalUrl = resolveImageOriginalUrl(img) || img.url || '';
           if (!originalUrl) return null;
           const imgIndex = imageAssets.findIndex((asset) => asset.originalUrl === originalUrl);
+          // Source identity also recognizes already-persisted show_image blocks.
+          const existingImage = img.image_presentation === 'existing_image'
+            || (typeof img.source_message_id === 'string' && Number.isInteger(img.source_content_index));
+          if (existingImage) {
+            const base = getImagePlaceholderSize('1:1').width;
+            const ratio = img.width && img.height && img.width > 0 && img.height > 0 ? img.width / img.height : 1;
+            const size = ratio >= 1 ? { width: base * ratio, height: base } : { width: base, height: base / ratio };
+            return <AiGeneratedImage
+              key={`${originalUrl}:${idx}`}
+              imageAsset={imageAssets[imgIndex] || { originalUrl, sourcePart: img, sourceContentIndex: idx }}
+              messageId={message.id}
+              placeholderSize={size}
+              isGenerating={false}
+              onImageClick={() => onImageClick(imgIndex >= 0 ? imgIndex : 0)}
+            />;
+          }
           return (
             <InlineChartImage
               key={originalUrl}

@@ -92,7 +92,11 @@ def project_completed_assistant(content: Any) -> str:
             elif not block.get("url") and not block.get("workspace_path"):
                 label = f"{noun}尚无可用结果"
             else:
-                label = ("已生成图片" if block.get("task_id") else "📊 [已生成图表]") if kind == "image" else f"已提供{noun}"
+                existing_image = (block.get('image_presentation') == 'existing_image' or (
+                    isinstance(block.get('source_message_id'), str) and type(block.get('source_content_index')) is int))
+                label = (('已展示已有图片' if existing_image else
+                          '已生成图片' if block.get('task_id') else '📊 [已生成图表]')
+                         if kind == 'image' else f'已提供{noun}')
             add(kind, label, facts, block)
         elif kind == "tool_step":
             label = {"completed": "调用已返回", "error": "调用失败", "cancelled": "已取消"}.get(block.get("status"))
