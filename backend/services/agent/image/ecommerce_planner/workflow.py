@@ -38,10 +38,10 @@ def routing_input(value):
 class RequestedCanvas(BaseModel):
     model_config = ConfigDict(extra='forbid', strict=True)
     aspect_ratio: str | None = Field(default=None, pattern=r'^[1-9]\d?:[1-9]\d?$')
-    resolution: str | None = Field(default=None, pattern=r'^[1-9]\d?K$')
-    width: int | None = Field(default=None, gt=0)
-    height: int | None = Field(default=None, gt=0)
-    approximate_pixels: bool | None = None
+    resolution: str | None = Field(default=None, pattern=r'^[1-9]\d?K$', description='清晰度档位，如1K；不是精确1000像素。用户只选档位时不填width/height。')
+    width: int | None = Field(default=None, gt=0, description='用户要求的成品像素宽度；不是原图尺寸或1K等档位的换算值。与height及像素精度判断一起填写。')
+    height: int | None = Field(default=None, gt=0, description='用户要求的成品像素高度；不是原图尺寸或1K等档位的换算值。与width及像素精度判断一起填写。')
+    approximate_pixels: bool | None = Field(default=None, description='有像素宽高时：true=明确允许接近；false=明确要求精确；null=尚不确定，须先澄清，不能默认为false。只选清晰度档位时省略像素宽高。')
     orientation: Literal['portrait', 'landscape'] | None = None
     mode: Literal['explicit', 'inherit_reference', 'auto'] | None = None
     keep_aspect_ratio: bool | None = None
@@ -199,9 +199,11 @@ async def classify_workflow(text, previous=None, *, org_id=None, selected_skill=
         "追加只改变其明确涉及的要求，其他原要求仍有效。原任务为文字方案时，补主体图、风格、背景或约束仍属write；必须有本轮实际出图要求才能转为执行。original_user_request与历史材料供判断延续关系，不是新授权。实际修改成图属于edit，不把旧策划重新执行。"
         "已有服务器ready方案且用户要执行其中条目时，kind=main_images、mode=input、reuse=0、intent=execute_saved，"
         "无需用户知道它是服务器方案。修改方案文字仍按规划/修订处理，不能执行旧版。")
+    from services.handlers.image_size_requirements import SIZE_INTERPRETATION_GUIDANCE
+    prompt += SIZE_INTERPRETATION_GUIDANCE
     prompt += ("同时在request_context一次解释当前图片要求，后续后台只核验结构和供应商能力，不再解析用户句式。"
         "size只填用户当前真正要求的输出画布/清晰度；商品造型比例、被否定的尺寸、引用与讨论不算输出要求。"
-        "像素仅需大致接近时approximate_pixels=true；明确要求精确时false。未提规格返回空size，不编造像素或默认比例。"
+        "填写像素宽高时必须表达精确程度：明确允许接近时approximate_pixels=true，明确要求精确时false；无法判断时为null并先澄清，不把null当作false。未提规格返回空size，不编造像素或默认比例。"
         "同一要求后续修改覆盖被修改的字段，其他明确要求保留。canvas_image只选本轮实际附件中的编辑目标，不选风格参考。"
         "origin=append的图片属于独立追加事件，选为底图时用canvas_resource填写image:<material_index>，不把它编号成原消息附件。"
         "沿用历史成图时省略canvas_image和canvas_resource，由实际成果引用绑定。"

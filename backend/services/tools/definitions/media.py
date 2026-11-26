@@ -51,10 +51,11 @@ def _schema_generate_image_async():
                         "properties":{
                             "mode":{"type":"string","enum":["explicit","inherit_reference","auto"]},
                             "reference_index":{"type":"integer","minimum":0,"description":"沿用画布的参考图在references中的索引；多图比例不同需用户选定"},
-                            "width":{"type":"integer","minimum":1}, "height":{"type":"integer","minimum":1},
+                            "width":{"type":"integer","minimum":1,"description":"仅精确成品像素宽度；选择1K/2K/4K档位时不要换算填写"},
+                            "height":{"type":"integer","minimum":1,"description":"仅精确成品像素高度；必须与width同时填写，不是素材原图尺寸"},
                         }, "description":"独立目标尺寸要求；精确像素必须同时提供宽高，接口不支持时在受理前解释并等待用户选择"},
                     "aspect_ratio":{"type":"string","description":"目标画布比例，如1:1；产品形状不能决定它，非精确像素"},
-                    "resolution":{"type":"string","enum":["1K","2K","4K"],"description":"仅填写默认模型实际支持的分辨率"},
+                    "resolution":{"type":"string","enum":["1K","2K","4K"],"description":"清晰度档位，仅填写默认模型实际支持的1K/2K/4K；不承诺精确1000/2000/4000像素，不同时换算成width/height"},
                     "output_format":{"type":"string","enum":["png","jpeg","jpg","webp"],"description":"小写输出格式，必须为默认模型实际支持"},
                     **({"background":{"type":"string","enum":["opaque","transparent"],"description":"默认图片模型支持；透明输出需保存后验证真实alpha"}} if limits.chat_image_transparent_enabled else {}),
                     "plan_item_id":{"type":"string","minLength":1,"maxLength":200},

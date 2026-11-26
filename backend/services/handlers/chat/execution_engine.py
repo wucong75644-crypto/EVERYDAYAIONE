@@ -2717,6 +2717,8 @@ async def _execute_tools_impl(
         for call in ready_calls:
             if call['id'] in image_binding_errors:
                 code, message = image_binding_errors[call['id']]
+                from services.handlers.image_size_requirements import size_user_message
+                message = size_user_message(code) or message
                 rejected.append((call, AgentResult(message, status='error', error_message=code), True, message))
         ready_calls = [call for call in ready_calls if call['id'] not in image_binding_errors]
     if direct_reused:
@@ -2834,8 +2836,10 @@ async def _execute_tools_impl(
                             'IMAGE_SIZE', 'IMAGE_ASPECT', 'IMAGE_EXACT', 'IMAGE_CANVAS', 'IMAGE_DIMENSIONS',
                             'IMAGE_RESOLUTION')) and call_id not in repair_rejections
            for call_id, (code, _message) in direct_errors.items()):
-        reasons = list(dict.fromkeys(message for _code, message in direct_errors.values()))
-        handler._tool_result_stop_reason = '本轮已停止提交。' + '\n'.join(reasons)
+        from services.handlers.image_size_requirements import size_user_message
+        reasons = list(dict.fromkeys(size_user_message(code) or message for code, message in direct_errors.values()))
+        prefix = '' if all(size_user_message(code) for code, _ in direct_errors.values()) else '本轮已停止提交。'
+        handler._tool_result_stop_reason = prefix + '\n'.join(reasons)
         if direct_enabled(runtime):
             state = content_tools.checkpoint_state(runtime)
             runtime.checkpoint_base[content_tools.STATE] = {**state, 'stop_message': handler._tool_result_stop_reason}

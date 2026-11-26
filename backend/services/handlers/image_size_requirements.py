@@ -8,6 +8,13 @@ from services.handlers.image_dimensions import ratio_for
 IMAGE_SIZE_OPTIONS = ('aspect_ratio', 'resolution', 'size_requirement')
 IMAGE_DRAFT_OPTIONS = (*IMAGE_SIZE_OPTIONS, 'output_format')
 
+SIZE_INTERPRETATION_GUIDANCE = (
+    "区分清晰度档位与成品精确像素：1K/2K/4K是清晰度档位，不承诺成品正好1000/2000/4000像素。"
+    "结合完整上下文理解口语；例如未提出精确交付约束的‘正方形，一千像素就好’，用aspect_ratio=1:1、resolution=1K，不编造width/height。"
+    "‘成品要1000×1000，不能缩放’属于精确像素；给出宽高但允许接近属于近似像素。"
+    "不能确定是清晰度档位还是精确宽高时，先询问用户，不把不确定解释成精确要求。"
+)
+
 SIZE_GUIDANCE = (
     "图片输出尺寸以平台图片工具规格为准。用户未指定的新创作默认auto、1K，上传参考图不等于要求沿用其比例；"
     "修改图片时继承实际编辑目标的画布，把真实宽高匹配到最接近的支持比例。"
@@ -18,7 +25,25 @@ SIZE_GUIDANCE = (
     "用户给出的比例填aspect_ratio（如1:1），分辨率档填resolution（如1K）。产品比例只描述主体造型。"
     "原图宽高仅是素材事实，不能写成输出像素。仅用户确实要求精确像素时用size_requirement.width/height，"
     "发现不支持或冲突时在提交前说明。用画面正文描述构图，尺寸规格仅在已确定后使用单独参数。"
-)
+) + SIZE_INTERPRETATION_GUIDANCE
+
+
+def size_user_message(code):
+    return {
+        'IMAGE_SIZE_PRECISION_UNRESOLVED': (
+            '你说的像素是指大致清晰度，还是成品必须正好达到指定的宽高？'
+            '如果只是清晰度，可以选择1K、2K或4K。确认后我再生成图片。'),
+        'IMAGE_EXACT_SIZE_UNSUPPORTED': (
+            '目前不能保证按指定的精确像素尺寸出图，但可以选择1K、2K或4K清晰度。'
+            '你愿意改用哪个档位？这次还没有提交图片任务。'),
+    }.get(code)
+
+
+def check_pixel_precision(intent):
+    # Legacy native width/height requests have an exact-pixel contract. A
+    # semantic frame explicitly retains None when precision was not resolved.
+    if ({'width', 'height'} <= intent.keys() and intent.get('approximate_pixels', False) is None):
+        raise ImageSizeError('IMAGE_SIZE_PRECISION_UNRESOLVED', size_user_message('IMAGE_SIZE_PRECISION_UNRESOLVED'))
 
 
 def image_draft_options_schema(native_properties=None):
@@ -119,6 +144,7 @@ def resolve_size_requirement(args: dict, references: list[dict], *, intent=None,
         width, height = intent.get("width", request.get("width")), intent.get("height", request.get("height"))
         if type(width) is not int or type(height) is not int or width < 1 or height < 1:
             raise ImageSizeError("IMAGE_SIZE_INVALID", "精确尺寸必须同时提供正整数宽高。")
+        check_pixel_precision(intent)
         ratio = intent.get("aspect_ratio") if "width" in intent else args.get("aspect_ratio")
         if ratio and ratio != ratio_for(width, height):
             raise ImageSizeError("IMAGE_SIZE_CONFLICT", "精确像素与比例冲突，请先明确目标规格。")
