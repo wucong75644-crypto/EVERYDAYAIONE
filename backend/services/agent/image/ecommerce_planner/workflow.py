@@ -290,6 +290,8 @@ async def classify_workflow(text, previous=None, *, org_id=None, selected_skill=
             '图片目录的target_fields可直接复制，再依据用户实际指向填写basis；target_fields不是后台替用户选择的目标。'
             '明确执行/重做历史保存稿时focus=selected_target；新图片要求即使引用旧图也可以是current_request。'
             '执行历史稿或按原稿重做时，用户未要求改规格则size={}，保留稿件原规格，不根据素材重新推导inherit_reference。'
+            '每条实际规格见saved_groups.items[].options，不以整组标题推断。'
+            '用户要求旧方案改规格后出图仍选该content并保留size要求，后续须读取、修订保存再执行新版；不是直接执行旧稿。'
             'new_uploads、quoted_images、selected_images分别是当轮上传、客户端引用、模型解析记录；'
             '后者不是用户明确指定，不把本次上传自动当成编辑授权。')
     if image_references is not None:

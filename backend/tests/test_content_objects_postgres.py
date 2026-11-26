@@ -19,13 +19,13 @@ from tests.test_task_execution_followup_reuse_postgres import (followup_db,new_t
 def content_db(dispatch_db):
     root=__import__('pathlib').Path(__file__).parents[1]
     with psycopg.connect(dispatch_db) as c:
-        for migration in ('347_agent_task_image_reconciliation','376_agent_task_image_method_handoff','377_agent_task_content_objects','378_agent_content_followup_groups','381_agent_media_confirmation_slots','382_agent_semantic_media_confirmations','384_agent_request_resolution'):
+        for migration in ('347_agent_task_image_reconciliation','376_agent_task_image_method_handoff','377_agent_task_content_objects','378_agent_content_followup_groups','381_agent_media_confirmation_slots','382_agent_semantic_media_confirmations','384_agent_request_resolution','385_agent_saved_content_item_options'):
             c.execute((root/f'migrations/{migration}.sql').read_text())
     yield dispatch_db
     with psycopg.connect(dispatch_db) as c:
         c.execute("DELETE FROM conversation_turn_checkpoints WHERE state ? '_task_execution'")
         c.execute('DELETE FROM agent_task_events');c.execute('DELETE FROM agent_task_states');c.execute('SET CONSTRAINTS ALL IMMEDIATE')
-        for migration in ('384_agent_request_resolution','382_agent_semantic_media_confirmations','381_agent_media_confirmation_slots','378_agent_content_followup_groups','377_agent_task_content_objects','376_agent_task_image_method_handoff','347_agent_task_image_reconciliation'):
+        for migration in ('385_agent_saved_content_item_options','384_agent_request_resolution','382_agent_semantic_media_confirmations','381_agent_media_confirmation_slots','378_agent_content_followup_groups','377_agent_task_content_objects','376_agent_task_image_method_handoff','347_agent_task_image_reconciliation'):
             c.execute((root/f'migrations/rollback/{migration}_rollback.sql').read_text())
 
 @pytest.mark.asyncio
@@ -113,6 +113,36 @@ async def test_registered_object_survives_real_new_turn_and_patch_without_new_re
         forged=copy.deepcopy(raw);forged['artifacts'][0]['validations']=['artifact.exists']
         assert not c.execute('SELECT agent_task_direct_records_valid(%s)',(Jsonb(forged),)).fetchone()[0]
     h._execute_tool_calls.assert_not_awaited();h2._execute_tool_calls.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_older_catalog_exposes_each_actual_item_specification(content_db):
+    async def publish(turn, draft):
+        r, p, h, q = case()
+        b = r.task_bootstrap
+        r.task_bootstrap = replace(b, task_id=UUID(turn['task']), conversation_id=UUID(turn['conv']),
+            actor_user_id=UUID(turn['user']), input_message_id=UUID(turn['message']),
+            execution_identity=b.execution_identity.model_copy(update={'workspace_owner_id': turn['user']}))
+        r.task_id, r.turn_id, r.conversation_id = turn['task'], turn['turn'], turn['conv']
+        p.content_controls_available = True
+        await execute(r, p, h, q, [call(co.SAVE, {'document': draft}, 'catalog-draft')])
+        with connect(turn) as connection:
+            assert save(connection, turn, r.checkpoint_base, expected=0)['outcome'] == 'saved'
+        return co.catalog(r.task_execution_state)[0]
+
+    first = seed(content_db)
+    draft = document()
+    draft['items'][2]['options'] = {'aspect_ratio': 'auto', 'resolution': '2K', 'output_format': 'png'}
+    old = await publish(first, draft)
+    _, second, _, _, _ = new_turn(content_db, old=first, text='另外写一份新方案')
+    await publish(second, document())
+    _, third, _, _, _ = new_turn(content_db, old=second, text='把最早那份第三个方案改成正方形再出图')
+    with connect(third) as connection:
+        history = connection.execute('SELECT read_agent_task_followup(%s,%s)',
+            (third['task'], third['token'])).fetchone()[0]
+    group = next(g for g in history['other_groups'] if g['artifact_id'] == old['artifact_id'])
+    assert [item['options'] for item in group['items']] == [item['options'] for item in draft['items']]
+    assert all(item['has_bound_inputs'] for item in group['items'])
 
 
 @pytest.mark.asyncio

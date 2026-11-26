@@ -2335,6 +2335,32 @@ async def _execute_tools_impl(
                     direct_errors[call['id']] = gate
                 elif media is not None and call['name'] in item_confirmation.MEDIA:
                     item_confirmation.record_decision(runtime, request, confirmation_state, media)
+        if scoped_content and not recovery_only and not content_output_registration and not direct_errors and not repair_rejections:
+            from services.task_execution import saved_image_revision
+            revision_errors = saved_image_revision.check(runtime, request, calls,
+                runtime.task_execution_state or content_followup_state(runtime))
+            if revision_errors:
+                prepared.messages.append(assistant)
+                for call in calls:
+                    result = revision_errors.get(call['id'], {'ok': False, 'accepted': False,
+                        'code': 'CONTENT_IMAGE_REVISION_BATCH_BLOCKED',
+                        'message': '本批包含尚未修订的旧稿，未派发任何业务操作。请先单独修订保存。'})
+                    if call['name'] == content_objects.SAVE:
+                        from services.task_execution.content_delivery import finish_response
+                        finish_response(runtime, None, result, request=request)
+                    output = json.dumps(result, ensure_ascii=False)
+                    prepared.messages.append({'role': 'tool', 'tool_call_id': call['id'], 'content': output})
+                    for block in blocks:
+                        if block.get('tool_call_id') == call['id']:
+                            block.update(status='error', output=output)
+                    if result['code'] == 'CONTENT_IMAGE_REVISION_STOPPED':
+                        handler._tool_result_stop_reason = result['message']
+                await runtime.safe_point(SafePoint.AFTER_TOOL, replay_payload=_build_replay_context(
+                    prepared.messages, blocks, turn, next_model_round=next_model_round))
+                for block in blocks:
+                    if block.get('tool_call_id') in previewed_call_ids:
+                        await sink.on_block_update(block)
+                return None
         selected_content = (
             not recovery_only and getattr(prepared, 'content_controls_available', False)
             and scoped_content and not direct_errors and not repair_rejections

@@ -326,7 +326,10 @@ IMAGE_REVISION_GUIDANCE = (
     'updates[].item.options会整体替换旧options，须复制完整原options再只改用户指定字段，保留未改的分辨率和输出格式；'
     '未要求换素材就省略materials，由后台保留。用户已要求修订并出图时continue_execution=true，'
     '无需让用户再说一次先改方案；已有等待确认条件仍有效，不将本说明作为批准。'
-    '用户只要求改方案或先看文字时不提交图片。')
+    '用户只要求改方案或先看文字时不提交图片。'
+    '目录items[].options是各条实际保存规格，不以整组标题推断其他条目的规格。'
+    '收到CONTENT_IMAGE_REVISION_REQUIRED表示尚未派发，可在同一轮按recovery读取并修订保存；'
+    '必须用保存成功回执中的新artifact_id执行，不能再次提交旧content_source。')
 
 
 SCHEMA = {'type': 'function', 'function': {'name': SAVE,
