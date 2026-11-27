@@ -458,14 +458,16 @@ def model_tools(tools, *, selectable_source_images=False, saved_text_available=F
                                            'continue_execution=true；修订用base和updates。' + revision_usage(reference))
             elif first_delivery:
                 # Preserve authoring Skill presentation requirements in the prefix.
-                from services.task_execution.content_objects import SCHEMA, MIXED_TEXT_GUIDANCE
+                from services.task_execution.content_objects import SCHEMA, MIXED_TEXT_GUIDANCE, creation_examples
+                from services.task_execution.methods import REFERENCE_PROMPTS_PRESENTATION
+                parameters['examples'] = creation_examples(function['description'].startswith(REFERENCE_PROMPTS_PRESENTATION))
                 description = function['description'].replace(SCHEMA['function']['description'], '', 1)
                 function['description'] = description + MIXED_TEXT_GUIDANCE + (
                     '普通新写方案、提示词或脚本可直接用编号标题及完整正文回复，由后台登记。'
                     '用户设置后续确认条件时，必须通过本工具一次交付document和confirmation（tool及wait_for或wait_all），'
                     '方案说明可放document.display_prefix，整组正文放items，不把等待条件当成批准。'
                     '结构化保存优先一次document，每条body保留完整原文和限制；分次写稿时前几次delivery_complete=false，最后一次才为true，'
-                    '只交付文字时页面直接展示正文，后台保留当前原图待选。还要求执行时设continue_execution=true，'
+                    '只交付文字时页面直接展示正文，已明确选定的原图与逐项规格由后台校验并保存；未选的历史图仅作候选。还要求执行时设continue_execution=true，'
                     '有上传图片则在每条的materials中绑定所用图片，保存后再调用目标工具。')
             if current_images and not reuse_source:
                 candidates = material_candidates(current_images)

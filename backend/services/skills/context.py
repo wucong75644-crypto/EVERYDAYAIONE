@@ -39,6 +39,14 @@ def instruction_message(active, candidate, *, manual: bool, context_version: int
 
         profile = profile_for(candidate, active)
         if profile and profile[0] == REFERENCE_PROMPTS_PROFILE:
+            content += ('\n\n[当前平台文字交付规则] 本方法正文中“不调用工具”指不直接执行生图、联网或外部业务，'
+                        '不禁止使用平台save_task_text保存和展示文字方案。用户要求先看方案时不出图，'
+                        '通过当前工具定义的document交付全部方案及confirmation等待条件。'
+                        'document.display_prefix保留参考图判断；每条display_prefix保留方案内容、视觉设定、参考图使用方式，'
+                        'body包含完整生图提示词和负面提示词。用户明确的方案数量及各项规格优先于方法默认六套和统一规格。'
+                        'options逐项记录已确定的比例与清晰度；materials绑定实际执行会用到的原图，usage=input，'
+                        '仅供分析才用analysis。旧稿先读取再用base、updates修订，历史图按真实来源选择。'
+                        '资料齐全时交付方案，不用respond_without_execution的解释代替正文。')
             content += ('\n\n[当前平台执行尺寸规则] 以下只覆盖本方法正文中关于输出画布和像素的要求。'
                         + SIZE_GUIDANCE)
     return {'role': 'system', 'content': content}

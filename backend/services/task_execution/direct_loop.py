@@ -258,7 +258,10 @@ def schemas(runtime,controller=None):
     result=[PLAN_SCHEMA, save_schema(runtime)]
     from .request_resolution import context, RESPONSE_SCHEMA, selection_schema
     if context(runtime) is not None:
-        result.append(copy.deepcopy(RESPONSE_SCHEMA))
+        response = copy.deepcopy(RESPONSE_SCHEMA)
+        from .text_delivery import GUIDANCE
+        response['function']['description'] += GUIDANCE
+        result.append(response)
         result.append(selection_schema(runtime))
     if runtime.task_execution_state is None and followup_source(runtime):result.append(RESUME_SCHEMA)
     if controller is not None:

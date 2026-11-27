@@ -398,6 +398,8 @@ def test_reference_prompt_size_guidance_only_applies_to_the_reviewed_skill():
                                 catalog_metadata=SimpleNamespace(task_stage=None, name='参考图提示词'))
     context = instruction_message(active, candidate, manual=True, context_version=2)
     assert active.rendered in context['content'] and SIZE_GUIDANCE in context['content']
+    assert '[当前平台文字交付规则]' in context['content']
+    assert 'save_task_text' in context['content'] and 'usage=input' in context['content']
     candidate.package_id = 'custom-package'
     unrelated = instruction_message(active, candidate, manual=True, context_version=2)
     assert unrelated['content'].endswith(active.rendered) and SIZE_GUIDANCE not in unrelated['content']

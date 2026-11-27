@@ -107,7 +107,10 @@ async def test_simple_customer_history_sizes_and_new_request_windows(content_db,
         group = first['catalog'][-1]
         assert [i['options']['aspect_ratio'] for i in group['items']] == ['3:2', '3:2', '3:4']
         assert [i['options']['resolution'] for i in group['items']] == ['1K', '1K', '2K']
+        assert all(any(m['usage'] == 'input' for m in item['materials']) for item in group['items'])
         made = await turn('saved_draft_resize_and_generate', '第三个做成一张图，正方形，一千就行。', images=1, generate=True)
+        assert made['native'][0]['native']['mode'] == 'image_to_image'
+        assert made['native'][0]['native']['references'][0]['content_sha256'] == hashlib.sha256(photo.read_bytes()).hexdigest()
         original_image = made['completed_images'][0]
         source_message = original_image['receipt']['message_id']
         source_hash = original_image['sha256']
@@ -128,3 +131,55 @@ async def test_simple_customer_history_sizes_and_new_request_windows(content_db,
         persist()
 
     await formal_entry_acceptance(content_db, monkeypatch, customer_suite=suite)
+
+
+def test_saved_customer_evidence():
+    """Audit immutable real run files without repeating paid supplier jobs."""
+    capture = os.environ.get('REQUEST_CONTEXT_REPLAY_ROOT')
+    if not capture:
+        pytest.skip('Explicit private real-run capture required')
+    root = Path(capture)
+    raw = (root / 'request-context-customer-results.json').read_bytes()
+    evidence = (root / 'evidence.json').read_bytes()
+    rows = json.loads(raw)
+    assert [row['case'] for row in rows] == ['reference_skill_three_drafts', 'saved_draft_resize_and_generate',
+        'text_only_resolution_revision', 'new_task_no_generation', 'find_and_display_old_lighthouse', 'edit_same_historical_image']
+    assert all(row['status'] == 'passed' for row in rows)
+    first, made, changed, new_task, shown, edited = rows
+    original = first['catalog'][-1]
+    assert [item['options'] for item in original['items']] == [
+        {'aspect_ratio': '3:2', 'resolution': '1K'}, {'aspect_ratio': '3:2', 'resolution': '1K'},
+        {'aspect_ratio': '3:4', 'resolution': '2K'}]
+    assert all(any(m['usage'] == 'input' for m in item['materials']) for item in original['items'])
+    resized = made['catalog'][-1]
+    revised = changed['catalog'][-1]
+    assert original['object_key'] == resized['object_key'] == revised['object_key']
+    assert [original['revision'], resized['revision'], revised['revision']] == [1, 2, 3]
+    assert revised['items'][:2] == resized['items'][:2] == original['items'][:2]
+    assert resized['items'][2]['options'] == {'aspect_ratio': '1:1', 'resolution': '1K'}
+    assert revised['items'][2]['options'] == {'aspect_ratio': '1:1', 'resolution': '2K'}
+    assert new_task['catalog'][-1]['object_key'] != original['object_key']
+    assert new_task['catalog'][-1]['revision'] == 1
+    assert sum(len(row['native']) for row in rows) == 2
+    native = made['native'][0]['native']
+    assert (native['mode'], native['aspect_ratio'], native['resolution']) == ('image_to_image', '1:1', '1K')
+    assert native['references'][0]['content_sha256'] == hashlib.sha256(
+        Path(os.environ['REQUEST_CONTEXT_PRODUCT_IMAGE']).read_bytes()).hexdigest()
+    image = made['completed_images'][0]
+    shown_parts = shown['message']['content']
+    shown_parts = json.loads(shown_parts) if isinstance(shown_parts, str) else shown_parts
+    assert any(p.get('type') == 'image' and p.get('source_message_id') == image['receipt']['message_id']
+        and p.get('source_content_index') == 0 for p in shown_parts)
+    assert not shown['native'] and not changed['native'] and not new_task['native']
+    assert edited['native'][0]['native']['mode'] == 'image_to_image'
+    assert edited['native'][0]['native']['references'][0]['content_sha256'] == image['sha256']
+    for row in (made, edited):
+        result, = row['completed_images']
+        assert result['status'] == 'completed'
+        assert hashlib.sha256(Path(result['local_file']).read_bytes()).hexdigest() == result['sha256']
+    failures = wire_errors(json.loads(evidence)['wire'])
+    assert not failures, failures
+    audit = {'status': 'passed', 'customer_turns': len(rows), 'completed_images': 2,
+        'real_tool_errors': failures, 'source_sha256': hashlib.sha256(raw).hexdigest(),
+        'wire_sha256': hashlib.sha256(evidence).hexdigest()}
+    (root / 'verified-customer-audit.json').write_text(json.dumps(audit, ensure_ascii=False, indent=2))

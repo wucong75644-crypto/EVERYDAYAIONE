@@ -119,7 +119,7 @@ def check(runtime, request, calls, state):
     if semantic_intent(request, runtime) == 'generate' and (frame.target is None or frame.target.kind != 'content'):
         return {}
     size = frame.size_for()
-    if not size and not frame.size_rules:
+    if not size and not frame.size_rules and not frame.materials:
         return {}
     errors = {}
     for call in calls:
@@ -132,6 +132,11 @@ def check(runtime, request, calls, state):
                 size = frame.size_for(reference.item_index)
                 changes = size_changes(item.options, size)
                 reason = '旧稿规格与本次要求不同，尚未提交图片。'
+                missing = [material.model_dump(mode='json', exclude_none=True) for material in (frame.materials or ())
+                    if material.usage == 'input' and material.reference not in [m.reference for m in item.materials]]
+                if missing:
+                    changes['materials'] = missing
+                    reason = '旧稿未绑定本次明确选择的参考图，不能降为文生图；先读取并修订素材绑定。'
             elif call['name'] == co.SAVE and args.get('base'):
                 draft = co.SaveContent.model_validate(args)
                 _, document, _ = co.load(state, draft.base)
@@ -141,9 +146,17 @@ def check(runtime, request, calls, state):
                     item = document.items[update.item_index - 1]
                     size = frame.size_for(update.item_index)
                     changes = size_changes(item.options, size)
+                    patch = update.item
+                    revised_materials = patch.materials if patch.materials is not None else item.materials
+                    missing = [material.model_dump(mode='json', exclude_none=True) for material in (frame.materials or ())
+                        if material.usage == 'input' and material.reference not in [m.reference for m in revised_materials]]
+                    if missing:
+                        changes['materials'] = missing
+                        reference = draft.base.model_copy(update={'item_index': update.item_index})
+                        reason = '修订尚未绑定本次明确选择的参考图；在materials按真实引用填写input素材。'
+                        break
                     if not changes:
                         continue
-                    patch = update.item
                     revised = patch.options if patch.options is not None else item.options
                     changed_keys = set(changes) | ({'aspect_ratio'} if 'orientation' in changes else set())
                     unchanged = {key: value for key, value in item.options.items() if key not in changed_keys}

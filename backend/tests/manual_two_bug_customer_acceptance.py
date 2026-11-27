@@ -19,6 +19,13 @@ pytest_plugins = ['tests.test_content_objects_postgres']
 pytestmark = pytest.mark.skipif(os.environ.get('RUN_SKILL_REAL_SUPPLIER_ACCEPTANCE') != '1', reason='Explicit real-provider customer acceptance')
 
 
+def is_content_handoff(value):
+    """This receipt transfers a saved item's owner; it is not a rejection."""
+    return (isinstance(value, dict) and value.get('ok') is False
+        and value.get('status') == 'resuming' and value.get('content_followup') is True
+        and value.get('accepted') is False and not value.get('code') and not value.get('error'))
+
+
 def wire_errors(wire):
     """Include control errors that are absent from rendered tool-step blocks."""
     errors = {}
@@ -33,7 +40,7 @@ def wire_errors(wire):
                 value = json.loads(item.get('output', ''))
             except (TypeError, ValueError):
                 continue
-            if isinstance(value, dict) and value.get('ok') is False:
+            if isinstance(value, dict) and value.get('ok') is False and not is_content_handoff(value):
                 errors[item.get('call_id')] = value
     return [{'call_id': key, 'result': value} for key, value in errors.items()]
 

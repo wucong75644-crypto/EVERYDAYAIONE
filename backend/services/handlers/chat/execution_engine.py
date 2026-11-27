@@ -1087,8 +1087,11 @@ async def _run_loop(
                             f' 用户要求{label}。保存整组并保留原编号顺序；'
                             '用户要求立即执行其中任何条目时，必须设置 continue_execution=true，'
                             '保存整组后仅调用当前已获准的条目。'
-                            '文生视频条目按当前工具默认参数输出，options 留空。'
-                            '图片和文件作为创作参考时用 usage=analysis，镜头描述写进 body。')
+                            + ('文生视频条目按当前工具默认参数输出，options 留空。'
+                               '图片和文件仅供镜头分析时用 usage=analysis，镜头描述写进 body。'
+                               if media.tool == 'generate_video' else
+                               '图片条目的options填写各自已确定的比例和清晰度；'
+                               '实际传给生图模型的主体、风格和颜色参考均用usage=input，仅供分析的资料才用analysis。'))
             if not server_image_plan:
                 from services.task_execution.content_revision import offer as revision_offer
                 tools = revision_offer(runtime, request, tools)
@@ -2177,22 +2180,30 @@ async def _execute_tools_impl(
                             if (len(calls) != 1 or request_context(runtime) is None
                                     or offered_argument_error(call['name'], args, RESPONSE_SCHEMA['function']['parameters'])):
                                 raise ValueError('CHAT_RESPONSE_CONTROL_INVALID')
-                            from services.task_execution.request_resolution import image_status_reply, binding
-                            selected = binding(runtime) or {}
-                            effect = any(op.tool_name == 'generate_image' and str(op.owner_task_id) == selected.get('execution_task_id')
-                                         for op in runtime.task_execution_state.operations) if runtime.task_execution_state else False
-                            rendered = (image_status_reply(runtime, request) if args['purpose'] == 'explanation'
-                                        else args['text'] + '\n\n' + image_status_reply(runtime, request)) if effect else args['text'] + '\n\n本轮未提交新的图片任务。'
-                            from . import existing_image_delivery
-                            if existing_image_delivery.action(runtime, request) == 'display_existing' and not existing_image_delivery.complete(runtime, request, blocks):
-                                rendered = (args['text'] + '\n\n本次尚未展示图片。' if args['purpose'] == 'clarification' else existing_image_delivery.MISSING)
-                            runtime.checkpoint_base['_request_response_v1'] = {
-                                'input_revision': input_revision(runtime, request),
-                                'purpose': args['purpose'], 'text': args['text'], 'status': 'native_effect' if effect else 'not_submitted',
-                                'rendered_text': rendered}
-                            handler._tool_result_stop_reason = rendered
-                            handler._request_response_stop = True
-                            result = {'ok': True, 'accepted': False, 'status': 'not_submitted'}
+                            from services.task_execution.text_delivery import check as check_text_delivery
+                            rejection = check_text_delivery(runtime, request, args)
+                            if rejection:
+                                result = rejection
+                                if rejection['stopped']:
+                                    handler._tool_result_stop_reason = rejection['message']
+                                    handler._request_response_stop = True
+                            else:
+                                from services.task_execution.request_resolution import image_status_reply, binding
+                                selected = binding(runtime) or {}
+                                effect = any(op.tool_name == 'generate_image' and str(op.owner_task_id) == selected.get('execution_task_id')
+                                             for op in runtime.task_execution_state.operations) if runtime.task_execution_state else False
+                                rendered = (image_status_reply(runtime, request) if args['purpose'] == 'explanation'
+                                            else args['text'] + '\n\n' + image_status_reply(runtime, request)) if effect else args['text'] + '\n\n本轮未提交新的图片任务。'
+                                from . import existing_image_delivery
+                                if existing_image_delivery.action(runtime, request) == 'display_existing' and not existing_image_delivery.complete(runtime, request, blocks):
+                                    rendered = (args['text'] + '\n\n本次尚未展示图片。' if args['purpose'] == 'clarification' else existing_image_delivery.MISSING)
+                                runtime.checkpoint_base['_request_response_v1'] = {
+                                    'input_revision': input_revision(runtime, request),
+                                    'purpose': args['purpose'], 'text': args['text'], 'status': 'native_effect' if effect else 'not_submitted',
+                                    'rendered_text': rendered}
+                                handler._tool_result_stop_reason = rendered
+                                handler._request_response_stop = True
+                                result = {'ok': True, 'accepted': False, 'status': 'not_submitted'}
                         elif call['name'] == 'resolve_request_target':
                             from services.task_execution import request_resolution
                             if len(calls) != 1 or request_resolution.context(runtime) is None:
@@ -2521,7 +2532,10 @@ async def _execute_tools_impl(
                                 content_tools.checkpoint_state(runtime).get('observed_history', {}))
                             if candidate is None and content_objects.message_artifact(related_state, checked_message[2]):
                                 raise TaskError('CONTENT_MESSAGE_SOURCE_ALREADY_REGISTERED')
-                        registration_images=content_objects.registration_source_images(request,runtime)
+                        save_context = (getattr(getattr(getattr(prepared,'ecom_workflow',None),'value',None),'request_context',None)
+                            or content_tools.semantic_context(request, runtime))
+                        registration_images=content_objects.registration_source_images(request,runtime,
+                            semantic_context=save_context)
                         candidate, artifact, document, value = content_objects.save(
                             runtime, save_call, build_capability_catalog(),
                             has_image_attachments=bool(registration_images),
@@ -2530,8 +2544,7 @@ async def _execute_tools_impl(
                             author_request=content_tools.visual_author_request(request, content_output_registration, runtime),
                             allow_implicit_execution_materials=server_image_plan,
                             confirmation_items=saved_confirmation_items,
-                            request_context=(getattr(getattr(getattr(prepared,'ecom_workflow',None),'value',None),'request_context',None)
-                                or content_tools.semantic_context(request, runtime)),
+                            request_context=save_context,
                             confirmation_tool=conditions.tool
                                 if saved_confirmation_items else None,
                         )

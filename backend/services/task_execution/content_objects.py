@@ -315,6 +315,21 @@ def revision_usage(require_presentation=True):
 REVISION_USAGE = revision_usage()
 
 
+def creation_examples(require_presentation=False):
+    item = {'title': '方案一：绿叶封面', 'body': '参考用户所选原图制作绿叶封面，保留本子外形。',
+            'options': {'aspect_ratio': '1:1', 'resolution': '2K'}}
+    document = {'title': '绿叶封面方案', 'items': [item]}
+    if require_presentation:
+        item.update(revision_examples(True)[0]['updates'][0]['item'])
+        item['display_prefix'] = item['display_prefix'].replace('方案三', '方案一')
+        document['display_prefix'] = ('# 参考图判断\n\n- 识别模式：产品摄影参考图\n'
+            '- 判断依据：可见本子厚度、透视及布面背景\n- 原图宽高比：以实际素材元数据为准\n'
+            '- 原图画布方向：以实际素材元数据为准\n- 最终输出类型：产品摄影展示图\n'
+            '- 统一保留内容：本子结构、扣带与拍摄关系\n- 统一替换内容：封面图案\n\n---')
+    return [{'document': document, 'confirmation': {'tool': 'generate_image', 'wait_for': [1]},
+             'continue_execution': False}]
+
+
 def save_parameters(*, require_presentation=False):
     parameters = SaveContent.model_json_schema()
     # SaveContent.choice already forbids approving existing items here. Mirror
@@ -656,12 +671,32 @@ def current_source_images(request, runtime=None):
     return tuple(images)
 
 
-def registration_source_images(request, runtime):
+def registration_source_images(request, runtime, *, semantic_context=None):
     # Historic candidates are provenance, not current attachment positions.
     images = list(current_source_images(request, runtime))
     for image in historical_source_images(runtime):
         if image.reference not in [value.reference for value in images]:
             images.append(image)
+    # An unfinished prior request may have uploads but no saved document yet.
+    # Only add the explicitly selected, server-observed identities; never pick
+    # the latest image merely because this turn has no attachment.
+    if semantic_context is not None and semantic_context.materials:
+        from .request_resolution import context
+        from .image_history import recovered
+        snapshot = context(runtime) or {}
+        known = [image for row in snapshot.get('requests', ()) for image in row.get('images', ())]
+        known += [{'name': image.get('name') or '已生成结果', 'reference': {
+            'message_id': image['source_message_id'], 'content_index': image['content_index']}}
+            for image in snapshot.get('image_results', ())]
+        known += list(recovered(runtime))
+        for material in semantic_context.materials:
+            if material.reference in [image.reference for image in images]:
+                continue
+            matched = next((image for image in known
+                if MaterialReference.model_validate(image['reference']) == material.reference), None)
+            if matched is None:
+                raise TaskError('CONTENT_SOURCE_IMAGE_UNAVAILABLE')
+            images.append(SourceImage(name=matched.get('name') or '所选参考图', reference=material.reference))
     return tuple(images)
 
 
@@ -724,7 +759,8 @@ def save(runtime, call, registry, *, has_image_attachments=False, source_images=
         document, source_images, message_proof = checked_message
         display_gaps = tuple(message_proof.get('display_gaps', ()))
         message_proof = {k: v for k, v in message_proof.items() if k != 'display_gaps'}
-    if document is not None and source_images and (author_request is not None or explicit_execution or value.message_source is not None):
+    if document is not None and (request_context is not None or source_images and (
+            author_request is not None or explicit_execution or value.message_source is not None)):
         from .content_groups import bind_group
         document = bind_group(document, source_images, author_request or '', infer_materials=not explicit_execution,
             semantic_context=request_context)

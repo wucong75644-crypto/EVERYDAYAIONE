@@ -4,6 +4,8 @@ from typing import Literal
 from pydantic import Field
 from .contracts import Fact,TaskState,TaskError
 
+WINDOW_CONTEXT_KEYS = ('_request_context_v1', '_request_resolution_v1', '_request_response_v1',
+                       '_historical_image_catalog_v1', '_content_revision_reads_v1', '_existing_image_recovery_v1')
 
 class FollowupObservation(Fact):
     relation: Literal['continue','amend','unrelated','uncertain']
@@ -40,7 +42,7 @@ def payload(source,current,*,task_id,turn_id,model_round,usage,observation):
         result['_task_followup_window_history']=[*result.get('_task_followup_window_history',[]),
             {'owner_task_id':source['source_owner_task_id'],'checkpoint':copy.deepcopy(result['_task_followup_input_checkpoint'])}]
     result['_task_followup_input_checkpoint']=copy.deepcopy(current)
-    for key in ('_request_context_v1', '_request_resolution_v1', '_request_response_v1', '_historical_image_catalog_v1', '_content_revision_reads_v1', '_existing_image_recovery_v1'):
+    for key in WINDOW_CONTEXT_KEYS:
         if key in current:
             result[key] = copy.deepcopy(current[key])
         else:

@@ -19,13 +19,13 @@ from tests.test_task_execution_followup_reuse_postgres import (followup_db,new_t
 def content_db(dispatch_db):
     root=__import__('pathlib').Path(__file__).parents[1]
     with psycopg.connect(dispatch_db) as c:
-        for migration in ('347_agent_task_image_reconciliation','376_agent_task_image_method_handoff','377_agent_task_content_objects','378_agent_content_followup_groups','381_agent_media_confirmation_slots','382_agent_semantic_media_confirmations','384_agent_request_resolution','385_agent_saved_content_item_options','386_agent_request_execution_windows'):
+        for migration in ('347_agent_task_image_reconciliation','376_agent_task_image_method_handoff','377_agent_task_content_objects','378_agent_content_followup_groups','381_agent_media_confirmation_slots','382_agent_semantic_media_confirmations','384_agent_request_resolution','385_agent_saved_content_item_options','386_agent_request_execution_windows','387_agent_followup_window_receipts'):
             c.execute((root/f'migrations/{migration}.sql').read_text())
     yield dispatch_db
     with psycopg.connect(dispatch_db) as c:
         c.execute("DELETE FROM conversation_turn_checkpoints WHERE state ? '_task_execution'")
         c.execute('DELETE FROM agent_task_events');c.execute('DELETE FROM agent_task_states');c.execute('SET CONSTRAINTS ALL IMMEDIATE')
-        for migration in ('386_agent_request_execution_windows','385_agent_saved_content_item_options','384_agent_request_resolution','382_agent_semantic_media_confirmations','381_agent_media_confirmation_slots','378_agent_content_followup_groups','377_agent_task_content_objects','376_agent_task_image_method_handoff','347_agent_task_image_reconciliation'):
+        for migration in ('387_agent_followup_window_receipts','386_agent_request_execution_windows','385_agent_saved_content_item_options','384_agent_request_resolution','382_agent_semantic_media_confirmations','381_agent_media_confirmation_slots','378_agent_content_followup_groups','377_agent_task_content_objects','376_agent_task_image_method_handoff','347_agent_task_image_reconciliation'):
             c.execute((root/f'migrations/rollback/{migration}_rollback.sql').read_text())
 
 @pytest.mark.asyncio

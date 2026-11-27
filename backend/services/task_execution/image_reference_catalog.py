@@ -142,7 +142,10 @@ class ImageReferences:
         function = result.get('function')
         if isinstance(function, dict) and function.get('name') == 'save_task_text':
             if 'document' in function['parameters'].get('properties', {}):
-                example = {'document': {'title': '方案标题', 'items': [{'title': '条目标题', 'body': '完整执行正文'}]}}
+                from .content_objects import creation_examples
+                document_schema = function['parameters']['properties']['document']
+                reference = 'display_prefix' in document_schema.get('required', ())
+                example = creation_examples(reference)[0]
                 function['description'] += (' 新建参数的对象结构示例（内容须按实际要求填写，素材另按目录绑定）：'
                     + json.dumps(example, ensure_ascii=False)
                     + '。items每项的标题字段固定为title，执行正文固定为body。'
