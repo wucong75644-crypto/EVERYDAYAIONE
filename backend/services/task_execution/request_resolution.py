@@ -396,6 +396,20 @@ def check(runtime, request, call, *, root_task_id=None):
     if value is None or value['status'] != 'resolved' or value['input_revision'] != input_revision(runtime, request):
         return ('REQUEST_TARGET_UNRESOLVED', '本次目标尚未明确或输入已变化。核对最近需求与方案，不派发历史旧稿；有歧义时询问具体目标。')
     target = value['target']
+    if (call['name'] == 'save_task_text' and target['kind'] == 'content'
+            and ('document' in args or 'message_source' in args)):
+        return ('REQUEST_TARGET_REVISION_REQUIRED',
+            '本次已选定真实保存稿。先用read_conversation_text读取所选完整条目，'
+            '再用save_task_text的base和updates修订原稿；不要重新登记整组document或message_source。'
+            '仅更新用户指定的条目和字段，保留其他条目、未改规格与素材。'
+            '用户只要求修改方案、不出图时continue_execution=false；修改并出图才设为true。')
+    if call['name'] == 'save_task_text' and target['kind'] == 'content':
+        updates = args.get('updates')
+        if (isinstance(updates, list) and all(isinstance(u, dict) and type(u.get('item_index')) is int for u in updates)
+                and not {u['item_index'] for u in updates} <= set(target['item_indices'])):
+            return ('REQUEST_TARGET_ITEM_SELECTION_MISMATCH',
+                '本次仅选择了条目' + str(target['item_indices']) + '，未保存任何修改。'
+                'updates只提交这些条目；其他条目由后台原样保留，不重新填写。')
     if call['name'] == 'read_task_result':
         if target['kind'] == 'content':
             from .content_objects import content_image_receipts

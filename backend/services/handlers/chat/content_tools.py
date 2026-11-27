@@ -269,6 +269,12 @@ def selects_previous_item(request, runtime=None):
     return semantic_intent(request, runtime) in {'execute_saved', 'repeat'}
 
 
+def revises_saved_item(request, runtime=None):
+    frame = semantic_context(request, runtime)
+    return (semantic_intent(request, runtime) in {'write', 'write_then_submit_images'}
+            and frame is not None and frame.target is not None and frame.target.kind == 'content')
+
+
 
 
 def unconfirmed_image_reply(text, has_calls, *, structured_status=False):
@@ -384,7 +390,7 @@ SCHEMAS = (
     READ_SCHEMA,
 )
 
-def model_tools(tools, *, selectable_source_images=False, saved_text_available=False, server_image_plan=False, reuse_source=False, first_delivery=False, current_images=(), inline_image=False, generated_image_edit=False, single_image_edit=False, inline_only=False, previous_image_reference=None, planned_image_count=None, image_reference_catalog=None):
+def model_tools(tools, *, selectable_source_images=False, saved_text_available=False, server_image_plan=False, reuse_source=False, revise_saved=False, first_delivery=False, current_images=(), inline_image=False, generated_image_edit=False, single_image_edit=False, inline_only=False, previous_image_reference=None, planned_image_count=None, image_reference_catalog=None):
     """Project the one entry contract selected by the current workflow."""
     from services.task_execution.content_objects import ContentReference, ImageContentReference, selection_parameters
     from services.handlers.image_size_requirements import SIZE_GUIDANCE
@@ -408,22 +414,29 @@ def model_tools(tools, *, selectable_source_images=False, saved_text_available=F
         if inline_only and name == 'save_task_text':
             # The inline entry already saves its draft atomically.
             continue
-        if name == 'save_task_text' and not server_image_plan and (reuse_source or first_delivery or current_images):
+        if name == 'save_task_text' and not server_image_plan and (reuse_source or revise_saved or first_delivery or current_images):
             # Project the same backend action. The first turn has no historical
             # source to recover; an explicit follow-up already has its source.
             tool = copy.deepcopy(original)
             function = tool['function']
             parameters = function['parameters']
-            excluded = {'document', 'new_content'} if reuse_source else {'base', 'updates', 'message_source', 'new_content'}
-            for key in excluded if reuse_source or first_delivery else ():
+            saved_revision = reuse_source or revise_saved
+            excluded = {'document', 'new_content'} if saved_revision else {'base', 'updates', 'message_source', 'new_content'}
+            if revise_saved:
+                excluded.add('message_source')
+            for key in excluded if saved_revision or first_delivery else ():
                 parameters['properties'].pop(key, None)
             forms = [form for form in parameters.pop('oneOf')
-                     if not (reuse_source or first_delivery) or excluded.isdisjoint(form['required'])]
+                     if not (saved_revision or first_delivery) or excluded.isdisjoint(form['required'])]
             if len(forms) == 1:
                 parameters['required'] = forms[0]['required']
             else:
                 parameters['oneOf'] = forms
-            if reuse_source:
+            if revise_saved:
+                function['description'] = ('修订本次已明确选择的保存稿。先读取完整条目，再用base和updates修改原稿；'
+                    '不要重新登记整组document或message_source，不另建一组来代替修订。保留未选择条目、素材及未改规格。'
+                    '只改方案或先看文字时continue_execution=false；仅用户明确要求修改并出图时才设为true。')
+            elif reuse_source:
                 function['description'] = ('执行已保存的条目直接调用目标工具。仅恢复历史正文时用message_source和'
                                            'continue_execution=true；修订用base和updates。')
             elif first_delivery:

@@ -205,3 +205,50 @@ async def test_revision_bridge_cannot_invent_execution_or_change_a_pure_confirma
     assert r.task_execution_state == before
     assert not (r.checkpoint_base.get(revision.KEY) or {}).get('approval_revision')
     h._execute_tool_calls.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_text_only_size_revision_updates_original_instead_of_registering_another_group():
+    from services.handlers.chat import content_tools
+    from services.tools import build_legacy_catalog
+    r, p, h, q, old = await registered()
+    q = semantic_request(q, 'write', size={'resolution': '2K'}, focus='selected_target', target={
+        'kind': 'content', 'basis': 'explicit_reference', 'artifact_id': old['artifact_id'],
+        'revision': old['revision'], 'item_indices': [3]})
+    assert content_tools.revises_saved_item(q, r)
+    source = [co.SCHEMA, *[build_legacy_catalog().require(n).to_schema() for n in ('generate_image', 'generate_video')]]
+    before = content_tools.model_tools(source, saved_text_available=True)
+    tools = content_tools.model_tools(source, saved_text_available=True, revise_saved=True)
+    assert tools[1:] == before[1:]  # A save-form change grants no extra media capability.
+    save = tools[0]['function']['parameters']
+    assert set(save['required']) == {'base', 'updates'}
+    assert not {'document', 'new_content', 'message_source'} & save['properties'].keys()
+    await execute(r, p, h, q, [call(co.SAVE, {'document': {
+        'title': '重新登记的一整组', 'items': [{'title': '第三个', 'body': '只改清晰度。'}]}}, 'fork')])
+    assert json.loads(p.messages[-1]['content'])['code'] == 'CONTENT_EXECUTION_SOURCE_REQUIRED'
+    assert co.catalog(r.task_execution_state) == [old]
+    _, original, item = co.load(r.task_execution_state, co.ContentReference.model_validate(ref(old, 3)))
+    await execute(r, p, h, q, [call(co.SAVE, {'base': ref(old, 3), 'updates': [{
+        'item_index': 3, 'item': {'body': item.body + '\n输出清晰度2K。',
+            'options': {**item.options, 'resolution': '2K'}}}], 'continue_execution': False}, 'revise')])
+    latest, = co.catalog(r.task_execution_state)
+    assert latest['object_key'] == old['object_key'] and latest['revision'] == old['revision'] + 1
+    _, revised, item = co.load(r.task_execution_state, co.ContentReference.model_validate(ref(latest, 3)))
+    assert revised.items[:2] == original.items[:2]
+    assert item.options == {**original.items[2].options, 'resolution': '2K'}
+    h._execute_tool_calls.assert_not_awaited()
+
+
+def test_selected_content_cannot_be_forked_or_modify_unselected_slots(monkeypatch):
+    from tests.test_request_catalog import catalog_case
+    from services.task_execution import request_resolution as rr
+    r, p, h, q, rows, _ = catalog_case(monkeypatch)
+    rr.freeze(r, q, {'kind': 'content', 'basis': 'explicit_reference', 'artifact_id': 'old-a',
+        'revision': 1, 'item_indices': [1], 'source_message_id': rows[2]['message_id']}, focus='selected_target')
+    assert rr.check(r, q, call(co.SAVE, {'document': {'title': '复制稿', 'items': []}}))[0] == 'REQUEST_TARGET_REVISION_REQUIRED'
+    assert rr.check(r, q, call(co.SAVE, {'message_source': {}}))[0] == 'REQUEST_TARGET_REVISION_REQUIRED'
+    args = {'base': {'artifact_id': 'old-a', 'item_index': 1},
+            'updates': [{'item_index': 2, 'item': {'body': '不该修改的第二项'}}]}
+    assert rr.check(r, q, call(co.SAVE, args))[0] == 'REQUEST_TARGET_ITEM_SELECTION_MISMATCH'
+    args['updates'][0]['item_index'] = 1
+    assert rr.check(r, q, call(co.SAVE, args)) is None

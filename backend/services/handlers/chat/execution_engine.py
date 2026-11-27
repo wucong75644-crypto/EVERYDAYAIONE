@@ -1057,6 +1057,7 @@ async def _run_loop(
                 tools, selectable_source_images=content_objects.has_selectable_source_images(content_state),
                 saved_text_available=saved_source_available,
                 server_image_plan=server_image_plan, reuse_source=reuse_source,
+                revise_saved=content_tools.revises_saved_item(request, runtime),
                 planned_image_count=getattr(getattr(workflow,'value',None),'image_count',None),
                 inline_image=inline_image, single_image_edit=single_image_edit,
                 inline_only=(inline_image and (single_image_edit or explicit_edit)
@@ -2423,7 +2424,8 @@ async def _execute_tools_impl(
                             raise TaskError(content_objects.DRAFT_CONFLICT)
                         related_state = candidate or content_followup_state(runtime)
                         if (save_value.document is not None and not server_image_plan
-                                and content_tools.selects_previous_item(request, runtime)):
+                                and (content_tools.selects_previous_item(request, runtime)
+                                     or content_tools.revises_saved_item(request, runtime))):
                             raise TaskError('CONTENT_EXECUTION_SOURCE_REQUIRED')
                         if (save_value.document is not None and save_value.continue_execution
                                 and not save_value.new_content and not server_image_plan):
