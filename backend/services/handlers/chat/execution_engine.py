@@ -466,7 +466,7 @@ async def execute_chat(
             if finalized_parts is None:
                 finalized_parts = await _finalize_output_parts(handler=handler, prepared=prepared,
                     totals=totals, blocks=blocks, sink=output, cancellation_event=event,
-                    runtime=runtime, form_hint=form_hint)
+                    runtime=runtime, form_hint=form_hint, request=request)
             return finalized_parts
 
         form_hint = await _run_loop(
@@ -546,7 +546,7 @@ async def execute_chat(
 
 
 async def _finalize_output_parts(*, handler, prepared, totals, blocks, sink,
-                                 cancellation_event, runtime, form_hint=None):
+                                 cancellation_event, runtime, form_hint=None, request=None):
     """Canonical output finalization, shared by normal return and logical commit."""
     from services.knowledge_workspace.chat import KnowledgeRun
     knowledge_run = getattr(handler, '_knowledge_run', None)
@@ -559,7 +559,7 @@ async def _finalize_output_parts(*, handler, prepared, totals, blocks, sink,
         runtime is None or (runtime.task_execution_state is None and getattr(runtime,'task_requirement_review',None) is None)
     ):
         await _apply_budget_stop(prepared, totals, blocks, sink,
-            cancellation_event=cancellation_event, runtime=runtime)
+            cancellation_event=cancellation_event, runtime=runtime, request=request)
     await _consume_emit_payloads(handler, blocks, sink)
     if (getattr(runtime, 'task_image_completion', None) is not None
             and runtime.task_execution_state.status == 'completed'
@@ -759,7 +759,7 @@ async def _run_loop(
                 if instruction not in prepared.messages:
                     prepared.messages.append(instruction)
             if task_controller is not None:
-                if runtime.task_execution_state.model_rounds_used >= runtime.task_execution_state.model_round_limit:
+                if runtime.task_execution_state.budget_rounds_used >= runtime.task_execution_state.model_round_limit:
                     from services.task_execution.model_bridge import review_model_completion
                     await review_model_completion(runtime=runtime, prepared=prepared, blocks=blocks,
                         build_checkpoint=_build_replay_context, turn=prepared.budget.turns_used,
@@ -1079,12 +1079,19 @@ async def _run_loop(
                                   if tool['function']['name'] == content_objects.SAVE), None)
                 if save_tool is not None:
                     label = '整组逐条确认' if wait_all else f'分别确认编号 {list(waits)}'
-                    save_tool['description'] += (
-                        f' 用户要求{label}。保存整组并保留原编号顺序；'
-                        '用户要求立即执行其中任何条目时，必须设置 continue_execution=true，'
-                        '保存整组后仅调用当前已获准的条目。'
-                        '文生视频条目按当前工具默认参数输出，options 留空。'
-                        '图片和文件作为创作参考时用 usage=analysis，镜头描述写进 body。')
+                    if reuse_source or content_tools.revises_saved_item(request, runtime):
+                        save_tool['description'] += (' 原稿其他条目的等待条件由后台保留，本次只修订用户选定条目。'
+                            '条目批准仅由真实请求及后台决策绑定，不在confirmation填写approved，不重新保存整组。')
+                    else:
+                        save_tool['description'] += (
+                            f' 用户要求{label}。保存整组并保留原编号顺序；'
+                            '用户要求立即执行其中任何条目时，必须设置 continue_execution=true，'
+                            '保存整组后仅调用当前已获准的条目。'
+                            '文生视频条目按当前工具默认参数输出，options 留空。'
+                            '图片和文件作为创作参考时用 usage=analysis，镜头描述写进 body。')
+            if not server_image_plan:
+                from services.task_execution.content_revision import offer as revision_offer
+                tools = revision_offer(runtime, request, tools)
             prepared.content_output_available = not server_image_plan
             prepared.reference_text_delivery = content_tools.prefers_reference_text(
                 request, runtime, saved_source_available=saved_source_available, server_image_plan=server_image_plan)
@@ -1108,6 +1115,8 @@ async def _run_loop(
                 and not (media.wait_for or media.wait_all)
                 and not any(block.get('type') == 'tool_step' and block.get('tool_name') not in content_tools.CONTROLS
                             for block in blocks))
+        from . import existing_image_delivery
+        tools = existing_image_delivery.offer(runtime, request, tools)
         from services.tools.model_contracts import project_model_tool
         tools = [project_model_tool(tool) for tool in tools]
         prepared.content_visible_tools = {tool['function']['name']: tool['function'] for tool in tools if 'function' in tool}
@@ -1141,6 +1150,10 @@ async def _run_loop(
         if await existing_image_delivery.deliver(runtime, request, prepared, blocks,
                 execute=display_calls, finish=display_failure):
             return None
+        if existing_image_delivery.action(runtime, request) == 'display_existing':
+            prepared.messages[:] = [m for m in prepared.messages if not (m.get('role') == 'system'
+                and isinstance(m.get('content'), str) and m['content'].startswith('[Existing image delivery]'))]
+            prepared.messages.append({'role': 'system', 'content': existing_image_delivery.recovery_context(runtime, request, blocks)})
         before_usage = dict(totals.usage) if correcting else {}
         try:
             restored = []
@@ -1188,6 +1201,12 @@ async def _run_loop(
                     if block.get('tool_call_id') in previewed_call_ids:
                         block.update(status='cancelled', output='已收到补充素材，按更新后的要求继续。')
                         await sink.on_block_update(block)
+                continue
+        if not calls and existing_image_delivery.action(runtime, request) == 'display_existing' and not existing_image_delivery.complete(runtime, request, blocks):
+            if totals.last_finish_reason != 'length' and existing_image_delivery.request_continuation(runtime, request, prepared, blocks):
+                await runtime.safe_point(SafePoint.AFTER_MODEL, replay_payload=_build_replay_context(
+                    prepared.messages, blocks, turn, next_model_round=model_round,
+                    repeated_tool_call_guard=repeated_tool_call_guard))
                 continue
         if direct_enabled(runtime) and any(c['name'] == content_objects.SAVE for c in calls):
             from services.task_execution.content_delivery import stage_response
@@ -1859,7 +1878,10 @@ async def _read_turn_impl(
             else:
                 turn_text = '\n\n'.join(filter(None, (turn_text, content_tools.delivery_notice(missing_delivery, attempted))))
     if display_pending:
-        turn_text = '' if ordered_calls else existing_image_delivery.MISSING
+        prepared.pending_display_narrative = turn_text if not ordered_calls else None
+        pending_retry = (not ordered_calls and totals.last_finish_reason != 'length'
+                         and existing_image_delivery.can_continue(runtime, request, prepared))
+        turn_text = '' if ordered_calls or pending_retry else existing_image_delivery.MISSING
     if silent_delivery:
         if turn_text.strip() == _IMAGE_DELIVERY_COMPLETE:
             turn_text = ''
@@ -2140,7 +2162,16 @@ async def _execute_tools_impl(
                         args = json.loads(call.get('arguments') or '{}')
                         if not isinstance(args, dict):
                             raise ValueError('CHAT_CONTENT_ARGUMENTS_INVALID')
-                        if call['name'] == 'respond_without_execution':
+                        if call['name'] == content_tools.LIST_IMAGES:
+                            from services.task_execution.image_history import page, SCHEMA as history_schema
+                            if len(calls) != 1:
+                                raise ValueError('CHAT_IMAGE_HISTORY_SINGLE_CALL_REQUIRED')
+                            rejection = offered_argument_error(call['name'], args, history_schema['function']['parameters'])
+                            if rejection:
+                                result = {'ok': False, **json.loads(rejection)}
+                            else:
+                                result = await asyncio.to_thread(page, handler, request, context, runtime, args)
+                        elif call['name'] == 'respond_without_execution':
                             from services.task_execution.request_resolution import context as request_context, RESPONSE_SCHEMA
                             from services.task_execution.content_delivery import input_revision
                             if (len(calls) != 1 or request_context(runtime) is None
@@ -2153,10 +2184,8 @@ async def _execute_tools_impl(
                             rendered = (image_status_reply(runtime, request) if args['purpose'] == 'explanation'
                                         else args['text'] + '\n\n' + image_status_reply(runtime, request)) if effect else args['text'] + '\n\n本轮未提交新的图片任务。'
                             from . import existing_image_delivery
-                            if (args['purpose'] == 'explanation'
-                                    and existing_image_delivery.action(runtime, request) == 'display_existing'
-                                    and not existing_image_delivery.complete(runtime, request, blocks)):
-                                rendered = existing_image_delivery.MISSING
+                            if existing_image_delivery.action(runtime, request) == 'display_existing' and not existing_image_delivery.complete(runtime, request, blocks):
+                                rendered = (args['text'] + '\n\n本次尚未展示图片。' if args['purpose'] == 'clarification' else existing_image_delivery.MISSING)
                             runtime.checkpoint_base['_request_response_v1'] = {
                                 'input_revision': input_revision(runtime, request),
                                 'purpose': args['purpose'], 'text': args['text'], 'status': 'native_effect' if effect else 'not_submitted',
@@ -2188,26 +2217,37 @@ async def _execute_tools_impl(
                             if not isinstance(query, str) or not 1 <= len(query.strip()) <= 160:
                                 raise ValueError('CHAT_TOOL_QUERY_INVALID')
                             exact_tool = visible.get(query.strip().casefold())
-                            if exact_tool is not None:
+                            from services.task_execution.content_revision import pending_reads
+                            required_reads = pending_reads(runtime, request) if query == content_objects.SAVE else []
+                            if required_reads:
+                                result = {'ok': True, 'tools': [], 'status': 'read_before_revision',
+                                    'message': '保存工具在成功读取所选旧稿后提供。先调用read_conversation_text。',
+                                    'recovery': {'tool': 'read_conversation_text', 'calls': required_reads}}
+                            elif exact_tool is not None:
                                 result = {'ok': True, 'tools': [exact_tool], 'status': 'ready'}
                             else:
                                 candidates = content_tools.discover(context, query, blocked)
                                 names.update(item['name'] for item in candidates)
                                 result = {'ok': True, 'tools': candidates,
                                           'status': 'check_next_turn' if candidates else 'no_match'}
+                        elif (call['name'] == content_tools.READ and set(args) == {'show_image'}
+                              and (selection_error := existing_image_delivery.selection_rejection(runtime, request, args['show_image']))):
+                            result = selection_error
                         elif call['name'] == content_tools.READ and (rejection := offered_argument_error(
                             call['name'], args, read_parameters
                         )):
                             result = {'ok': False, **json.loads(rejection)}
                         elif call['name'] == content_tools.READ and set(args) == {'content_source'}:
                             result = {'ok': True, **await content_tools.read_saved_item(
-                                runtime, handler.db, context, args['content_source'])}
+                                runtime, handler.db, context, args['content_source'], request=request)}
                         elif call['name'] == content_tools.READ and set(args) == {'view_image'}:
                             if len(viewed_images) >= content_tools.visual_budget_remaining(prepared.messages):
                                 raise ValueError('CHAT_IMAGE_VISUAL_BUDGET_EXHAUSTED')
                             image, url = await asyncio.to_thread(content_tools.read_image_view,
                                 handler, request, context, args['view_image'])
                             viewed_images.append(url)
+                            from services.task_execution.image_history import mark_viewed
+                            mark_viewed(runtime, args['view_image'])
                             result = {'ok': True, **image}
                         elif call['name'] == content_tools.READ and set(args) == {'show_image'}:
                             from services.task_execution.request_resolution import check_display, recover_display_selection
@@ -2269,7 +2309,10 @@ async def _execute_tools_impl(
                                 result.update(issues=[{'path': '$.request_context.focus',
                                     'reason': '执行或重做已保存稿件时必须为selected_target'}],
                                     message='本次未执行。保留所选稿件身份及用户要求，将request_context.focus改为selected_target后单独重试目标纠正。')
-                        if result['code'] == 'CHAT_IMAGE_VISUAL_BUDGET_EXHAUSTED':
+                        if result['code'] == 'REQUEST_TARGET_ACTION_MISMATCH':
+                            from services.task_execution.action_target_contract import GUIDANCE
+                            result['message'] = '本次未修改动作、目标或保存稿，尚未执行。' + GUIDANCE
+                        elif result['code'] == 'CHAT_IMAGE_VISUAL_BUDGET_EXHAUSTED':
                             result['message'] = '本轮视觉预算已用完。现有定位仍可用，但不要声称看到了未加载的图。'
                         elif result['code'] == 'REQUEST_TARGET_IMAGE_SELECTION_REQUIRED':
                             result['message'] = ('本轮尚未展示图片。所选请求包含多张图片；先单独用resolve_request_target选择具体image目标，'
@@ -2277,12 +2320,22 @@ async def _execute_tools_impl(
                         elif result['code'] == 'REQUEST_TARGET_CONTENT_CHANGED':
                             result['message'] = ('所选保存稿版本已变化，本轮尚未展示。先读取并核对用户指定版本，'
                                                  '用resolve_request_target纠正目标；不自动用新版本代替旧版本。')
+                        elif result['code'] == 'REQUEST_TARGET_IMAGE_REQUIRES_VIEW':
+                            result['message'] = ('该历史图片尚未看图核实，本次没有选择或执行。先用read_conversation_text的'
+                                '{"view_image":{"image_ref":"查询返回的真实引用"}}读取图片，再单独调用resolve_request_target。'
+                                'view_image仅供模型核图，不代表已向用户展示；不要换成其他候选。')
+                        elif result['code'] == 'CHAT_CONTENT_VERSION_UNAVAILABLE':
+                            result['message'] = ('该保存稿版本当前不可读取，尚未修改或执行。核对本次saved_groups中的真实稿件及版本，'
+                                '保留用户指定的对象；需要纠正目标时先单独调用resolve_request_target，再复制其content_source读取。'
+                                '用户明确要旧版本时读取对应历史原消息，不自动换成最新版本或其他组。')
                         elif (result['code'] == 'REQUEST_TARGET_EXISTING_RESULT_NOT_REQUESTED'
                               and existing_image_delivery.action(runtime, request) == 'analyze'):
                             result['message'] = ('本轮仅分析图片，不向用户回显。模型需要看图时用view_image；'
                                                  '用户实际要求展示时先用resolve_request_target纠正image_action与目标。')
-                        elif call['name'] == content_tools.READ:
-                            result['message'] = '无法核对所选来源。请使用当前目录中的明确引用，仍有歧义时请用户选择。'
+                        elif call['name'] in {content_tools.READ, content_tools.LIST_IMAGES}:
+                            result['message'] = ('无法核对所选来源，本次没有展示或生成。旧图不在最近目录时用list_conversation_images查询；'
+                                '游标无效时从第一页重查，不沿用其他输入的游标或image_ref。找到候选后view_image核图，再选择目标。'
+                                'has_more=true可复制next_cursor继续；没有更多结果或多个候选仍无法核实时请用户说明。')
                 output = json.dumps(result, ensure_ascii=False)
                 prepared.messages.append({'role': 'tool', 'tool_call_id': call['id'], 'content': output})
                 for block in blocks:
@@ -2323,6 +2376,29 @@ async def _execute_tools_impl(
                 if block.get('tool_call_id') in previewed_call_ids:
                     await sink.on_block_update(block)
             return None
+        if scoped_content and not recovery_only and not content_output_registration:
+            from services.task_execution.content_revision import check_call as check_revision_read
+            read_errors = {call['id']: result for call in calls
+                           if (result := check_revision_read(runtime, request, call)) is not None}
+            if read_errors:
+                prepared.messages.append(assistant)
+                for call in calls:
+                    result = read_errors.get(call['id'], {'ok': False, 'accepted': False,
+                        'code': 'CONTENT_REVISION_BATCH_BLOCKED', 'message': '本批未执行，先读取待修改的原稿。'})
+                    if call['name'] == content_objects.SAVE:
+                        from services.task_execution.content_delivery import finish_response
+                        finish_response(runtime, None, result, request=request)
+                    output = json.dumps(result, ensure_ascii=False)
+                    prepared.messages.append({'role': 'tool', 'tool_call_id': call['id'], 'content': output})
+                    for block in blocks:
+                        if block.get('tool_call_id') == call['id']:
+                            block.update(status='error', output=output)
+                await runtime.safe_point(SafePoint.AFTER_TOOL, replay_payload=_build_replay_context(
+                    prepared.messages, blocks, turn, next_model_round=next_model_round))
+                for block in blocks:
+                    if block.get('tool_call_id') in previewed_call_ids:
+                        await sink.on_block_update(block)
+                return None
         original_owner = getattr(runtime, 'task_followup_candidate', None)
         if scoped_content and not recovery_only and not content_output_registration:
             from services.task_execution.direct_loop import select_content_owner
@@ -2504,6 +2580,9 @@ async def _execute_tools_impl(
                         if result['code'] == content_objects.PRESENTATION_INCOMPLETE:
                             from services.task_execution.methods import REFERENCE_PROMPTS_PRESENTATION
                             result['message'] = REFERENCE_PROMPTS_PRESENTATION
+                            result.update(issues=getattr(error, 'issues', []),
+                                format_contract=getattr(error, 'format_contract', {}),
+                                recovery={'action': 'repair_arguments', 'preserve_original': True})
                         if result['code'] in {'CONTENT_EXECUTION_SOURCE_REQUIRED', 'CONTENT_MESSAGE_SOURCE_ALREADY_REGISTERED'}:
                             result['message'] = (
                                 '执行已有方案请从成果目录选择；尚无成果时，读取并登记原消息整组。'
@@ -3639,9 +3718,19 @@ async def _apply_budget_stop(
     totals: StreamTotals,
     blocks: list[dict[str, Any]],
     sink: ExecutionSink,
-    *,cancellation_event=None,runtime=None,
+    *,cancellation_event=None,runtime=None,request=None,
 ) -> None:
     if not prepared.budget.stop_reason:
+        return
+    from . import existing_image_delivery
+    if (runtime is not None and request is not None
+            and existing_image_delivery.action(runtime, request) == 'display_existing'
+            and not existing_image_delivery.complete(runtime, request, blocks)):
+        notice = {'type': 'text', 'text': '已达到本次处理上限，旧图展示尚未完成，没有重新生成图片。',
+                  'content_incomplete': True}
+        blocks.append(notice)
+        totals.text += notice['text']
+        await sink.on_block(notice)
         return
     from services.agent.stop_policy import synthesize_wrap_up
     from services.handlers.chat.stream_finalize import stop_message

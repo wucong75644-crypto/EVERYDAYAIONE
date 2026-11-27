@@ -7,10 +7,78 @@ from types import SimpleNamespace
 import pytest
 
 from services.task_execution import content_objects as co, saved_image_revision as revision
-from tests.semantic_fixtures import semantic_request
-from tests.test_content_objects import registered, ref
+from tests.semantic_fixtures import semantic_request, observed_revision
+from tests.test_content_objects import registered, ref, document
 from tests.test_model_directed_loop import execute
 from tests.test_task_execution_model_bridge import call
+
+
+@pytest.mark.parametrize('presentation', [False, True])
+def test_model_visible_revision_examples_validate_after_final_tool_projection(presentation):
+    from jsonschema import Draft202012Validator
+    from services.handlers.chat import content_tools
+    from services.task_execution.image_reference_catalog import ImageReferences
+    source = copy.deepcopy(co.SCHEMA)
+    source['function']['parameters'] = co.save_parameters(require_presentation=presentation)
+    if presentation:
+        from services.task_execution.methods import REFERENCE_PROMPTS_PRESENTATION
+        source['function']['description'] = REFERENCE_PROMPTS_PRESENTATION + source['function']['description']
+    projected = content_tools.model_tools([source], saved_text_available=True, revise_saved=True)
+    refs = ImageReferences({'input_message_id': '00000000-0000-4000-8000-000000000001'})
+    function = refs.tools(projected)[0]['function']
+    schema = function['parameters']
+    assert co.revision_usage(presentation) in function['description']
+    if presentation:
+        assert function['description'].startswith(REFERENCE_PROMPTS_PRESENTATION)
+    assert not {'document', 'new_content', 'message_source'} & schema['properties'].keys()
+    for example in schema['examples']:
+        Draft202012Validator(schema).validate(example)
+        co.SaveContent.model_validate(example)
+        if presentation:
+            from services.task_execution.methods import valid_reference_prompts_presentation
+            item = co.ContentItem(title='示例', **example['updates'][0]['item'])
+            document = co.ContentDocument(title='示例', display_prefix='# 参考图判断\n产品摄影参考图。', items=(item,))
+            assert valid_reference_prompts_presentation(document)
+        assert json.dumps(example, ensure_ascii=False) in function['description']
+    repair = refs.save_repair({'message': '参数错误。', 'issues': [{'loc': ['updates', 0, 'item']}]}, function)
+    assert co.revision_usage(presentation) in repair['message']
+    assert repair['parameters']['examples'] == schema['examples']
+
+
+@pytest.mark.asyncio
+async def test_primary_historical_draft_is_readable_before_adoption_when_router_is_unresolved(monkeypatch):
+    from services.handlers.chat import content_tools
+    from services.task_execution import request_resolution as rr
+    runtime, prepared, handler, request, row = await registered()
+    original = runtime.task_execution_state
+    runtime.task_followup_candidate = {'state': original.model_dump(mode='json')}
+    runtime.task_execution_state = None
+    runtime.task_content_groups = []
+    runtime.checkpoint_base[rr.CONTEXT] = {'input_message_id': 'input', 'requests': []}
+    runtime.checkpoint_base[rr.KEY] = {'status': 'ambiguous', 'target': {'kind': 'ambiguous'}}
+    monkeypatch.setattr(content_tools, 'check_source_scope', lambda *args: None)
+    read = await content_tools.read_saved_item(runtime, None, prepared.execution_context, ref(row, 3))
+    assert read['content_source']['artifact_id'] == row['artifact_id']
+    assert read['item']['body'] == document()['items'][2]['body']
+    assert runtime.task_execution_state is None  # No ownership or execution grant.
+
+
+@pytest.mark.parametrize('intent', ['edit', 'generate', 'write_then_submit_images', 'execute_saved'])
+@pytest.mark.asyncio
+async def test_selected_saved_recipe_always_offers_content_source_not_inline_image_edit(intent):
+    from services.handlers.chat import content_tools
+    from services.task_execution.inline_image_action import allowed_for_offer
+    from services.tools import build_legacy_catalog
+    runtime, prepared, handler, request, row = await registered()
+    request = semantic_request(request, intent, target={'kind': 'content', 'basis': 'explicit_reference',
+        'artifact_id': row['artifact_id'], 'revision': row['revision'], 'item_indices': [3]})
+    reuse = content_tools.selects_previous_item(request, runtime)
+    inline = allowed_for_offer(runtime, server_image_plan=False, reuse_source=reuse)
+    assert reuse and not inline
+    tools = content_tools.model_tools([build_legacy_catalog().require('generate_image').to_schema()],
+        reuse_source=reuse, inline_image=inline, saved_text_available=True)
+    shape = tools[0]['function']['parameters']
+    assert shape['required'] == ['content_source'] and set(shape['properties']) == {'content_source'}
 
 
 @pytest.mark.parametrize(('options', 'size', 'changes'), [
@@ -35,6 +103,7 @@ async def portrait_case():
             'options': {'aspect_ratio': 'auto', 'resolution': '2K', 'output_format': 'png'}}}]}, 'portrait')])
     row, = co.catalog(r.task_execution_state)
     q = semantic_request(q, 'execute_saved', size={'aspect_ratio': '1:1'})
+    observed_revision(r, q, row)
     return r, p, h, q, row
 
 
@@ -159,6 +228,7 @@ async def test_user_can_approve_one_waiting_plan_with_a_size_change_in_the_same_
         'artifact_id': old['artifact_id'], 'revision': old['revision'], 'tool': 'generate_image',
         'approved_items': [3], 'object_key': old['object_key']}
     r.checkpoint_base['_media_decisions_v1'] = {'version': 1, 'items': [decision]}
+    observed_revision(r, q, old, [3])
     await execute(r, p, h, q, [call(co.SAVE, {'base': ref(old, 3), 'updates': [
         {'item_index': 3, 'item': {'body': '正方形封面，保留原图结构与图案。',
             'options': {**draft['items'][2]['options'], 'aspect_ratio': '1:1'}}}],
@@ -197,6 +267,7 @@ async def test_revision_bridge_cannot_invent_execution_or_change_a_pure_confirma
     q = semantic_request(q, 'execute_saved', size={'aspect_ratio': '3:4'} if has_size_change else {},
         media={'tool': 'generate_image', 'approved': [3], 'confirmation_only': True,
                'artifact_id': old['artifact_id'], 'revision': old['revision']})
+    observed_revision(r, q, old, [3])
     await execute(r, p, h, q, [call(co.SAVE, {'base': ref(old, 3), 'updates': [
         {'item_index': 3, 'item': {'body': '竖版画布，保留原图。',
             'options': {**document()['items'][2]['options'], 'aspect_ratio': '3:4'}}}],
@@ -228,6 +299,7 @@ async def test_text_only_size_revision_updates_original_instead_of_registering_a
     assert json.loads(p.messages[-1]['content'])['code'] == 'CONTENT_EXECUTION_SOURCE_REQUIRED'
     assert co.catalog(r.task_execution_state) == [old]
     _, original, item = co.load(r.task_execution_state, co.ContentReference.model_validate(ref(old, 3)))
+    observed_revision(r, q, old, [3])
     await execute(r, p, h, q, [call(co.SAVE, {'base': ref(old, 3), 'updates': [{
         'item_index': 3, 'item': {'body': item.body + '\n输出清晰度2K。',
             'options': {**item.options, 'resolution': '2K'}}}], 'continue_execution': False}, 'revise')])

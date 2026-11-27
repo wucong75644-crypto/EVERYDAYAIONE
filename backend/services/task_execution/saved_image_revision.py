@@ -29,7 +29,7 @@ def approves_revision(state, draft, frame):
             and set(media.approved) <= set(record.confirmation_items)
             and set(media.approved) == {update.item_index for update in draft.updates}
             and any(size_changes(record.document.items[index - 1].options,
-                frame.size.model_dump(exclude_none=True)) for index in media.approved))
+                frame.size_for(index)) for index in media.approved))
     except (ValueError, KeyError, IndexError):
         return False
 
@@ -114,10 +114,12 @@ def check(runtime, request, calls, state):
 
     frame = semantic_context(request, runtime)
     if state is None or frame is None or semantic_intent(request, runtime) not in {
-            'execute_saved', 'repeat', 'edit', 'write', 'write_then_submit_images'}:
+            'execute_saved', 'repeat', 'edit', 'generate', 'write', 'write_then_submit_images'}:
         return {}
-    size = frame.size.model_dump(exclude_none=True)
-    if not size:
+    if semantic_intent(request, runtime) == 'generate' and (frame.target is None or frame.target.kind != 'content'):
+        return {}
+    size = frame.size_for()
+    if not size and not frame.size_rules:
         return {}
     errors = {}
     for call in calls:
@@ -127,6 +129,7 @@ def check(runtime, request, calls, state):
                 reference = co.ContentReference.model_validate({key: args['content_source'][key]
                     for key in ('artifact_id', 'item_index', 'sha256') if key in args['content_source']})
                 _, _, item = co.load(state, reference)
+                size = frame.size_for(reference.item_index)
                 changes = size_changes(item.options, size)
                 reason = '旧稿规格与本次要求不同，尚未提交图片。'
             elif call['name'] == co.SAVE and args.get('base'):
@@ -136,6 +139,7 @@ def check(runtime, request, calls, state):
                     if update.item_index > len(document.items):
                         continue  # Existing save validation owns invalid indices.
                     item = document.items[update.item_index - 1]
+                    size = frame.size_for(update.item_index)
                     changes = size_changes(item.options, size)
                     if not changes:
                         continue

@@ -236,6 +236,40 @@ async def test_only_new_short_schema_errors_get_one_bounded_read_only_repair(mon
         assert model.await_args.kwargs['context']['routing_parameter_correction'] == failure['rejection']
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize('failure', ['missing_intent', 'conflicting_action'])
+async def test_route_repairs_complete_json_and_action_without_guessing_user_words(monkeypatch, failure):
+    from services.agent.image.ecommerce_planner import workflow
+    from services.intent_router import IntentRouter
+    source = snapshot(); source['catalog_version'] = 2
+    good = {'kind': 'ordinary_image', 'mode': 'new', 'reuse_through_stage': 0,
+        'intent': 'execute_saved', 'image_count': None, 'request_context': {
+            'focus': 'selected_target', 'target': {'kind': 'content', 'basis': 'explicit_reference',
+                'artifact_id': 'recipe', 'revision': 1, 'item_indices': [3], 'source_message_id': source['input_message_id']},
+            'size_rules': [{'scope': 'items', 'item_indices': [3], 'size': {'aspect_ratio': '1:1', 'resolution': '1K'}}],
+            'media': {'tool': 'generate_image', 'approved': [3], 'artifact_id': 'recipe', 'revision': 1}}}
+    good['request_context'].update(size={}, platform=None, deliveries=[], materials=[], image_action=None)
+    good['request_context']['media'].update(wait_for=[], wait_all=False, confirmation_only=False)
+    bad = copy.deepcopy(good)
+    if failure == 'missing_intent': bad.pop('intent')
+    else: bad['intent'] = 'edit'
+    calls = []
+    async def transport(self, **kwargs):
+        calls.append(kwargs)
+        return {'choices': [{'message': {'tool_calls': [{'function': {'name': 'select_image_workflow',
+            'arguments': json.dumps(bad if len(calls) == 1 else good)}}]}}]}
+    monkeypatch.setattr(IntentRouter, 'call_tool_model', transport)
+    groups = [{'artifact_id': 'recipe', 'revision': 1, 'confirmation_tool': 'generate_image',
+               'items': [{'item_index': 3, 'awaiting_confirmation': True}]}]
+    text = [{'type': 'text', 'text': '第三个做成一张图，正方形，一千就行。'}]
+    result = await workflow.classify_current_window(text, context={'request_resolution': source, 'saved_groups': groups},
+        image_references=ImageReferences(source))
+    assert len(calls) == 2 and result.get('intent') == 'execute_saved', result
+    assert result['request_context']['media']['approved'] == [3]
+    assert json.loads(calls[0]['text'])['raw_user_input'] == json.loads(calls[1]['text'])['raw_user_input'] == text
+    assert 'routing_parameter_correction' in json.loads(calls[1]['text'])['available_context']
+
+
 def test_stored_canonical_calls_are_unchanged_and_duplicate_json_is_not_rewritten():
     # Decoding native checkpoint input is idempotent; strict raw JSON validation
     # stays upstream of alias conversion, including duplicate-key rejection.
@@ -334,6 +368,11 @@ async def test_router_short_reference_is_decoded_before_original_frame_validatio
     answer = {'kind': 'ordinary_image', 'intent': 'edit', 'mode': 'new', 'reuse_through_stage': 0,
         'image_count': None, 'request_context': {'target': {'kind': 'image', 'basis': 'current_input', 'image_ref': handle},
             'focus': 'current_request', 'size': {}, 'materials': [{'reference': {'image_ref': handle}, 'role': '底图', 'usage': 'input'}]}}
+    answer['request_context'].update(platform=None, deliveries=[], image_action=None,
+        media={'tool': 'generate_image', 'wait_for': [], 'wait_all': False, 'approved': [], 'confirmation_only': False})
+    # Preserve the existing supplier scalar/default normalization contract.
+    answer['image_count'] = '1'
+    answer['request_context'].pop('image_action')
     async def route(self, **kwargs):
         target = kwargs['tools'][0]['function']['parameters']['$defs']['Target']
         assert 'content_index' not in target['properties'] and 'image_ref' in target['properties']
@@ -344,6 +383,8 @@ async def test_router_short_reference_is_decoded_before_original_frame_validatio
     monkeypatch.setattr(IntentRouter, 'call_tool_model', route)
     result = await classify_workflow([], context={'request_resolution': refs.encode({'catalog_version': 2,
         'image_results': source['image_results']})}, image_references=refs)
+    assert 'request_context' in result, result
+    assert result['image_count'] is None  # Editing uses its existing single-image contract.
     target = result['request_context']['target']
     expected = refs.references[handle]
     assert target['source_message_id'] == expected['message_id'] and target['content_index'] == expected['content_index']

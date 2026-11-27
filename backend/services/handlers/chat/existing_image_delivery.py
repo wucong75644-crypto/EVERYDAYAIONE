@@ -1,13 +1,14 @@
 """An explicit current-input display directive, never an implicit latest image."""
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 
 from services.task_execution import request_resolution as resolution
 from services.task_execution.content_delivery import input_revision
 
-MISSING = '这次还没有展示图片。请明确要查看哪一张，例如哪一轮或哪一个方案的图片。'
+MISSING = '这次还没有完成旧图的定位和展示，没有重新生成图片。'
 FAILED = '这次未能展示所选图片，没有重新生成。所选图片暂时无法读取或展示条件未通过，请稍后重试。'
 
 
@@ -95,3 +96,108 @@ async def deliver(runtime, request, prepared, blocks, *, execute, finish):
     if not content_tools.requires_continued_delivery(request, runtime):
         return True
     return False
+
+
+def selection_arguments(reference):
+    return {'intent': 'explain', 'request_context': {'focus': 'selected_target',
+        'image_action': 'display_existing', 'target': {'kind': 'image', 'basis': 'explicit_reference',
+            'source_message_id': reference['message_id'], 'content_index': reference['content_index']}}}
+
+
+def selection_rejection(runtime, request, reference):
+    if action(runtime, request) != 'display_existing' or resolution.context(runtime) is None:
+        return None
+    if (not isinstance(reference, dict) or not isinstance(reference.get('message_id'), str)
+            or type(reference.get('content_index')) is not int):
+        return None
+    selected = resolution.binding(runtime) or {}
+    if (selected.get('status') == 'resolved'
+            and selected.get('input_revision') == input_revision(runtime, request)):
+        return None
+    from services.task_execution.image_reference_catalog import for_runtime
+    args = selection_arguments(reference)
+    encoded = for_runtime(runtime)
+    if encoded:
+        args = encoded.encode(args)
+    return {'ok': False, 'accepted': False, 'code': 'REQUEST_TARGET_SELECTION_REQUIRED',
+        'message': '已确认用户要求展示旧图，但尚未绑定具体图片，本次未展示。'
+                   '核实候选后先单独选择目标；需要看图时先view_image。不要重新生成或换成其他图。',
+        'recovery': {'tool': resolution.SELECT, 'arguments': args}}
+
+
+def stage(runtime, request, blocks):
+    if complete(runtime, request, blocks):
+        return 'delivered'
+    return 'ready_to_deliver' if references(runtime, request) else 'needs_selection'
+
+
+def recovery_context(runtime, request, blocks):
+    from services.task_execution.image_history import recovered, requires_view
+    from services.task_execution.image_reference_catalog import for_runtime
+    candidates = recovered(runtime)
+    examples = [{'reference': image['reference'], 'requires_view_before_selection': requires_view(runtime, image['reference']),
+                 'selection_arguments': selection_arguments(image['reference'])}
+                for image in candidates[:20]]
+    retry = runtime.checkpoint_base.get('_existing_image_recovery_v1', {})
+    attempts = retry.get('attempts', 0) if retry.get('input_revision') == input_revision(runtime, request) else 0
+    facts = {'continuation_attempt': attempts, 'previous_narrative_is_not_delivery': bool(attempts), 'intent': 'explain', 'image_action': 'display_existing', 'stage': stage(runtime, request, blocks),
+        'candidates': examples, 'instruction':
+            '本次要求实际展示已有图，尚未完成。查询、看图和口头承诺都不是交付。'
+            '尚未找到候选用list_conversation_images，has_more=true可继续翻页；'
+            '需要核图时用read_conversation_text(view_image)，再单独resolve_request_target选择用户指向的图片。'
+            '候选示例不是默认选择，不因只有一张就省略用户语义核对。'
+            '目标明确后后台按已校验目标展示；不要重新生成。'
+            '确实需要用户选择时单独用respond_without_execution(purpose=clarification)提出具体问题；'
+            '查询无结果、权限不足或文件不可用时如实说明，不能只说稍后发图。'}
+    encoded = for_runtime(runtime)
+    return '[Existing image delivery]\n' + json.dumps(encoded.encode(facts) if encoded else facts, ensure_ascii=False)
+
+
+def offer(runtime, request, tools):
+    mode = action(runtime, request)
+    if mode not in {'display_existing', 'analyze'} or resolution.context(runtime) is None:
+        return tools
+    ready = mode == 'display_existing' and bool(references(runtime, request))
+    result = []
+    for original in tools:
+        if original.get('function', {}).get('name') != 'read_conversation_text':
+            result.append(original)
+            continue
+        tool = copy.deepcopy(original)
+        params = tool['function']['parameters']
+        if not ready:
+            params['properties'].pop('show_image', None)
+            params['oneOf'] = [form for form in params.get('oneOf', []) if 'show_image' not in form.get('required', [])]
+            tool['function']['description'] += (' 本次仅分析，不提供show_image，使用view_image核图。' if mode == 'analyze' else ' 当前目标尚未绑定，show_image暂不提供。')
+            tool['function']['description'] += (' 对需要展示的目标，'
+                '先查询、必要时view_image核图，再单独resolve_request_target。绑定成功后开放展示或后台自动交付。')
+        result.append(tool)
+    return result
+
+
+def can_continue(runtime, request, prepared):
+    if runtime is None:
+        return False
+    journal = runtime.checkpoint_base.get('_existing_image_recovery_v1', {})
+    count = journal.get('attempts', 0) if journal.get('input_revision') == input_revision(runtime, request) else 0
+    state = getattr(runtime, 'task_execution_state', None)
+    limit = min(2, state.correction_limit) if state else 2
+    return (count < limit and not prepared.budget.stop_reason
+            and (state is None or state.budget_rounds_used < state.model_round_limit))
+
+
+def request_continuation(runtime, request, prepared, blocks):
+    """Bounded, checkpointed retries when a model returns prose before delivery."""
+    if not can_continue(runtime, request, prepared):
+        return False
+    key = '_existing_image_recovery_v1'
+    revision = input_revision(runtime, request)
+    journal = runtime.checkpoint_base.get(key, {})
+    count = journal.get('attempts', 0) if journal.get('input_revision') == revision else 0
+    runtime.checkpoint_base[key] = {'input_revision': revision, 'attempts': count + 1}
+    draft = getattr(prepared, 'pending_display_narrative', None)
+    if draft:
+        prepared.messages.append({'role': 'assistant', 'content': draft})
+    prepared.pending_display_narrative = None
+    prepared.messages.append({'role': 'system', 'content': recovery_context(runtime, request, blocks)})
+    return True

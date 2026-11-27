@@ -276,6 +276,12 @@ class WorkingPlan(Fact):
     steps: tuple[WorkItem, ...] = Field(max_length=32)
 
 
+class ExecutionWindow(Fact):
+    input_message_id: UUID
+    model_rounds_used: Count = 0
+    correction_count: Count = 0
+
+
 class TaskState(Fact):
     version: Literal[1] = 1
     image_binding_version: Literal[1,2,3] = 1
@@ -306,13 +312,24 @@ class TaskState(Fact):
     results: tuple[StepResult, ...] = Field(default=(), max_length=32)
     operations: tuple[Operation, ...] = Field(default=(), max_length=256)
     model_rounds_used: Count = 0
+    execution_window: ExecutionWindow | None = None
     correction_count: Count = 0
     model_round_limit: Annotated[int, Field(strict=True, ge=1, le=200)] = 30
     correction_limit: Annotated[int, Field(strict=True, ge=1, le=10)] = 3
 
+    @property
+    def budget_rounds_used(self):
+        return self.execution_window.model_rounds_used if self.execution_window else self.model_rounds_used
+
+    @property
+    def budget_corrections_used(self):
+        return self.execution_window.correction_count if self.execution_window else self.correction_count
+
     @model_serializer(mode='wrap')
     def preserve_legacy_image_protocol(self,handler):
         value=handler(self)
+        if self.execution_window is None:
+            value.pop('execution_window', None)
         if not self.model_directed:
             value.pop('model_directed', None)
             value.pop('call_bindings', None)

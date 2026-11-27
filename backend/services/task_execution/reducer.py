@@ -192,9 +192,15 @@ def consume_model_round(state: TaskState, *, correction=False) -> TaskState:
     _active(state)
     rounds = state.model_rounds_used + 1
     corrections = state.correction_count + int(correction)
-    if rounds > state.model_round_limit or corrections > state.correction_limit:
+    if state.budget_rounds_used + 1 > state.model_round_limit or state.budget_corrections_used + int(correction) > state.correction_limit:
         raise TaskError('TASK_BUDGET_EXHAUSTED')
-    return _change(state, model_rounds_used=rounds, correction_count=corrections)
+    window = state.execution_window
+    changes = {'model_rounds_used': rounds, 'correction_count': corrections}
+    if window is not None:
+        changes['execution_window'] = window.model_copy(update={
+            'model_rounds_used': window.model_rounds_used + 1,
+            'correction_count': window.correction_count + int(correction)})
+    return _change(state, **changes)
 
 
 def effect_version(state, key):

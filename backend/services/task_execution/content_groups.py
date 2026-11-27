@@ -197,7 +197,16 @@ def bind_group(document, images, request_text, selected=None, *, infer_materials
     if semantic_context is not None and shared is None and unique and semantic_context.reference_usage == 'input':
         shared = (1,)
     items = []
-    for item in document.items:
+    if semantic_context is not None and any(index > len(document.items)
+            for rule in semantic_context.size_rules for index in rule.item_indices):
+        from .contracts import TaskError
+        raise TaskError('IMAGE_SIZE_SCOPE_ITEM_UNAVAILABLE')
+    for item_index, item in enumerate(document.items, 1):
+        if semantic_context is not None:
+            shared_size = semantic_context.size_for(item_index)
+            shared_options = {key: shared_size[key] for key in ('aspect_ratio', 'resolution') if key in shared_size}
+            if shared_size.get('mode') == 'auto':
+                shared_options['aspect_ratio'] = 'auto'
         indices = shared
         materials = item.materials or tuple(image_materials(images, indices or ()))
         if selected_materials is not None:
@@ -222,7 +231,7 @@ def bind_group(document, images, request_text, selected=None, *, infer_materials
         # suggestions, including structured item options. Execution may still
         # apply a newer user request through the existing size resolver.
         options = {**item.options, **shared_options}
-        if semantic_context is not None and (images or semantic_context.reference_usage is not None
+        if semantic_context is not None and (not semantic_context.size_rules or shared_size) and (images or semantic_context.reference_usage is not None
                 or selected_materials is not None or semantic_context.media.tool == 'generate_image'):
             if canvas is not None and not any(key in shared_size for key in ('aspect_ratio','width','orientation')) and shared_size.get('mode') != 'auto':
                 inputs = [material.reference for material in materials if material.usage == 'input']

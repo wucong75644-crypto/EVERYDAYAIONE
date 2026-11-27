@@ -13,6 +13,7 @@ from uuid import UUID
 from pydantic import Field, StrictInt, field_validator, model_validator
 
 from .contracts import Fact, TaskError, TaskState
+from . import action_target_contract
 
 CONTEXT = '_request_context_v1'
 KEY = '_request_resolution_v1'
@@ -84,8 +85,10 @@ def selection_schema(runtime=None):
     frame['required'] = ['target', 'focus']
     return {'type': 'function', 'function': {'name': SELECT,
         'description': '核对最近请求或读取来源后，明确选择/纠正本次动作与目标。只单独调用，不执行业务；'
-                       'request_context填写所选需求的规格、素材和target，不沿用无关旧方案。intent=explain时用image_action=analyze表示分析，display_existing表示实际向用户展示已有图；改成其他意图时image_action填null。未准备执行稿、未派发且没有接回旧任务时可纠正。',
+                       'request_context填写所选需求的规格、素材和target，不沿用无关旧方案。intent=explain时用image_action=analyze表示分析，display_existing表示实际向用户展示已有图；改成其他意图时image_action填null。未准备执行稿、未派发且没有接回旧任务时可纠正。'
+                       + action_target_contract.SELECTION_GUIDANCE,
         'parameters': {'type': 'object', 'additionalProperties': False, 'required': ['intent', 'request_context'],
+                       'allOf': action_target_contract.schema_rules(), 'examples': action_target_contract.selection_examples(),
                        '$defs': definitions,
                        'properties': {'intent': {'type': 'string', 'enum': list(IMAGE_INTENTS)}, 'request_context': frame}}}}
 
@@ -100,7 +103,7 @@ async def select(runtime, request, prepared, args):
         old_target = Target.model_validate(merged['target']).model_dump(exclude={'basis'}) if merged.get('target') else None
         new_target = Target.model_validate(raw_frame['target']).model_dump(exclude={'basis'}) if raw_frame.get('target') else None
         if old_target != new_target:
-            for field in ('size', 'canvas_image', 'canvas_resource', 'materials', 'reference_usage'):
+            for field in ('size', 'size_rules', 'canvas_image', 'canvas_resource', 'materials', 'reference_usage'):
                 merged.pop(field, None)
             # Approval belongs to an exact saved object, never to a corrected
             # image/request. Waiting conditions may survive an alias change
@@ -264,6 +267,8 @@ def model_context(runtime):
             '图片目标复制reference.message_id和content_index，纠正和路由用相同引用。',
             '图片目标复制image_ref，纠正和路由用同一短引用。')
         result['instruction'] += ('图片选择复制image_ref；编辑、素材和只读图片工具使用同一短引用。'
+            '最近目录不是全部历史，缺少指定旧图时先list_conversation_images分页查询并view_image核实；'
+            '已找回历史图也可选择，不用其他候选替代。'
             '编号绑定当前输入快照，不复制其他输入中的编号。后台保留真实消息ID、位置及轮次来源。'
             '尚未保存的需求选request或image后准备新稿，不能编造content目标、稿件ID或basis；'
             'content仅用于目录中真实存在且版本匹配的保存稿。')
@@ -273,13 +278,17 @@ def model_context(runtime):
 def freeze_frame(runtime, request, frame, intent):
     """One admission contract for router choices and later model corrections."""
     raw = frame.target.model_dump(mode='json', exclude_none=True) if frame.target else None
+    if raw:
+        action_target_contract.validate(intent, raw['kind'])
     if (context(runtime) or {}).get('catalog_version') == 2 and raw:
         if raw['kind'] == 'content' and intent in {'execute_saved', 'repeat'} and frame.focus == 'current_request':
             raise TaskError('REQUEST_TARGET_FOCUS_CONFLICT')
         if raw['kind'] == 'content' and intent in {'execute_saved', 'repeat'}:
             selected = next((g for g in groups(runtime) if g['artifact_id'] == raw['artifact_id'] and g['revision'] == raw['revision']), None)
-            if (selected and frame.size.mode == 'inherit_reference'
-                    and any(item['item_index'] in raw['item_indices'] and item.get('options', {}).get('aspect_ratio') == 'auto'
+            if (selected
+                    and any(item['item_index'] in raw['item_indices']
+                            and frame.size_for(item['item_index']).get('mode') == 'inherit_reference'
+                            and item.get('options', {}).get('aspect_ratio') == 'auto'
                             for item in selected['items'])):
                 # Do not adopt the old task and then discover this known frozen
                 # size conflict at native dispatch. Preserve the recipe or
@@ -319,6 +328,12 @@ def freeze(runtime, request, raw, *, focus=None):
                 value['basis'] = 'active_request'  # Same focused source, canonical relation.
             actual = next((i for i in snapshot.get('image_results', ())
                            if (i['source_message_id'], i['content_index']) == (target.source_message_id, target.content_index)), None)
+            if actual is None:
+                from .image_history import recovered, was_viewed
+                actual = next((i for i in recovered(runtime)
+                    if (i['source_message_id'], i['content_index']) == (target.source_message_id, target.content_index)), None)
+                if actual and not was_viewed(runtime, actual['reference']):
+                    raise TaskError('REQUEST_TARGET_IMAGE_REQUIRES_VIEW')
             if not actual and not (source and any(i['reference']['content_index'] == target.content_index for i in source.get('images', ()))):
                 raise TaskError('REQUEST_TARGET_IMAGE_NOT_FOUND')
             if actual:
@@ -396,13 +411,19 @@ def check(runtime, request, call, *, root_task_id=None):
     if value is None or value['status'] != 'resolved' or value['input_revision'] != input_revision(runtime, request):
         return ('REQUEST_TARGET_UNRESOLVED', '本次目标尚未明确或输入已变化。核对最近需求与方案，不派发历史旧稿；有歧义时询问具体目标。')
     target = value['target']
+    from services.handlers.chat.content_tools import semantic_intent
+    try:
+        action_target_contract.validate(semantic_intent(request, runtime), target['kind'])
+    except TaskError:
+        return (action_target_contract.CODE, action_target_contract.GUIDANCE)
     if (call['name'] == 'save_task_text' and target['kind'] == 'content'
             and ('document' in args or 'message_source' in args)):
+        from .content_objects import REVISION_USAGE
         return ('REQUEST_TARGET_REVISION_REQUIRED',
             '本次已选定真实保存稿。先用read_conversation_text读取所选完整条目，'
             '再用save_task_text的base和updates修订原稿；不要重新登记整组document或message_source。'
             '仅更新用户指定的条目和字段，保留其他条目、未改规格与素材。'
-            '用户只要求修改方案、不出图时continue_execution=false；修改并出图才设为true。')
+            '用户只要求修改方案、不出图时continue_execution=false；修改并出图才设为true。' + REVISION_USAGE)
     if call['name'] == 'save_task_text' and target['kind'] == 'content':
         updates = args.get('updates')
         if (isinstance(updates, list) and all(isinstance(u, dict) and type(u.get('item_index')) is int for u in updates)
@@ -484,11 +505,12 @@ def check_display(runtime, request, reference):
     from services.handlers.chat.content_tools import semantic_intent
     from .content_delivery import input_revision
     value = binding(runtime)
-    if (value is None or value['status'] != 'resolved'
-            or value['input_revision'] != input_revision(runtime, request)
-            or semantic_intent(request, runtime) != 'explain'):
-        raise TaskError('REQUEST_TARGET_EXISTING_RESULT_NOT_REQUESTED')
     from services.handlers.chat.existing_image_delivery import action
+    if semantic_intent(request, runtime) != 'explain':
+        raise TaskError('REQUEST_TARGET_EXISTING_RESULT_NOT_REQUESTED')
+    if (value is None or value['status'] != 'resolved'
+            or value['input_revision'] != input_revision(runtime, request)):
+        raise TaskError('REQUEST_TARGET_SELECTION_REQUIRED')
     if action(runtime, request) == 'analyze':
         raise TaskError('REQUEST_TARGET_EXISTING_RESULT_NOT_REQUESTED')
     target = value['target']

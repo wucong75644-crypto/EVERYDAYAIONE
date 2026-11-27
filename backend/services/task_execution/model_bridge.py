@@ -62,7 +62,12 @@ async def review_model_completion(*, runtime, prepared, blocks, build_checkpoint
         from .content_delivery import KEY
         delivery = runtime.checkpoint_base.get(KEY) or {}
         notice = None
-        if (delivery.get('phase') == 'committed' and delivery.get('owner_task_id') == str(runtime.task_id)
+        if exhausted:
+            candidate = candidate.model_copy(update={'status': 'partial'})
+            notice = {'type': 'text', 'text': '本次处理达到执行上限，尚未全部完成。已完成的内容和已受理的图片任务均已保留，未提交的操作没有执行；待核实的图片不会重复提交。',
+                      'task_status': 'partial', 'stop_reason': 'max_turns'}
+            blocks.append(notice)
+        elif (delivery.get('phase') == 'committed' and delivery.get('owner_task_id') == str(runtime.task_id)
                 and delivery.get('delivery_complete') is False and candidate.status == 'completed'):
             candidate = candidate.model_copy(update={'status': 'partial'})
             notice = {'type': 'text', 'text': '文字稿尚未全部交付，已保留当前稿件，可接续完成剩余内容。',
@@ -117,9 +122,13 @@ async def review_model_completion(*, runtime, prepared, blocks, build_checkpoint
         if str(exc) not in {'TASK_DELIVERY_INCOMPLETE', 'TASK_EFFECT_UNRESOLVED'}:
             raise
         corrections = state.correction_count + 1
-        again = (not exhausted and corrections <= state.correction_limit
-                 and state.model_rounds_used < state.model_round_limit)
+        again = (not exhausted and state.budget_corrections_used + 1 <= state.correction_limit
+                 and state.budget_rounds_used < state.model_round_limit)
+        window = state.execution_window
+        if window is not None and again:
+            window = window.model_copy(update={'correction_count': window.correction_count + 1})
         candidate = TaskState.model_validate({**state.model_dump(), 'revision': state.revision + 1,
+            'execution_window': window,
             'correction_count': corrections if again else state.correction_count,
             'status': 'active' if again else 'partial'})
         prepared.messages.append({'role': 'system', 'content': '[Task completion check]\n'

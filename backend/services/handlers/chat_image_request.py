@@ -396,7 +396,7 @@ class ChatImageInputResolver:
                 **{key: dimensions[key] for key in ("width", "height", "aspect_ratio")}})
         return resolved
 
-    def size_context(self, *, use_previous=True, infer_attachment_canvas=True, semantic_context=None):
+    def size_context(self, *, use_previous=True, infer_attachment_canvas=True, semantic_context=None, item_index=None):
         from services.handlers.chat_context.image_sources import content_parts
         def text(row):
             return "\n".join(part.get("text", "") for part in content_parts(row.get("content"))
@@ -409,12 +409,12 @@ class ChatImageInputResolver:
             from services.agent.image.ecommerce_planner.workflow import ImageRequestContext
             raw = (getattr(actor, 'workflow_projection', None) or {}).get('request_context')
             semantic_context = ImageRequestContext.model_validate(raw or {})
-        intent = semantic_context.size.model_dump(exclude_none=True)
+        intent = semantic_context.size_for(item_index)
         if 'width' in intent or 'height' in intent:
             from services.handlers.image_size_requirements import check_pixel_precision
             # Keep the semantic tri-state instead of turning missing precision
             # into the legacy native tool's exact-width/height contract.
-            intent['approximate_pixels'] = semantic_context.size.approximate_pixels
+            intent.setdefault('approximate_pixels', None)
             check_pixel_precision(intent)
         locator = None
         if semantic_context is not None:

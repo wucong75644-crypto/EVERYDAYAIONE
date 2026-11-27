@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 import pytest
-from tests.semantic_fixtures import semantic_request
+from tests.semantic_fixtures import semantic_request, observed_revision
 from services.task_execution import content_objects as co
 from services.task_execution.contracts import TaskError, TaskState
 from services.task_execution.direct_loop import context_message, schemas, image_plan_item
@@ -30,6 +30,7 @@ async def registered():
     assert len(blocks)==1 and blocks[0]['type']=='text' and blocks[0]['content_delivery_final']
     h._execute_tool_calls.assert_not_awaited()
     row=co.catalog(r.task_execution_state)[0]
+    observed_revision(r, q, row)
     return r,p,h,q,row
 
 
@@ -49,6 +50,7 @@ async def test_authored_display_markdown_survives_revision_without_entering_tool
     first, = await execute(r, p, h, q, [call(co.SAVE, {'document': draft}, 'write')])
     assert first['text'] == '\n\n'.join((intro, prefix, original))
     row, = co.catalog(r.task_execution_state)
+    observed_revision(r, q, row)
     revised_block, = await execute(r, p, h, q, [call(co.SAVE, {
         'base': {'artifact_id': row['artifact_id'], 'item_index': 1},
         'updates': [{'item_index': 1, 'item': {'body': revised}}],
@@ -102,6 +104,7 @@ async def test_writing_records_one_shared_origin_and_only_explicit_execution_sel
         with pytest.raises(TaskError, match='CONTENT_SOURCE_IMAGE_UNAVAILABLE'):
             co.compile_input(r.task_execution_state, 'generate_image', {}, {**reference, 'source_image_indices': indices})
 
+    observed_revision(r, q, row, [2])
     await execute(r, p, h, q, [call(co.SAVE, {'base': reference,
         'updates': [{'item_index': 2, 'item': {'body': '修订版原文。'}}]}, 'revise')])
     revised, = co.catalog(r.task_execution_state)
@@ -288,6 +291,7 @@ async def test_fresh_upload_revision_single_and_all_reach_native_snapshot(monkey
     for item in doc['items']: item['materials']=[{'reference':{'message_id':source_id,'content_index':1},'role':'原产品','usage':'input'}]
     await execute(r,p,h,q,[call(co.SAVE,{'document':doc},'write')])
     row=co.catalog(r.task_execution_state)[0]
+    observed_revision(r, q, row, [2])
     edited={**doc['items'][1],'body':'刚改的第二条：樱花主视觉，FUJI-3776m'}
     await execute(r,p,h,q,[call(co.SAVE,{'base':ref(row,2),'updates':[{'item_index':2,'item':edited}]},'edit')])
     row=co.catalog(r.task_execution_state)[0]; snapshots=[]

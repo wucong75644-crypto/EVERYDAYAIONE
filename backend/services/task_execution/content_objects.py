@@ -253,9 +253,9 @@ class SaveContent(Fact):
     ], 'allOf': [{'if': {'required': ['new_content'], 'properties': {'new_content': {'const': True}}},
                    'then': {'required': ['continue_execution', 'document'], 'properties': {'continue_execution': {'const': True}}}}]}}
     document: ContentDocument | None = None
-    base: ContentReference | None = None
+    base: ContentReference | None = Field(default=None, description='修订已有稿件时，原样复制读取回执中的content_source；与updates一起填写，不与document或message_source混用。')
     message_source: MessageContentSource | None = None
-    updates: tuple[ItemUpdate, ...] = Field(default=(), max_length=100)
+    updates: tuple[ItemUpdate, ...] = Field(default=(), max_length=100, description='仅列用户选定且需要修改的条目。item_index沿用原编号；item仅填写变化字段，body若提供必须是完整修订正文。未列条目及省略字段由后台保留；options若提供则须保留原有未改选项。')
     delivery_complete: bool = Field(default=True, description='本轮文字已完整交付时为true。仍需继续保存其他稿件时为false；这只控制文字交付结束，不授权图片或其他执行。')
     continue_execution: bool = Field(default=False, description='仅在本轮还要求实际执行时设为 true。保存成功后仍需调用目标工具。')
     confirmation: MediaDirective | None = Field(
@@ -285,11 +285,46 @@ class SaveContent(Fact):
             raise ValueError('CONTENT_NEW_SOURCE_INVALID')
         return self
 
+def revision_examples(require_presentation=True):
+    # Illustrative references only; the model must copy the real read receipt.
+    patch = {'base': {'artifact_id': 'content-example', 'item_index': 3},
+             'updates': [{'item_index': 3, 'item': {
+                 'body': '## 完整生图提示词\n参考用户所选原图制作绿叶封面，保留本子外形与原图构图。正方形，2K。\n\n## 负面提示词\n禁止改变本子结构、装订方式与数量，禁止添加水印。',
+                 'display_prefix': '## 方案三：绿叶封面\n\n### 方案内容\n米白封面中央绘制三片细长绿叶，左上安排浅灰小字Spring，右下保留留白。\n\n### 视觉设定\n低饱和浅绿与米白配色，细线平面印刷，柔和自然光，正方形1:1，2K。\n\n### 参考图使用方式\n以原图作为产品结构参考，保持本子外形、扣带、缝线、斜置角度和布面背景，仅替换封面图案。',
+                 'options': {'aspect_ratio': '1:1', 'resolution': '2K', 'output_format': 'png'}}}],
+             'continue_execution': False}
+    if not require_presentation:
+        patch['updates'][0]['item'] = {'body': '春季新品将于周五上午十点发布。活动持续三天，具体商品和价格以活动页面为准。'}
+    return [patch, {**patch, 'continue_execution': True}]
+
+
+def revision_usage(require_presentation=True):
+    from .content_revision import READ_GUIDANCE
+    return (READ_GUIDANCE +
+        'base复制读取回执中的稿件引用，updates[].item_index沿用原编号，仅列用户指定条目。'
+        'item只提交变化字段；body是完整修订正文，保留未改细节和原结构。'
+        'options若填写会整体替换旧值，先复制完整原options再改指定字段；不换素材省略materials。'
+        '只改文字continue_execution=false；用户明确要求改稿并执行才为true，保存本身不派发。'
+        '以下两个完整JSON分别示范仅修改与修改后继续执行：'
+        + json.dumps(revision_examples(require_presentation), ensure_ascii=False)
+        + '。示例身份、正文和options仅示意格式，必须替换为真实读取的引用及原稿修订后的完整内容；'
+          '不能复制示例覆盖用户原稿。普通文字不添加图片章节。'
+          '第二例保存后用新回执content_source调用执行工具，其他条目的确认条件不变。')
+
+
+REVISION_USAGE = revision_usage()
+
+
 def save_parameters(*, require_presentation=False):
     parameters = SaveContent.model_json_schema()
+    # SaveContent.choice already forbids approving existing items here. Mirror
+    # that rule in the shared directive's model-visible save-only projection.
+    approval = parameters['$defs']['MediaDirective']['properties']['approved']
+    approval.update(const=[], description='本保存工具不接受条目批准，省略或空数组；本次批准由真实用户请求及后台决策绑定。')
     # Advertise each selector as an object. The oneOf controls the selector choice.
     parameters['properties']['document'] = parameters['$defs'][ContentDocument.__name__]
-    parameters['properties']['base'] = selection_parameters()
+    parameters['properties']['base'] = {**selection_parameters(),
+        'description': SaveContent.model_fields['base'].description}
     parameters['properties']['message_source'] = parameters['$defs'][MessageContentSource.__name__]
     del parameters['$defs'][ContentReference.__name__]
     if require_presentation:
@@ -345,7 +380,8 @@ SCHEMA = {'type': 'function', 'function': {'name': SAVE,
         '用户明确修改一张成图时，可用document和new_content=true编写新的编辑指令，在materials绑定这张图。只修订历史文字用base和updates。'
         'body包含最终要求和限制；按用户或方法要求交付的可见结构放display_prefix，内部说明放notes。materials记录用于执行或分析的素材，options仅记已确定执行规格。'
         '修订既有条目时，base使用该条目的content_source，updates每项为{item_index,item:{body:完整修订正文}}。后台绑定版本并保留未改条目、素材和规格。'
-        '本轮还要求执行时设continue_execution=true，再调用目标工具。有当前上传图片时，在每条的materials中绑定所用图片。还要求看文字时设show_content=true。',
+        '本轮还要求执行时设continue_execution=true，再调用目标工具。有当前上传图片时，在每条的materials中绑定所用图片。还要求看文字时设show_content=true。'
+        + revision_usage(False),
     'parameters': save_parameters()}}
 
 
@@ -353,11 +389,24 @@ def save_schema(runtime):
     from .direct_loop import active_image_methods
     from .methods import REFERENCE_PROMPTS_PROFILE, REFERENCE_PROMPTS_PRESENTATION
 
-    if not any(method[0] == REFERENCE_PROMPTS_PROFILE for method in active_image_methods(runtime).values()):
+    from .content_revision import selected_format, READ_GUIDANCE
+    selected = selected_format(runtime)
+    reference = (selected['profile_id'] == REFERENCE_PROMPTS_PROFILE if selected is not None else
+                 any(method[0] == REFERENCE_PROMPTS_PROFILE for method in active_image_methods(runtime).values()))
+    if selected is None and not reference:
         return SCHEMA
+    description = (REFERENCE_PROMPTS_PRESENTATION if reference else '') + SCHEMA['function']['description'] + READ_GUIDANCE
+    if selected is not None:
+        description += ' 所选旧稿的真实格式合同：' + json.dumps(selected, ensure_ascii=False)
+    parameters = save_parameters(require_presentation=reference)
+    parameters['examples'] = revision_examples(reference)
+    if reference:
+        parameters['$defs']['ContentItemPatch']['properties']['body']['description'] += (
+            ' 按旧稿format_contract保留完整生图提示词、负面提示词两个独立Markdown章节及完整正文。')
+        parameters['$defs']['ContentItemPatch']['properties']['display_prefix']['description'] += (
+            ' 复制读取回执的原版详细内容，只改用户指定部分；不能用简短概述代替。')
     return {**SCHEMA, 'function': {**SCHEMA['function'],
-        'description': REFERENCE_PROMPTS_PRESENTATION + SCHEMA['function']['description'],
-        'parameters': save_parameters(require_presentation=True)}}
+        'description': description, 'parameters': parameters}}
 
 
 def objects(state):
@@ -622,7 +671,7 @@ def save(runtime, call, registry, *, has_image_attachments=False, source_images=
     from services.tools import ToolCall
     from .model_directed import record_calls, call_binding
     from .direct_loop import active_image_methods
-    from .methods import REFERENCE_PROMPTS_PROFILE, valid_reference_prompts_presentation
+    from .methods import REFERENCE_PROMPTS_PROFILE
     value = SaveContent.model_validate_json(call['arguments'])
     if request_context is None and '_media_decisions_v1' in getattr(runtime,'checkpoint_base',{}):
         from services.agent.image.ecommerce_planner.workflow import ImageRequestContext
@@ -698,7 +747,7 @@ def save(runtime, call, registry, *, has_image_attachments=False, source_images=
         confirmation_items = tuple(sorted(set(confirmation_items) | set(prior_record.confirmation_items)))
         confirmation_tool = prior_record.confirmation_tool or confirmation_tool
         source_images = prior_record.source_images
-        presentation_profile = prior_record.presentation_profile or presentation_profile
+        presentation_profile = prior_record.presentation_profile
         if not is_current(state, prior_artifact.id):
             raise TaskError('CONTENT_BASE_VERSION_CHANGED')
         object_key, revision = prior_record.object_key, prior_record.revision+1
@@ -710,9 +759,15 @@ def save(runtime, call, registry, *, has_image_attachments=False, source_images=
     if value.confirmation is not None and value.confirmation.wait_all:
         confirmation_items = tuple(range(1,len(document.items)+1))
         confirmation_tool = value.confirmation.tool
-    if (presentation_profile == REFERENCE_PROMPTS_PROFILE
-            and not valid_reference_prompts_presentation(document)):
-        raise TaskError(PRESENTATION_INCOMPLETE)
+    from .methods import presentation_issues, ContentPresentationError
+    issues = presentation_issues(document, presentation_profile)
+    if issues:
+        if value.base is not None:
+            for issue in issues:
+                for position, update in enumerate(value.updates):
+                    issue['path'] = issue['path'].replace(
+                        f'$.document.items[{update.item_index - 1}].', f'$.updates[{position}].item.')
+        raise ContentPresentationError(issues, presentation_profile)
     if presentation_profile == REFERENCE_PROMPTS_PROFILE and value.message_source is None:
         from services.handlers.image_size_requirements import image_draft_options_schema
         from services.tools.argument_validation import _issues

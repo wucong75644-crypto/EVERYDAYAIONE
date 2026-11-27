@@ -13,7 +13,8 @@ from services.tools.runtime_context import _check_identity
 
 DISCOVER = 'find_available_tools'
 READ = 'read_conversation_text'
-CONTROLS = frozenset({DISCOVER, READ, 'respond_without_execution', 'resolve_request_target'})
+from services.task_execution.image_history import TOOL as LIST_IMAGES, SCHEMA as LIST_IMAGES_SCHEMA
+CONTROLS = frozenset({DISCOVER, READ, LIST_IMAGES, 'respond_without_execution', 'resolve_request_target'})
 INPUT_TOOLS = frozenset({'generate_video', 'generate_image', 'code_execute'})
 MEDIA_TOOLS = frozenset({'generate_video', 'generate_image'})
 STATE = '_chat_content_tools'
@@ -266,7 +267,9 @@ def prefers_plain_image_text(request, runtime, *, saved_source_available=False, 
 
 
 def selects_previous_item(request, runtime=None):
-    return semantic_intent(request, runtime) in {'execute_saved', 'repeat'}
+    from services.task_execution.action_target_contract import uses_saved_protocol
+    frame = semantic_context(request, runtime)
+    return uses_saved_protocol(semantic_intent(request, runtime), frame.target.kind if frame and frame.target else None)
 
 
 def revises_saved_item(request, runtime=None):
@@ -350,9 +353,11 @@ READ_MODE_GUIDANCE = (
 )
 
 
-READ_SCHEMA = schema(READ, '在当前会话固定历史中读取资料。修订已保存提示词时用content_source读取指定版本的完整条目。'
+READ_SCHEMA = schema(READ, '在当前会话固定历史中读取资料。修订已保存提示词时用content_source读取指定版本的完整条目及format_contract；'
+                 '每个待修改条目均须先成功读取。后台记录当前输入、版本和条目；历史摘要不能代替读取。'
                  '按原图重做用image_task_id读取所选成图的原始输入、实际提示词和规格。查询当前任务内已登记的图片受理或结果用image_task_status。'
                  '用message_id查看指定消息。定位历史图时设list_images=true，仅返回图片分组和定位。图片序号只在所属消息或成果组内有效，仍有多个候选时请用户选择。'
+                 '最近目录不是全部历史；找更早图片或未知消息时先用list_conversation_images分页查询，核图后选择其image_ref。'
                  '模型需要看图分析时用view_image。用户要看旧图时用show_image交付，两个参数都复制所选图片的reference。view_image只供模型看图，不向用户发图；show_image成功并保存本轮图片内容块才算交付。结构化image_action=analyze时不回显；display_existing时后台可直接交付，收到delivered_existing后不要重复展示。只读动作不会提交生成。'
                  'text_exact/text_exacts读取逐字片段。'
                  '执行已登记稿件时把其content_source交给目标工具。' + READ_MODE_GUIDANCE,
@@ -388,6 +393,7 @@ SCHEMAS = (
     schema(DISCOVER, '查找当前可用工具。用精确工具名或简短目标查找，只返回当前权限范围内的匹配项。后续按实际提供的定义调用；没有匹配时不要猜工具名。',
            {'query': {'type': 'string', 'minLength': 1, 'maxLength': 160}}, ('query',)),
     READ_SCHEMA,
+    LIST_IMAGES_SCHEMA,
 )
 
 def model_tools(tools, *, selectable_source_images=False, saved_text_available=False, server_image_plan=False, reuse_source=False, revise_saved=False, first_delivery=False, current_images=(), inline_image=False, generated_image_edit=False, single_image_edit=False, inline_only=False, previous_image_reference=None, planned_image_count=None, image_reference_catalog=None):
@@ -433,16 +439,27 @@ def model_tools(tools, *, selectable_source_images=False, saved_text_available=F
             else:
                 parameters['oneOf'] = forms
             if revise_saved:
-                function['description'] = ('修订本次已明确选择的保存稿。先读取完整条目，再用base和updates修改原稿；'
+                from services.task_execution.content_objects import revision_usage, revision_examples, SCHEMA
+                from services.task_execution.methods import REFERENCE_PROMPTS_PRESENTATION
+                reference = function['description'].startswith(REFERENCE_PROMPTS_PRESENTATION)
+                presentation = function['description'].replace(SCHEMA['function']['description'], '', 1)
+                function['description'] = presentation + ('修订本次已明确选择的保存稿。先读取完整条目，再用base和updates修改原稿；'
                     '不要重新登记整组document或message_source，不另建一组来代替修订。保留未选择条目、素材及未改规格。'
-                    '只改方案或先看文字时continue_execution=false；仅用户明确要求修改并出图时才设为true。')
+                    '只改方案或先看文字时continue_execution=false；仅用户明确要求修改并出图时才设为true。'
+                    + revision_usage(reference))
+                parameters['examples'] = revision_examples(reference)
             elif reuse_source:
-                function['description'] = ('执行已保存的条目直接调用目标工具。仅恢复历史正文时用message_source和'
-                                           'continue_execution=true；修订用base和updates。')
+                from services.task_execution.content_objects import revision_usage, revision_examples, SCHEMA
+                from services.task_execution.methods import REFERENCE_PROMPTS_PRESENTATION
+                reference = function['description'].startswith(REFERENCE_PROMPTS_PRESENTATION)
+                parameters['examples'] = revision_examples(reference)
+                presentation = function['description'].replace(SCHEMA['function']['description'], '', 1)
+                function['description'] = presentation + ('执行已保存的条目直接调用目标工具。仅恢复历史正文时用message_source和'
+                                           'continue_execution=true；修订用base和updates。' + revision_usage(reference))
             elif first_delivery:
                 # Preserve authoring Skill presentation requirements in the prefix.
                 from services.task_execution.content_objects import SCHEMA, MIXED_TEXT_GUIDANCE
-                description = function['description'].removesuffix(SCHEMA['function']['description'])
+                description = function['description'].replace(SCHEMA['function']['description'], '', 1)
                 function['description'] = description + MIXED_TEXT_GUIDANCE + (
                     '普通新写方案、提示词或脚本可直接用编号标题及完整正文回复，由后台登记。'
                     '用户设置后续确认条件时，必须通过本工具一次交付document和confirmation（tool及wait_for或wait_all），'
@@ -670,8 +687,8 @@ def check_source_scope(db, context):
     _check_identity(SimpleNamespace(db=db), context)
 
 
-async def read_saved_item(runtime, db, context, reference):
-    from services.task_execution.content_objects import ContentReference, is_current, load
+async def read_saved_item(runtime, db, context, reference, *, request=None):
+    from services.task_execution.content_objects import ContentReference, is_current
     from services.task_execution.contracts import TaskState
     from services.task_execution.direct_loop import content_followup_state
     import asyncio
@@ -679,6 +696,15 @@ async def read_saved_item(runtime, db, context, reference):
     await asyncio.to_thread(check_source_scope, db, context)
     target = ContentReference.model_validate(reference)
     state = runtime.task_execution_state or content_followup_state(runtime)
+    if not is_current(state, target.artifact_id) and runtime.task_execution_state is None:
+        # A read is not adoption or execution authorization. The chosen source
+        # is omitted from other_groups, so it must also be readable when the
+        # advisory router is unresolved and content_followup_state is gated.
+        candidate = getattr(runtime, 'task_followup_candidate', None)
+        if candidate and candidate.get('state'):
+            readable = TaskState.model_validate(candidate['state'])
+            if is_current(readable, target.artifact_id):
+                state = readable
     if not is_current(state, target.artifact_id):
         roots = {row['root_task_id'] for row in getattr(runtime, 'task_content_groups', ())
                  if row['artifact_id'] == target.artifact_id}
@@ -701,8 +727,15 @@ async def read_saved_item(runtime, db, context, reference):
         raise PermissionError('CHAT_SOURCE_DENIED')
     if not is_current(state, target.artifact_id):
         raise ValueError('CHAT_CONTENT_VERSION_UNAVAILABLE')
-    artifact, document, item = load(state, target)
-    return {'document_title': document.title,
+    from services.task_execution.content_objects import _load_record
+    from services.task_execution.content_revision import record_read
+    from services.task_execution.methods import content_format_contract
+    artifact, record, item = _load_record(state, target)
+    document = record.document
+    contract = content_format_contract(record.presentation_profile)
+    if request is not None:
+        record_read(runtime, request, artifact, record, target.item_index)
+    return {'document_title': document.title, 'format_contract': contract,
             'content_source': {**target.model_dump(mode='json'), 'sha256': artifact.sha256},
             'item': item.model_dump(mode='json', exclude_none=True)}
 

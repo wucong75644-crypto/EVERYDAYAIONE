@@ -51,21 +51,39 @@ class ImageMethodDocument(MethodDocumentFact):
 
 
 REFERENCE_PROMPTS_PROFILE = 'reference-prompts-v1'
-REFERENCE_PROMPTS_PRESENTATION = (
-    '按当前参考图提示词方法保留全部原版展示结构。document.display_prefix写参考图判断及其完整条目。'
-    '每条items的display_prefix原样写该方案标题、方案内容、视觉设定、参考图使用方式；'
-    '每条body依次写独立的「## 完整生图提示词」和「## 负面提示词」，两段都必须有正文。'
-    '展示前缀和执行正文在同一次登记中各写一次，保留原版编号、标题、项目符号与分隔线。'
-)
 OUTPUT_PROFILES = frozenset({REFERENCE_PROMPTS_PROFILE, 'ecommerce-image-plan-v1'})
 
 
 REFERENCE_PROMPTS_BODY_HEADINGS = ('完整生图提示词', '负面提示词')
+REFERENCE_PROMPTS_DISPLAY_HEADINGS = ('方案内容', '视觉设定', '参考图使用方式')
 
 
-def valid_reference_prompts_presentation(document):
-    """Check the pinned writing method's authored sections without transforming them."""
+def content_format_contract(profile_id):
+    if profile_id not in (None, REFERENCE_PROMPTS_PROFILE):
+        raise TaskError('CONTENT_FORMAT_PROFILE_UNAVAILABLE')
+    return {'version': 1, 'profile_id': profile_id,
+        'body_sections': list(REFERENCE_PROMPTS_BODY_HEADINGS) if profile_id else [],
+        'display_sections': ['方案标题', *REFERENCE_PROMPTS_DISPLAY_HEADINGS] if profile_id else [],
+        'document_sections': ['参考图判断'] if profile_id else [],
+        'read_before_revision': True, 'preserve_omitted_fields': True}
+
+
+_REFERENCE_FORMAT = content_format_contract(REFERENCE_PROMPTS_PROFILE)
+REFERENCE_PROMPTS_PRESENTATION = (
+    '按当前参考图提示词方法保留全部原版展示结构。document.display_prefix写'
+    + '、'.join(_REFERENCE_FORMAT['document_sections']) + '及其完整条目。'
+    '每条items的display_prefix原样写该' + '、'.join(_REFERENCE_FORMAT['display_sections']) + '；'
+    '每条body依次写独立的' + '和'.join('「## ' + name + '」' for name in _REFERENCE_FORMAT['body_sections'])
+    + '，两段都必须有正文。展示前缀和执行正文在同一次登记中各写一次，保留原版编号、标题、项目符号与分隔线。'
+)
+
+
+def presentation_issues(document, profile_id):
+    """The same authored-section contract used in model hints and persistence."""
     import re
+    contract = content_format_contract(profile_id)
+    if not profile_id:
+        return []
 
     def sections(markdown):
         markdown = markdown or ''
@@ -74,18 +92,34 @@ def valid_reference_prompts_presentation(document):
         return [(header[1].strip(), markdown[header.end():end].strip(' \r\n\t-'))
                 for header, end in zip(headings, boundaries)]
 
+    issues = []
     intro = sections(document.display_prefix)
-    if len(intro) != 1 or intro[0][0] != '参考图判断' or not intro[0][1]:
-        return False
-    for item in document.items:
-        prefix = sections(item.display_prefix)
-        body = sections(item.body)
+    if [name for name, _ in intro] != contract['document_sections'] or not all(text for _, text in intro):
+        issues.append({'path': '$.document.display_prefix', 'reason': '参考图判断必须保留完整章节和正文'})
+    for index, item in enumerate(document.items):
+        prefix, body = sections(item.display_prefix), sections(item.body)
         if (len(prefix) != 4 or not prefix[0][0].startswith('方案')
-                or [name for name, _ in prefix[1:]] != ['方案内容', '视觉设定', '参考图使用方式']
-                or tuple(name for name, _ in body) != REFERENCE_PROMPTS_BODY_HEADINGS
-                or not all(text for _, text in [*prefix[1:], *body])):
-            return False
-    return True
+                or [name for name, _ in prefix[1:]] != contract['display_sections'][1:]
+                or not all(text for _, text in prefix[1:])):
+            issues.append({'path': f'$.document.items[{index}].display_prefix',
+                           'reason': '按原稿保留方案标题、方案内容、视觉设定和参考图使用方式及正文'})
+        actual = [name for name, _ in body]
+        if actual != contract['body_sections'] or not all(text for _, text in body):
+            missing = [name for name in contract['body_sections'] if name not in actual]
+            issues.append({'path': f'$.document.items[{index}].body',
+                'reason': ('缺少必需章节：' + '、'.join(missing)) if missing else '必需章节须按约定顺序各出现一次且均有正文'})
+    return issues
+
+
+def valid_reference_prompts_presentation(document):
+    return not presentation_issues(document, REFERENCE_PROMPTS_PROFILE)
+
+
+class ContentPresentationError(TaskError):
+    def __init__(self, issues, profile_id):
+        self.issues = issues
+        self.format_contract = content_format_contract(profile_id)
+        super().__init__('CONTENT_PRESENTATION_INCOMPLETE')
 
 
 def profile_for(candidate, active):

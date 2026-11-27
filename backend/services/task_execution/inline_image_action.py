@@ -317,7 +317,7 @@ async def prepare(runtime, handler, request, prepared, call, args, registry, *, 
         from services.handlers.chat.content_tools import semantic_context
         frame = semantic_context(request, runtime)
         if frame is not None:
-            explicit_size = frame.size.model_dump(exclude_none=True)
+            explicit_size = frame.size_for(1)
             item = item.model_copy(update={'options': {key: explicit_size[key]
                 for key in ('aspect_ratio', 'resolution') if key in explicit_size}})
     current=current_attachment_edit(request) if edit is not None else None

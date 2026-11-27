@@ -19,13 +19,13 @@ from tests.test_task_execution_followup_reuse_postgres import (followup_db,new_t
 def content_db(dispatch_db):
     root=__import__('pathlib').Path(__file__).parents[1]
     with psycopg.connect(dispatch_db) as c:
-        for migration in ('347_agent_task_image_reconciliation','376_agent_task_image_method_handoff','377_agent_task_content_objects','378_agent_content_followup_groups','381_agent_media_confirmation_slots','382_agent_semantic_media_confirmations','384_agent_request_resolution','385_agent_saved_content_item_options'):
+        for migration in ('347_agent_task_image_reconciliation','376_agent_task_image_method_handoff','377_agent_task_content_objects','378_agent_content_followup_groups','381_agent_media_confirmation_slots','382_agent_semantic_media_confirmations','384_agent_request_resolution','385_agent_saved_content_item_options','386_agent_request_execution_windows'):
             c.execute((root/f'migrations/{migration}.sql').read_text())
     yield dispatch_db
     with psycopg.connect(dispatch_db) as c:
         c.execute("DELETE FROM conversation_turn_checkpoints WHERE state ? '_task_execution'")
         c.execute('DELETE FROM agent_task_events');c.execute('DELETE FROM agent_task_states');c.execute('SET CONSTRAINTS ALL IMMEDIATE')
-        for migration in ('385_agent_saved_content_item_options','384_agent_request_resolution','382_agent_semantic_media_confirmations','381_agent_media_confirmation_slots','378_agent_content_followup_groups','377_agent_task_content_objects','376_agent_task_image_method_handoff','347_agent_task_image_reconciliation'):
+        for migration in ('386_agent_request_execution_windows','385_agent_saved_content_item_options','384_agent_request_resolution','382_agent_semantic_media_confirmations','381_agent_media_confirmation_slots','378_agent_content_followup_groups','377_agent_task_content_objects','376_agent_task_image_method_handoff','347_agent_task_image_reconciliation'):
             c.execute((root/f'migrations/rollback/{migration}_rollback.sql').read_text())
 
 @pytest.mark.asyncio
@@ -81,6 +81,11 @@ async def test_registered_object_survives_real_new_turn_and_patch_without_new_re
     r2.task_followup_adopt=transfer
     selection = {'artifact_id': original['artifact_id'], 'item_index': 2}
     changes = {'base': selection, 'updates':[{'item_index':2,'item':{'body':'修订正文\n修订后的完整限制'}}]}
+    # Read through the real control and persist its receipt before adoption.
+    from unittest.mock import patch
+    h2.db = None
+    with patch('services.handlers.chat.content_tools.check_source_scope'):
+        await execute(r2,p2,h2,q2,[call('read_conversation_text', {'content_source': selection}, 'read-before-adopt')])
     with pytest.raises(FollowupRestart):
         await execute(r2,p2,h2,q2,[call(co.SAVE,changes,'second-revision')])
     with connect(new) as c:
@@ -139,6 +144,8 @@ async def test_revised_size_approval_keeps_the_real_database_confirmation_contra
         'message_sha256': event['message_sha256'], 'artifact_id': old['artifact_id'],
         'object_key': old['object_key'], 'revision': old['revision'],
         'tool': 'generate_image', 'approved_items': [3]}]}
+    from tests.semantic_fixtures import observed_revision
+    observed_revision(r, q, old, [3])
     await execute(r, p, h, q, [call(co.SAVE, {'base': ref(old, 3), 'updates': [
         {'item_index': 3, 'item': {'body': '正方形画布，其他图案与结构保持原样。',
             'options': {**draft['items'][2]['options'], 'aspect_ratio': '1:1'}}}],

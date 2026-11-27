@@ -120,6 +120,8 @@ def prepare_input(resolver,args,*,scoped,workflow,settings,composition=None,entr
     action = getattr(workflow, 'intent', None)
     if source and 'content_object' in source:
         intent, previous = resolver.size_context(use_previous=False, infer_attachment_canvas=False,
+            **({'item_index': source['content_object'].get('source', {}).get('item_index')}
+               if semantic_context is not None and semantic_context.size_rules else {}),
             **({'semantic_context': semantic_context} if semantic_context is not None else {}))
         artifact, item = resolver.content_image_item(source['content_object'])
         legacy_options = item.options if {'width', 'height'} <= item.options.keys() else {}

@@ -12,6 +12,7 @@ from tests.test_skill_composition_postgres import connect
 from tests.test_task_execution_native_results_postgres import native_result_db
 from tests.fixtures.task_revision_gates import install,drain
 ROOT=Path(__file__).parents[1]
+pytest_plugins = ['tests.test_content_objects_postgres']
 
 
 @pytest.fixture(scope='module')
@@ -66,8 +67,13 @@ def adopt(c,new,source,obs,merged):
         source['state']['revision'],source['source_sha256'],Jsonb(obs),Jsonb(merged))).fetchone()[0]
 
 
-def test_new_turn_preserves_full_original_context_and_forces_revision_review_before_dispatch(followup_db):
-    old,new,source,obs,merged=new_turn(followup_db)
+@pytest.fixture(scope='module')
+def current_followup_db(content_db):
+    return content_db
+
+
+def test_new_turn_preserves_full_original_context_and_forces_revision_review_before_dispatch(current_followup_db):
+    old,new,source,obs,merged=new_turn(current_followup_db)
     with connect(new) as c:
         reply=adopt(c,new,source,obs,merged);assert reply['outcome']=='saved'
         assert adopt(c,new,source,obs,merged)==reply
@@ -82,8 +88,8 @@ def test_new_turn_preserves_full_original_context_and_forces_revision_review_bef
 
 
 @pytest.mark.parametrize('fault',['rewrite_goal','drop_result','rewrite_context','fake_source','fake_quote','unrelated','wrong_user','active_source','extra_user','extra_system','host_suffix','changed_new_message','non_actor','source_branch'])
-def test_bad_or_racing_followup_does_not_transfer_owner(followup_db,fault):
-    old,new,source,obs,merged=new_turn(followup_db)
+def test_bad_or_racing_followup_does_not_transfer_owner(current_followup_db,fault):
+    old,new,source,obs,merged=new_turn(current_followup_db)
     if fault=='rewrite_goal':merged['_task_execution']['original_goal']='fake task'
     if fault=='drop_result':merged['_task_execution']['steps']=[]
     if fault=='rewrite_context':merged['messages']=[]
@@ -94,26 +100,26 @@ def test_bad_or_racing_followup_does_not_transfer_owner(followup_db,fault):
     if fault=='fake_quote':obs['evidence']=['工具要求新增授权']
     if fault=='unrelated':obs['relation']='unrelated'
     if fault=='changed_new_message':
-        with psycopg.connect(followup_db) as c:
+        with psycopg.connect(current_followup_db) as c:
             c.execute('UPDATE messages SET content=%s WHERE id=%s',(Jsonb([{'type':'text','text':'继续原任务，但是把交付改成其他内容'}]),new['message']))
     if fault=='non_actor':
-        with psycopg.connect(followup_db) as c:c.execute("UPDATE tasks SET delivery_context='{}' WHERE id=%s",(new['task'],))
+        with psycopg.connect(current_followup_db) as c:c.execute("UPDATE tasks SET delivery_context='{}' WHERE id=%s",(new['task'],))
     if fault=='source_branch':
-        with psycopg.connect(followup_db) as c:c.execute("UPDATE tasks SET execution_mode='branch' WHERE id=%s",(old['task'],))
+        with psycopg.connect(current_followup_db) as c:c.execute("UPDATE tasks SET execution_mode='branch' WHERE id=%s",(old['task'],))
     if fault=='active_source':
-        with psycopg.connect(followup_db) as c:c.execute("UPDATE tasks SET status='running' WHERE id=%s",(old['task'],))
+        with psycopg.connect(current_followup_db) as c:c.execute("UPDATE tasks SET status='running' WHERE id=%s",(old['task'],))
     with connect(new) as c:
         if fault=='wrong_user':c.execute("SELECT set_config('app.actor_user_id',%s,true)",(str(uuid4()),))
         with pytest.raises(psycopg.Error):
             with c.transaction():adopt(c,new,source,obs,merged)
-    with psycopg.connect(followup_db) as c:
+    with psycopg.connect(current_followup_db) as c:
         assert str(c.execute('SELECT owner_task_id FROM agent_task_states WHERE root_task_id=%s',(old['task'],)).fetchone()[0])==old['task']
         assert c.execute("SELECT count(*) FROM agent_task_events WHERE continuation_task_id=%s",(new['task'],)).fetchone()[0]==0
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('publish_late',[False,True])
-async def test_actual_published_image_survives_followup_revision_and_reuses_without_new_child_or_credits(followup_db,monkeypatch,publish_late):
+async def test_actual_published_image_survives_followup_revision_and_reuses_without_new_child_or_credits(current_followup_db,monkeypatch,publish_late):
     from tests.test_task_execution_continuation_postgres import finished
     from services.task_execution.contracts import TaskState,PlanStep,WorkPlan
     from services.task_execution.requirement_changes import RevisionReview,RevisionProposal,requirements_fingerprint,candidate,projection
@@ -131,15 +137,15 @@ async def test_actual_published_image_survives_followup_revision_and_reuses_with
     from psycopg import sql
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
-    f,_,original_child,original_event=await finished(followup_db,monkeypatch,image_count=1,binding_version=3,remaining=publish_late)
+    f,_,original_child,original_event=await finished(current_followup_db,monkeypatch,image_count=1,binding_version=3,remaining=publish_late)
     if publish_late:
         from tests.test_chat_image_lifecycle_postgres import claim as claim_image,worker_rpc
         assert claim_image(f,original_child['task_id'])['outcome']=='claimed'
-        with psycopg.connect(followup_db) as c:
+        with psycopg.connect(current_followup_db) as c:
             image_token=c.execute("SELECT request_params#>>'{_media_lifecycle_v1,claim_token}' FROM tasks WHERE id=%s",(original_child['task_id'],)).fetchone()[0]
         assert worker_rpc(f,'mark_chat_image_dispatch',original_child['task_id'],image_token)['outcome']=='dispatch'
 
-    old,new,source,obs,merged=new_turn(followup_db,old=f,text='继续原任务，保留之前的成果，再补成两张图')
+    old,new,source,obs,merged=new_turn(current_followup_db,old=f,text='继续原任务，保留之前的成果，再补成两张图')
     with connect(new) as c:
         reply=adopt(c,new,source,obs,merged)
         cp=reply['payload'];s=TaskState.model_validate(cp['_task_execution'])
@@ -192,7 +198,7 @@ async def test_actual_published_image_survives_followup_revision_and_reuses_with
         with connect(new) as c:
             cp=c.execute('SELECT state FROM conversation_turn_checkpoints WHERE task_id=%s',(new['task'],)).fetchone()[0]
             save(c,new,{**cp,'_task_execution':waiting.model_dump(mode='json')},expected=current.revision)
-        with psycopg.connect(followup_db) as c:
+        with psycopg.connect(current_followup_db) as c:
             answer=str(uuid4())
             closing_revision=c.execute('SELECT context_revision+1 FROM conversations WHERE id=%s',(new['conv'],)).fetchone()[0]
             c.execute("INSERT INTO messages(id,conversation_id,role,content,status,context_revision,turn_id) VALUES(%s,%s,'assistant','[]','completed',%s,%s)",
@@ -253,17 +259,17 @@ async def test_actual_published_image_survives_followup_revision_and_reuses_with
                 save(c,new,{**latest,'_task_execution':forged.model_dump(mode='json')},expected=controller.state.revision)
         assert c.execute('SELECT state FROM agent_task_states WHERE root_task_id=%s',(old['task'],)).fetchone()[0]==controller.state.model_dump(mode='json')
         assert c.execute("SELECT count(*) FROM agent_task_events WHERE root_task_id=%s AND child_task_id IS NOT NULL AND status='pending'",(old['task'],)).fetchone()[0]==0
-    with psycopg.connect(followup_db) as c:
+    with psycopg.connect(current_followup_db) as c:
         with pytest.raises(psycopg.Error,match='NOT_DRAINED'):
             with c.transaction():c.execute((ROOT/'migrations/rollback/366_agent_task_image_reuse_rollback.sql').read_text())
 
 
 @pytest.mark.asyncio
-async def test_same_manual_skill_pin_is_retained_through_postgres_new_turn_and_actual_runtime_restore(followup_db,monkeypatch):
+async def test_same_manual_skill_pin_is_retained_through_postgres_new_turn_and_actual_runtime_restore(current_followup_db,monkeypatch):
     from tests.test_task_execution_methods import bound
     from tests.test_skill_runtime import state as skills_state
     _,skills=await bound(monkeypatch)
-    old,cp=prepared(followup_db,binding_version=3)
+    old,cp=prepared(current_followup_db,binding_version=3)
     sk=skills.checkpoint();sk['turn_id']=old['turn']
     extra={'skill_runtime':sk}
     if sk.get('version')==2:
@@ -271,9 +277,9 @@ async def test_same_manual_skill_pin_is_retained_through_postgres_new_turn_and_a
         extra.update(_skill_composition=sk['composition'],_skill_composition_expected_revision=0)
     with connect(old) as c:
         assert c.execute("SELECT save_generation_checkpoint(%s,%s,'after_skill_activation',%s)",(old['task'],old['token'],Jsonb({**cp,**extra}))).fetchone()[0]['outcome']=='saved'
-    old,new,source,obs,merged=new_turn(followup_db,old=old)
+    old,new,source,obs,merged=new_turn(current_followup_db,old=old)
     selection={'skill_id':'report','revision':'v1'}
-    with psycopg.connect(followup_db) as c:
+    with psycopg.connect(current_followup_db) as c:
         c.execute('UPDATE tasks SET request_params=request_params||%s WHERE id=%s',(Jsonb({'_selected_skill':selection}),new['task']))
     with connect(new) as c:
         assert c.execute('SELECT read_agent_task_followup(%s,%s)',(new['task'],new['token'])).fetchone()[0]['outcome']=='found'
@@ -286,29 +292,29 @@ async def test_same_manual_skill_pin_is_retained_through_postgres_new_turn_and_a
     assert restored.effective_allowed_tool_names<=skills._initial_ceiling
 
 
-def test_new_explicit_other_skill_keeps_new_turn_independent(followup_db):
-    old,new,source,obs,merged=new_turn(followup_db)
-    with psycopg.connect(followup_db) as c:
+def test_new_explicit_other_skill_keeps_new_turn_independent(current_followup_db):
+    old,new,source,obs,merged=new_turn(current_followup_db)
+    with psycopg.connect(current_followup_db) as c:
         c.execute('UPDATE tasks SET request_params=request_params||%s WHERE id=%s',(Jsonb({'_selected_skill':{'skill_id':'different','revision':'v2'}}),new['task']))
     with connect(new) as c:
         assert c.execute('SELECT read_agent_task_followup(%s,%s)',(new['task'],new['token'])).fetchone()[0]['outcome']=='not_found'
         assert str(c.execute('SELECT owner_task_id FROM agent_task_states WHERE root_task_id=%s',(old['task'],)).fetchone()[0])==old['task']
 
 
-def test_followup_rollback_refuses_other_tenant_live_ownership(followup_db):
-    old,new,source,obs,merged=new_turn(followup_db)
+def test_followup_rollback_refuses_other_tenant_live_ownership(current_followup_db):
+    old,new,source,obs,merged=new_turn(current_followup_db)
     with connect(new) as c:adopt(c,new,source,obs,merged)
-    with psycopg.connect(followup_db) as c:
+    with psycopg.connect(current_followup_db) as c:
         with pytest.raises(psycopg.Error,match='NOT_DRAINED'):
             with c.transaction():c.execute((ROOT/'migrations/rollback/367_agent_task_user_followups_rollback.sql').read_text())
         assert c.execute("SELECT to_regprocedure('public.adopt_agent_task_followup(uuid,uuid,uuid,bigint,text,jsonb,jsonb)') IS NOT NULL").fetchone()[0]
         assert c.execute("SELECT relforcerowsecurity FROM pg_class WHERE oid='public.tasks'::regclass").fetchone()[0]
 
 
-def test_second_real_user_followup_archives_previous_window_without_losing_context(followup_db):
-    old,first,source,obs,merged=new_turn(followup_db)
+def test_second_real_user_followup_archives_previous_window_without_losing_context(current_followup_db):
+    old,first,source,obs,merged=new_turn(current_followup_db)
     with connect(first) as c:first_reply=adopt(c,first,source,obs,merged)
-    _,second,source2,obs2,merged2=new_turn(followup_db,old=first)
+    _,second,source2,obs2,merged2=new_turn(current_followup_db,old=first)
     with connect(second) as c:
         result=adopt(c,second,source2,obs2,merged2)
         cp=result['payload']
@@ -322,7 +328,7 @@ def test_second_real_user_followup_archives_previous_window_without_losing_conte
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('kind',['plan','prompt'])
-async def test_saved_source_native_publication_reused_in_real_checkpoint_without_second_charge(followup_db,monkeypatch,kind):
+async def test_saved_source_native_publication_reused_in_real_checkpoint_without_second_charge(current_followup_db,monkeypatch,kind):
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
     from services.handlers.chat_image_request import freeze_image_request
@@ -335,7 +341,7 @@ async def test_saved_source_native_publication_reused_in_real_checkpoint_without
     from tests.test_chat_image_lifecycle_postgres import claim,worker_rpc
     from services.task_execution.artifact_reader import TaskArtifactReader
     from psycopg import sql
-    f=seed(followup_db);s,a,args,original=await source_state(kind,monkeypatch);s=bind_seed(s,f)
+    f=seed(current_followup_db);s,a,args,original=await source_state(kind,monkeypatch);s=bind_seed(s,f)
     raw=s.model_dump(mode='json')
     for artifact in raw['artifacts']:artifact.update(source_task_id=f['task'],delivery_task_id=f['task'])
     for result in raw['results']:result['completed_task_id']=f['task']
@@ -349,7 +355,7 @@ async def test_saved_source_native_publication_reused_in_real_checkpoint_without
         original['input_snapshot']={'resolved_references':resolved}
         normalized={'mode':'image_to_image','prompt':original['items'][0]['request_text'],'aspect_ratio':'3:4'}
         proof={**args['plan_source'],'request_text_sha256':original['items'][0]['request_text_sha256']}
-        with psycopg.connect(followup_db) as c:
+        with psycopg.connect(current_followup_db) as c:
             c.execute("INSERT INTO ecom_image_plans(id,user_id,conversation_id,parent_task_id,input_message_id,base_context_revision,invocation_key,input_digest,status,current_stage,image_count,input_snapshot,prompt_versions,model_settings,target_size,plan_revision,items,stage_outputs) VALUES(%s,%s,%s,%s,%s,0,'local-source',%s,'ready',3,1,%s,'{}','{}',%s,4,%s,%s)",
                 (original['id'],f['user'],f['conv'],f['task'],f['message'],'a'*64,Jsonb(original['input_snapshot']),Jsonb(original['target_size']),Jsonb(original['items']),Jsonb(original['stage_outputs'])))
     else:
@@ -361,12 +367,12 @@ async def test_saved_source_native_publication_reused_in_real_checkpoint_without
     snapshot=freeze_image_request(normalized,resolved,origin=origin,max_requests=6,max_credits=100)
     child=accept_child(f,snapshot)
     assert claim(f,child['task_id'])['outcome']=='claimed'
-    with psycopg.connect(followup_db) as c:token=c.execute("SELECT request_params#>>'{_media_lifecycle_v1,claim_token}' FROM tasks WHERE id=%s",(child['task_id'],)).fetchone()[0]
+    with psycopg.connect(current_followup_db) as c:token=c.execute("SELECT request_params#>>'{_media_lifecycle_v1,claim_token}' FROM tasks WHERE id=%s",(child['task_id'],)).fetchone()[0]
     assert worker_rpc(f,'mark_chat_image_dispatch',child['task_id'],token)['outcome']=='dispatch'
     part={'type':'image','url':'https://example.invalid/saved-source.png','width':900,'height':1200}
     assert worker_rpc(f,'record_chat_image_provider_result',child['task_id'],Jsonb({'status':'success','image_urls':[part['url']]}))['outcome']=='settling'
     assert worker_rpc(f,'publish_chat_image_result',child['task_id'],Jsonb([part]),'completed','',False)['outcome']=='published'
-    with psycopg.connect(followup_db) as c:
+    with psycopg.connect(current_followup_db) as c:
         c.execute('UPDATE tasks SET base_context_revision=10 WHERE id=%s',(f['task'],))
         c.execute('UPDATE conversations SET context_revision=10 WHERE id=%s',(f['conv'],))
     resolver=AsyncMock(return_value=[])
@@ -399,7 +405,7 @@ async def test_saved_source_native_publication_reused_in_real_checkpoint_without
 
 
 @pytest.mark.asyncio
-async def test_original_task_plan_cross_stage_import_preserves_history_and_rejects_changed_source(followup_db,monkeypatch):
+async def test_original_task_plan_cross_stage_import_preserves_history_and_rejects_changed_source(current_followup_db,monkeypatch):
     import hashlib
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
@@ -410,9 +416,9 @@ async def test_original_task_plan_cross_stage_import_preserves_history_and_rejec
     from services.task_execution.image_sources import SOURCE_VALIDATOR
     from tests.test_task_execution_continuation_postgres import finished
     from tests.test_task_execution_postgres import save
-    f,_,_,_=await finished(followup_db,monkeypatch,image_count=1,binding_version=3)
+    f,_,_,_=await finished(current_followup_db,monkeypatch,image_count=1,binding_version=3)
     text='继续原任务，按刚才原稿执行一张图'
-    old,new,source,obs,merged=new_turn(followup_db,old=f,text=text)
+    old,new,source,obs,merged=new_turn(current_followup_db,old=f,text=text)
     with connect(new) as c:
         cp=adopt(c,new,source,obs,merged)['payload'];s=TaskState.model_validate(cp['_task_execution'])
         original=s.artifacts[0]
@@ -447,19 +453,19 @@ async def test_original_task_plan_cross_stage_import_preserves_history_and_rejec
             with c.transaction():
                 cp=c.execute('SELECT state FROM conversation_turn_checkpoints WHERE task_id=%s',(new['task'],)).fetchone()[0]
                 save(c,new,{**cp,'_task_execution':register_artifacts(controller.state,[forged]).model_dump(mode='json')},expected=controller.state.revision)
-    with psycopg.connect(followup_db) as c:
+    with psycopg.connect(current_followup_db) as c:
         with pytest.raises(psycopg.Error,match='DRAIN_REQUIRED'):
             with c.transaction():c.execute((ROOT/'migrations/rollback/368_agent_task_saved_plan_handoff_rollback.sql').read_text())
         assert c.execute("SELECT relforcerowsecurity FROM pg_class WHERE oid='public.agent_task_states'::regclass").fetchone()[0]
 
 
-def test_knowledge_input_extension_survives_original_followup_adoption(followup_db):
+def test_knowledge_input_extension_survives_original_followup_adoption(current_followup_db):
     from services.knowledge_workspace.input_facts import CHECKPOINT_KEY, KnowledgeInputFacts, restore_facts
     from services.handlers.context_snapshot import ContextAnchor
-    old,new,_,obs,_=new_turn(followup_db)
+    old,new,_,obs,_=new_turn(current_followup_db)
     previous=KnowledgeInputFacts(old['conv'],old['message'],None,'原要求',('text',),False,knowledge_used=True)
     current=KnowledgeInputFacts(new['conv'],new['message'],None,'继续原任务，保留之前的成果',('text',),False)
-    with psycopg.connect(followup_db) as c:
+    with psycopg.connect(current_followup_db) as c:
         c.execute('UPDATE conversation_turn_checkpoints SET state=state || %s WHERE task_id=%s',
             (Jsonb({CHECKPOINT_KEY:previous.checkpoint()}),old['task']))
     with connect(new) as c:
@@ -481,15 +487,15 @@ def test_knowledge_input_extension_survives_original_followup_adoption(followup_
         assert c.execute('SELECT count(*) FROM credit_transactions WHERE task_id=%s',(new['task'],)).fetchone()[0]==0
 
 
-def test_new_followup_preserves_the_original_tool_repair_checkpoint(followup_db):
+def test_new_followup_preserves_the_original_tool_repair_checkpoint(current_followup_db):
     from types import SimpleNamespace
     from services.handlers.chat import tool_argument_repairs
 
-    old, new, _, obs, _ = new_turn(followup_db)
+    old, new, _, obs, _ = new_turn(current_followup_db)
     repair = tool_argument_repairs.Checkpoint(
         input_id=old['message'], input_version='a' * 64, counts={'b' * 64: 2}, stopped=True,
     ).model_dump(mode='json')
-    with psycopg.connect(followup_db) as connection:
+    with psycopg.connect(current_followup_db) as connection:
         connection.execute('UPDATE conversation_turn_checkpoints SET state=state || %s WHERE task_id=%s',
             (Jsonb({tool_argument_repairs.KEY: repair}), old['task']))
     with connect(new) as connection:
@@ -507,7 +513,7 @@ def test_new_followup_preserves_the_original_tool_repair_checkpoint(followup_db)
     assert not tool_argument_repairs.stopped(runtime, request)
 
 
-def test_followup_restores_current_video_discovery_for_selected_call(followup_db):
+def test_followup_restores_current_video_discovery_for_selected_call(current_followup_db):
     from types import SimpleNamespace
     from services.handlers.chat import content_tools
     from services.handlers.chat.tool_loop import prepare_tool_turn
@@ -515,12 +521,12 @@ def test_followup_restores_current_video_discovery_for_selected_call(followup_db
     from services.task_execution.contracts import TaskState
     from tests.test_model_directed_loop import case
 
-    old, new, _, obs, _ = new_turn(followup_db, text='继续原任务，用第四条脚本生成视频')
+    old, new, _, obs, _ = new_turn(current_followup_db, text='继续原任务，用第四条脚本生成视频')
     previous_tools = {'task_id': old['task'], 'names': ['knowledge_discover']}
     selected_call = {'name': 'generate_video', 'arguments': json.dumps({
         'content_source': {'artifact_id': str(uuid4()), 'sha256': 'a' * 64, 'item_index': 4},
     })}
-    with psycopg.connect(followup_db) as connection:
+    with psycopg.connect(current_followup_db) as connection:
         connection.execute(
             'UPDATE conversation_turn_checkpoints SET state=state || %s WHERE task_id=%s',
             (Jsonb({content_tools.STATE: previous_tools}), old['task']),

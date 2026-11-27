@@ -151,10 +151,16 @@ class ImageReferences:
         if isinstance(function, dict) and function.get('name') in {'generate_image', 'resolve_request_target', 'read_conversation_text'}:
             function['description'] = function.get('description', '') + ' 图片选择使用当前目录image_ref，后台解析真实图片身份，不填写图片消息ID和位置。'
         if isinstance(function, dict) and function.get('name') == 'read_conversation_text' and self.references:
-            example = {'show_image': {'image_ref': next(iter(self.references))}}
-            function['description'] += (' 已有图片展示参数示例（从目录选择用户指定图，不默认选示例）：'
-                + json.dumps(example, ensure_ascii=False)
-                + '。view_image同样填写对象，但只供模型分析，不能代替向用户展示。')
+            if 'show_image' in function['parameters'].get('properties', {}):
+                example = {'show_image': {'image_ref': next(iter(self.references))}}
+                function['description'] += (' 已有图片展示参数示例（从目录选择用户指定图，不默认选示例）：'
+                    + json.dumps(example, ensure_ascii=False)
+                    + '。view_image同样填写对象，但只供模型分析，不能代替向用户展示。')
+            elif 'view_image' in function['parameters'].get('properties', {}):
+                example = {'view_image': {'image_ref': next(iter(self.references))}}
+                function['description'] += (' 当前可用核图参数示例（只说明字段，不替用户选图）：'
+                    + json.dumps(example, ensure_ascii=False)
+                    + '。核图不等于展示，需展示时核对后单独选择目标。')
         if isinstance(function, dict) and function.get('name') == 'resolve_request_target' and self.references:
             example = {'intent': 'edit', 'request_context': {'focus': 'selected_target',
                 'target': {'kind': 'image', 'basis': 'explicit_reference', 'image_ref': next(iter(self.references))}}}
@@ -162,6 +168,22 @@ class ImageReferences:
                 'image_ref须按用户实际指代从当前目录复制）：' + json.dumps(example, ensure_ascii=False)
                 + '。image_ref是单个字符串，不是image_refs数组；basis只使用定义中的枚举。'
                 '当前目标已经正确绑定时直接执行，不重复纠正目标。')
+            readonly_examples = []
+            for action in ('display_existing', 'analyze'):
+                readonly = copy.deepcopy(example)
+                readonly['intent'] = 'explain'
+                readonly['request_context']['image_action'] = action
+                readonly_examples.append(readonly)
+            function['parameters'].setdefault('examples', []).extend(readonly_examples)
+            function['description'] += (' 展示旧图和仅分析的完整JSON分别为：'
+                + json.dumps(readonly_examples, ensure_ascii=False)
+                + '。示例图片编号仅说明结构，不是本次选择；实际复制用户指定候选的image_ref。'
+                  '展示必须先绑定具体目标，查询本身不完成选择；analyze只分析，不回显。')
+            new_plan = copy.deepcopy(example)
+            new_plan['intent'] = 'write'
+            new_plan['request_context']['focus'] = 'current_request'
+            function['description'] += (' 引用图片写新方案的完整JSON（不是编辑成图）：'
+                + json.dumps(new_plan, ensure_ascii=False) + '。实际动作按用户要求选择，不因存在图片就填写edit。')
         if (isinstance(function, dict) and function.get('name') == 'generate_image' and self.references
                 and 'edit_instruction' in function['parameters'].get('properties', {})):
             example = {'image_ref': next(iter(self.references)), 'edit_instruction': '本次修改和需要保留的内容'}
@@ -260,6 +282,13 @@ class ImageReferences:
             result['message'] += ' message_source须引用已读取原消息的行范围first_line和last_line，不重新编写原文。'
         if 'confirmation' in roots:
             result['message'] += ' confirmation须为JSON对象，按用户要求填写tool及wait_for或wait_all。'
+        if roots & {'base', 'updates'}:
+            from .content_objects import revision_usage
+            from .methods import REFERENCE_PROMPTS_PRESENTATION
+            reference = bool(offered and offered.get('description', '').startswith(REFERENCE_PROMPTS_PRESENTATION))
+            required.update({'base': ['artifact_id', 'item_index'],
+                             'updates[]': ['item_index', 'item']})
+            result['message'] += revision_usage(reference)
         if required:
             result['required_fields'] = required
         result['message'] += ' 仅按所附parameters修复出错字段，保留原操作形式、全部正文、素材用途及规格。'
@@ -389,6 +418,14 @@ def for_runtime(runtime):
         revisions = [(str(change.event_id), change.message_sha256)
                      for change in getattr(getattr(runtime, 'task_user_changes', None), 'items', ())
                      if change.delivered and str(change.owner_task_id) == str(runtime.task_id)]
-        return ImageReferences({**snapshot, **({'_delivered_image_changes': additions} if additions else {}),
-                                **({'_delivered_input_revisions': revisions} if revisions else {})})
+        catalog = ImageReferences({**snapshot, **({'_delivered_image_changes': additions} if additions else {}),
+                                   **({'_delivered_input_revisions': revisions} if revisions else {})})
+        from .image_history import recovered
+        for image in recovered(runtime):
+            handle = catalog.add(image['reference'])
+            if not any(i['image_ref'] == handle for i in catalog.candidates):
+                catalog.candidates.append({'image_ref': handle, 'name': image.get('name'),
+                    'turn_number': image.get('source_turn'), 'provenance': image['provenance'],
+                    'context_revision': image['context_revision'], 'retrieved_from_history': True})
+        return catalog
     return None

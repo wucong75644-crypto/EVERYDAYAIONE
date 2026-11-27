@@ -28,8 +28,11 @@ def review_messages(source):
 
 def payload(source,current,*,task_id,turn_id,model_round,usage,observation):
     previous=source['checkpoint'];old=TaskState.model_validate(source['state'])
-    updated=TaskState.model_validate({**old.model_dump(),'revision':old.revision+1,'status':'active',
-        'model_rounds_used':old.model_rounds_used+(max(1,int(current.get('next_model_round',1))) if old.model_directed else 1)})
+    spent = max(1, int(current.get('next_model_round', 1)))
+    changes = {'revision': old.revision + 1, 'status': 'active', 'model_rounds_used': old.model_rounds_used + spent}
+    changes['execution_window'] = {'input_message_id': source['input_message_id'],
+                                  'model_rounds_used': spent, 'correction_count': 0}
+    updated = TaskState.model_validate({**old.model_dump(), **changes})
     result=copy.deepcopy(previous)
     for key in ('checkpoint_kind','result_content','usage','credits_cost','tool_digest','_task_bootstrap','_task_read_arguments','_task_usage','_continuation_input','_inline_media_action'):
         result.pop(key,None)
@@ -37,7 +40,7 @@ def payload(source,current,*,task_id,turn_id,model_round,usage,observation):
         result['_task_followup_window_history']=[*result.get('_task_followup_window_history',[]),
             {'owner_task_id':source['source_owner_task_id'],'checkpoint':copy.deepcopy(result['_task_followup_input_checkpoint'])}]
     result['_task_followup_input_checkpoint']=copy.deepcopy(current)
-    for key in ('_request_context_v1', '_request_resolution_v1', '_request_response_v1'):
+    for key in ('_request_context_v1', '_request_resolution_v1', '_request_response_v1', '_historical_image_catalog_v1', '_content_revision_reads_v1', '_existing_image_recovery_v1'):
         if key in current:
             result[key] = copy.deepcopy(current[key])
         else:
@@ -48,7 +51,7 @@ def payload(source,current,*,task_id,turn_id,model_round,usage,observation):
     result['_task_execution']=updated.model_dump(mode='json')
     result['_task_execution_expected_revision']=old.revision
     result['_task_usage']={'version':1,'owner_task_id':str(task_id),'usage':dict(usage)}
-    result['next_model_round']=max(int(previous.get('next_model_round',0)),model_round)
+    result['next_model_round']=max(spent,model_round)
     result['turn_index']=int(current.get('turn_index',0))
     result['_task_followup']={'source_root_task_id':str(old.root_task_id),'input_message_id':source['input_message_id'],
         'input_sha256':hashlib.sha256(source['message'].encode()).hexdigest(),
