@@ -53,13 +53,22 @@ def test_function_loop_closes_its_real_knowledge_pool(tmp_path):
 from services import knowledge_config as cfg
 
 @pytest.mark.asyncio
-async def test_create():
+async def test_create(monkeypatch):
+    # A real pool is required; external DNS is not. Make a regression to a
+    # hostname observable even when normal name resolution happens to be fast.
+    lookups = []
+    async def slow_lookup(*args, **kwargs):
+        lookups.append(args)
+        await asyncio.sleep(20)
+        return []
+    monkeypatch.setattr(asyncio.get_running_loop(), 'getaddrinfo', slow_lookup)
     with time_machine.travel('2026-04-10'):
         pass
     cfg._pg_pool = None
     cfg._kb_available = None
     assert await cfg._get_pg_pool() is not None
     await asyncio.sleep(0)
+    assert not lookups
 
 @pytest.mark.asyncio
 async def test_previous_loop_released_its_pool():
@@ -68,8 +77,11 @@ async def test_previous_loop_released_its_pool():
     backend = str(Path(__file__).parents[1])
     env = os.environ.copy()
     env['PYTHONPATH'] = os.pathsep.join(filter(None, (backend, env.get('PYTHONPATH'))))
-    env['DATABASE_URL'] = 'postgresql://unused'
-    env['SUPABASE_DB_URL'] = 'postgresql://unused'
+    # This lifecycle check needs no live database or DNS. A missing local
+    # socket fails immediately, so worker shutdown cannot race DNS timeouts.
+    missing_socket = tmp_path / 'no-postgres-socket'
+    env['DATABASE_URL'] = f'postgresql://localhost/postgres?host={missing_socket}'
+    env['SUPABASE_DB_URL'] = env['DATABASE_URL']
     result = subprocess.run([sys.executable, '-m', 'pytest', '-p', 'tests.conftest',
                              str(test), '-q', '-o', 'asyncio_mode=auto'],
                             cwd=tmp_path, env=env, capture_output=True, text=True, timeout=30)
