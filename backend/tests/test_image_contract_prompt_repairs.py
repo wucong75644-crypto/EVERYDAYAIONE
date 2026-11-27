@@ -86,7 +86,12 @@ def test_content_repair_does_not_teach_image_fields_and_focus_has_action_semanti
     args = {'intent': 'execute_saved', 'request_context': {'focus': 'selected_target',
         'target': {'kind': 'content', 'basis': 'explicit_reference', 'item_indices': [1]}}}
     result = refs.selection_repair({}, args, parameters)
-    assert 'artifact_id' in result['message'] and 'focus=selected_target' in result['message']
+    assert 'content_ref' in result['message'] and 'focus=selected_target' in result['message']
+    assert 'artifact_id' not in result['message']
+    target = result['parameters']['$defs']['Target']
+    assert 'content_ref' in target['properties'] and 'artifact_id' not in target['properties']
+    content_branch = next(b for b in target['oneOf'] if b['properties']['kind']['const'] == 'content')
+    assert 'content_ref' in content_branch['required']
     assert 'image目标' not in result['message']
     assert 'execute_saved' in parameters['properties']['request_context']['properties']['focus']['description']
 
