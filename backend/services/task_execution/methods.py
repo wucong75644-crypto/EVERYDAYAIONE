@@ -50,12 +50,12 @@ class ImageMethodDocument(MethodDocumentFact):
     image_plans: tuple[ImageBrief, ...] = Field(min_length=1, max_length=100)
 
 
-REFERENCE_PROMPTS_PROFILE = 'reference-prompts-v1'
+from .reference_prompt_format import PROFILE as REFERENCE_PROMPTS_PROFILE, DISPLAY_FIELDS, PROMPT_FIELDS
 OUTPUT_PROFILES = frozenset({REFERENCE_PROMPTS_PROFILE, 'ecommerce-image-plan-v1'})
 
 
-REFERENCE_PROMPTS_BODY_HEADINGS = ('完整生图提示词', '负面提示词')
-REFERENCE_PROMPTS_DISPLAY_HEADINGS = ('方案内容', '视觉设定', '参考图使用方式')
+REFERENCE_PROMPTS_BODY_HEADINGS = tuple(PROMPT_FIELDS.values())
+REFERENCE_PROMPTS_DISPLAY_HEADINGS = tuple(DISPLAY_FIELDS.values())
 
 
 def content_format_contract(profile_id):
@@ -65,7 +65,9 @@ def content_format_contract(profile_id):
         'body_sections': list(REFERENCE_PROMPTS_BODY_HEADINGS) if profile_id else [],
         'display_sections': ['方案标题', *REFERENCE_PROMPTS_DISPLAY_HEADINGS] if profile_id else [],
         'document_sections': ['参考图判断'] if profile_id else [],
-        'read_before_revision': True, 'preserve_omitted_fields': True}
+        'read_before_revision': True, 'preserve_omitted_fields': True,
+        **({'model_fields': {'document.reference_analysis': '参考图判断',
+             'item.presentation': dict(DISPLAY_FIELDS), 'item.prompt': dict(PROMPT_FIELDS)}} if profile_id else {})}
 
 
 _REFERENCE_FORMAT = content_format_contract(REFERENCE_PROMPTS_PROFILE)

@@ -112,12 +112,14 @@ async def test_old_reference_contract_is_visible_without_active_skill_and_repair
     assert schema['function']['description'].startswith('按当前参考图提示词方法')
     offered = content_tools.model_tools([schema], saved_text_available=True,
         reuse_source=intent == 'execute_saved', revise_saved=intent == 'write')[0]
-    projected = ImageReferences({'input_message_id': 'current'}).schema(offered)['function']
+    refs = ImageReferences({'input_message_id': 'current', 'saved_groups': [row]})
+    projected = refs.schema(offered)['function']
     params = projected['parameters']
     for example in params['examples']:
         Draft202012Validator(params).validate(example)
         assert json.dumps(example, ensure_ascii=False) in projected['description']
-        item = co.ContentItem(title='案例', **example['updates'][0]['item'])
+        native = refs.decode_call(co.SAVE, example)
+        item = co.ContentItem(title='案例', **native['updates'][0]['item'])
         assert valid_reference_prompts_presentation(co.ContentDocument(title='案例', display_prefix='# 参考图判断\n摄影参考。', items=(item,)))
     result = await read(r, p, h, q, row, 3)
     assert result['format_contract'] == content_format_contract(REFERENCE_PROMPTS_PROFILE)

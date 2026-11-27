@@ -100,7 +100,7 @@ def test_read_and_correction_use_same_handle_without_changing_request_or_saved_i
     Draft202012Validator(read).validate({'show_image': {'image_ref': handle}})
     projected = rr.model_context(r)
     assert projected['recent_requests'][0]['message_id'] == rows[0]['message_id']
-    assert projected['saved_groups'][0]['artifact_id'] == 'old-a'
+    assert refs.decode(projected['saved_groups'][0])['artifact_id'] == 'old-a'
     assert projected['saved_groups'][0]['source_request']['turn_number'] == 1
     assert projected['focused_request']['images'][0]['reference'] == {'image_ref': handle}
 

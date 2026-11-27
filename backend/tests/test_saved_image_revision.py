@@ -24,24 +24,27 @@ def test_model_visible_revision_examples_validate_after_final_tool_projection(pr
         from services.task_execution.methods import REFERENCE_PROMPTS_PRESENTATION
         source['function']['description'] = REFERENCE_PROMPTS_PRESENTATION + source['function']['description']
     projected = content_tools.model_tools([source], saved_text_available=True, revise_saved=True)
-    refs = ImageReferences({'input_message_id': '00000000-0000-4000-8000-000000000001'})
+    refs = ImageReferences({'input_message_id': '00000000-0000-4000-8000-000000000001',
+        'saved_groups': [{'artifact_id': 'real-example', 'items': [{'item_index': 3, 'title': '方案3｜示例'}]}]})
     function = refs.tools(projected)[0]['function']
     schema = function['parameters']
-    assert co.revision_usage(presentation) in function['description']
+    assert 'content_ref' in function['description'] and 'artifact_id' not in function['description']
     if presentation:
-        assert function['description'].startswith(REFERENCE_PROMPTS_PRESENTATION)
+        from services.task_execution.reference_prompt_format import MODEL_GUIDANCE
+        assert function['description'].startswith(MODEL_GUIDANCE)
     assert not {'document', 'new_content', 'message_source'} & schema['properties'].keys()
     for example in schema['examples']:
         Draft202012Validator(schema).validate(example)
-        co.SaveContent.model_validate(example)
+        native = refs.decode_call(co.SAVE, example)
+        co.SaveContent.model_validate(native)
         if presentation:
             from services.task_execution.methods import valid_reference_prompts_presentation
-            item = co.ContentItem(title='示例', **example['updates'][0]['item'])
+            item = co.ContentItem(title='示例', **native['updates'][0]['item'])
             document = co.ContentDocument(title='示例', display_prefix='# 参考图判断\n产品摄影参考图。', items=(item,))
             assert valid_reference_prompts_presentation(document)
         assert json.dumps(example, ensure_ascii=False) in function['description']
     repair = refs.save_repair({'message': '参数错误。', 'issues': [{'loc': ['updates', 0, 'item']}]}, function)
-    assert co.revision_usage(presentation) in repair['message']
+    assert '先' in repair['message'] and '读取' in repair['message'] and 'content_ref' in repair['message']
     assert repair['parameters']['examples'] == schema['examples']
 
 

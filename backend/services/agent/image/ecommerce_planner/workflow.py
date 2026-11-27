@@ -354,7 +354,10 @@ async def classify_workflow(text, previous=None, *, org_id=None, selected_skill=
             '用户要求旧方案改规格后出图仍选该content并保留size要求，后续须读取、修订保存再执行新版；不是直接执行旧稿。'
             'new_uploads、quoted_images、selected_images分别是当轮上传、客户端引用、模型解析记录；'
             '后者不是用户明确指定，不把本次上传自动当成编辑授权。')
+    native_saved_groups = (context or {}).get('saved_groups', ())
     if image_references is not None:
+        for group in (context or {}).get('saved_groups', ()):
+            image_references.contents.add(group)
         wire_context['materials'] = ImageRequestContext.model_json_schema()['properties']['materials']
         def short_inputs(parts):
             return [{**{key: value for key, value in part.items() if key != 'material_index'},
@@ -366,6 +369,8 @@ async def classify_workflow(text, previous=None, *, org_id=None, selected_skill=
             context = {**context, 'historical_materials': short_inputs(context['historical_materials'])}
         tool = image_references.schema(tool)
         context = image_references.encode(context)
+        prompt = prompt.replace('artifact_id', 'content_ref')
+        prompt += ' 稿件从当前目录复制content_ref与条目编号；后台保留真实ID、版本和来源，不根据短引用自动批准或执行。'
         prompt = prompt.replace('canvas_image只选本轮实际附件中的编辑目标，不选风格参考。',
                                 'canvas_ref只选本条实际附件中的编辑目标，不选风格参考。')
         prompt = prompt.replace('origin=append的图片属于独立追加事件，选为底图时用canvas_resource填写image:<material_index>，不把它编号成原消息附件。',
@@ -382,7 +387,7 @@ async def classify_workflow(text, previous=None, *, org_id=None, selected_skill=
     router = IntentRouter()
     try:
         payload = await router.call_tool_model(api_key=settings.dashscope_api_key, model=settings.intent_router_model,
-            system_prompt=prompt, text=json.dumps({"raw_user_input": routed_input, "previous_workflow": previous, "selected_skill": selected_skill,
+            system_prompt=prompt, text=json.dumps({"raw_user_input": routed_input, "previous_workflow": image_references.encode(previous) if image_references is not None else previous, "selected_skill": selected_skill,
                 "available_context": context}, ensure_ascii=False),
             tools=[tool], timeout=settings.intent_router_timeout if turn_catalog else min(settings.intent_router_timeout, 5.0), max_tokens=2048)
         calls = payload["choices"][0]["message"].get("tool_calls", [])
@@ -409,7 +414,7 @@ async def classify_workflow(text, previous=None, *, org_id=None, selected_skill=
                 or not 0 <= args['reuse_through_stage'] <= 2):
             return {'kind':'unavailable'}
         if 'request_context' in args:
-            pending = [g for g in (context or {}).get('saved_groups', ())
+            pending = [g for g in native_saved_groups
                        if g.get('confirmation_tool') and any(i.get('awaiting_confirmation') for i in g.get('items', ()))]
             raw_context = args['request_context']
             if isinstance(raw_context,dict):

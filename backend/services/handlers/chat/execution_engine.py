@@ -1434,6 +1434,7 @@ async def _run_loop(
             blocks=blocks,
             runtime=runtime,
             totals=totals,
+            native_content_restored=bool(restored),
             repeated_tool_call_guard=repeated_tool_call_guard,
             repeated_tool_call_nudge=(
                 _REPEATED_TOOL_CALL_NUDGE
@@ -2035,6 +2036,7 @@ async def _execute_tools_impl(
     recovery_only: bool = False,
     content_output_registration: bool = False,
     indexed_gaps: tuple[str, ...] = (),
+    native_content_restored: bool = False,
 ) -> str | None:
     totals = totals or StreamTotals()
     from services.task_execution.model_bridge import TASK_CONTROL_TOOLS, execute_control_batch
@@ -2054,21 +2056,45 @@ async def _execute_tools_impl(
             try:
                 raw = decode_tool_arguments(call.get('arguments') or '{}')
                 model_call_arguments[call['id']] = raw
-                decoded = image_references.decode(raw)
+                decoded = image_references.decode_call(call['name'], raw)
+                # Authenticated handoffs already contain canonical native args.
+                # All original read, scope, target and version gates still run below.
+                if (call['name'] == content_objects.SAVE and not recovery_only
+                        and not content_output_registration and not native_content_restored):
+                    offered = getattr(prepared, 'content_visible_tools', {}).get(call['name'])
+                    if offered is not None:
+                        from services.task_execution.reference_prompt_format import MODEL_GUIDANCE, FormatArgumentsError
+                        public = image_references.schema({'function': offered})['function']
+                        if public.get('description', '').startswith(MODEL_GUIDANCE):
+                            from services.tools.argument_validation import _issues
+                            issues = _issues(raw, public['parameters'], image_hints=False)
+                            if issues:
+                                raise FormatArgumentsError(issues[:16])
                 decoded_calls.append({**call, 'arguments': json.dumps(decoded, ensure_ascii=False)} if decoded != raw else call)
             except TaskError as error:
-                reference_error = str(error)
+                reference_error = error
                 break
             except (ValueError, TypeError):
                 decoded_calls.append(call)  # Existing strict argument validation owns malformed JSON.
         if reference_error:
             if any(call['name'] == content_objects.SAVE for call in calls):
                 from services.task_execution.content_delivery import finish_response
-                finish_response(runtime, None, {'ok': False, 'code': reference_error}, request=request)
+                finish_response(runtime, None, {'ok': False, 'code': str(reference_error)}, request=request)
             prepared.messages.append(_assistant_tool_message(turn_text, calls))
             for call in calls:
-                output = json.dumps({'ok': False, 'accepted': False, 'code': reference_error,
-                    'submission_state': 'not_dispatched', 'message': '短引用不存在、已过期或与真实ID冲突。请从当前图片目录重新选择image_ref，不猜测编号。'}, ensure_ascii=False)
+                from services.task_execution.content_reference_catalog import ContentReferenceError
+                from services.task_execution.reference_prompt_format import FormatArgumentsError, MODEL_GUIDANCE
+                result = ({'ok': False, 'accepted': False, 'code': str(reference_error),
+                    'submission_state': 'not_dispatched', 'issues': reference_error.issues,
+                    'recovery': {'action': 'repair_arguments'}, 'message': MODEL_GUIDANCE}
+                    if isinstance(reference_error, FormatArgumentsError) else
+                    image_references.contents.repair(reference_error) if isinstance(reference_error, ContentReferenceError) else
+                    {'ok': False, 'accepted': False, 'code': str(reference_error),
+                    'submission_state': 'not_dispatched', 'message': '图片短引用不存在、已过期或与真实ID冲突。请从当前图片目录重新选择image_ref，不猜测编号。'})
+                offered = getattr(prepared, 'content_visible_tools', {}).get(call['name'])
+                if offered is not None:
+                    result['parameters'] = image_references.schema({'function': offered})['function']['parameters']
+                output = json.dumps(result, ensure_ascii=False)
                 prepared.messages.append({'role': 'tool', 'tool_call_id': call['id'], 'content': output})
                 block = next((b for b in blocks if b.get('tool_call_id') == call['id']), None)
                 if block is not None:
@@ -2373,6 +2399,15 @@ async def _execute_tools_impl(
             for call in calls:
                 error = target_errors.get(call['id'], ('REQUEST_TARGET_BATCH_BLOCKED', '本批目标未核实，未派发任何业务操作。'))
                 result = {'ok': False, 'accepted': False, 'code': error[0], 'message': error[1]}
+                if image_references is not None and error[0] == 'REQUEST_TARGET_CONTENT_MISMATCH':
+                    target = (request_resolution.binding(runtime) or {}).get('target') or {}
+                    field = 'base' if call['name'] == content_objects.SAVE else 'content_source'
+                    actual = json.loads(call.get('arguments') or '{}').get(field) or {}
+                    key = 'content_ref' if actual.get('artifact_id') != target.get('artifact_id') else 'item_index'
+                    result.update(submission_state='not_dispatched',
+                        issues=[{'path': '$.' + field + '.' + key, 'reason': '引用有效但与本次已选择的目标或条目不一致'}],
+                        recovery={'action': 'repair_arguments', 'expected_target': image_references.encode(target)},
+                        message='本次未保存或派发。核对用户选择与expected_target；目标本身有误先纠正选择，否则复制其content_ref及条目编号，不自动换稿。')
                 if call['name'] == content_objects.SAVE:
                     from services.task_execution.content_delivery import finish_response
                     finish_response(runtime, None, result, request=request)

@@ -37,15 +37,20 @@ def test_first_save_examples_match_final_projected_schema_and_presentation(refer
     if reference:
         tool['function']['description'] = REFERENCE_PROMPTS_PRESENTATION + tool['function']['description']
     projected = content_tools.model_tools([tool], first_delivery=True)
-    final = ImageReferences({'input_message_id': str(uuid4())}).tools(projected)[0]['function']
+    refs = ImageReferences({'input_message_id': str(uuid4())})
+    final = refs.tools(projected)[0]['function']
     assert 'base' not in final['parameters']['properties']
     examples = final['parameters']['examples']
     # The appended prose JSON must use the very same new-document contract.
-    described = final['description'].split('新建参数的对象结构示例（内容须按实际要求填写，素材另按目录绑定）：')[1]
-    example, _ = json.JSONDecoder().raw_decode(described)
+    if reference:
+        described = final['description'].split('完整JSON案例（示例不代表本次目标，引用须按真实目录选择）：')[1]
+        example = json.JSONDecoder().raw_decode(described)[0][0]
+    else:
+        described = final['description'].split('新建参数的对象结构示例（内容须按实际要求填写，素材另按目录绑定）：')[1]
+        example, _ = json.JSONDecoder().raw_decode(described)
     for value in [*examples, example]:
         Draft202012Validator(final['parameters']).validate(value)
-        parsed = co.SaveContent.model_validate(value)
+        parsed = co.SaveContent.model_validate(refs.decode_call(co.SAVE, value))
         assert parsed.base is None and not parsed.continue_execution
         if reference:
             assert valid_reference_prompts_presentation(parsed.document)
