@@ -24,6 +24,14 @@ from services.handlers.chat_image_request import freeze_image_request
 
 ROOT=Path(__file__).parents[1]
 ARGS={'mode':'text_to_image','prompt':'原提示词，保留商品外观','aspect_ratio':'3:4'}
+pytest_plugins = ['tests.test_content_objects_postgres']
+
+
+@pytest.fixture(scope='module')
+def current_dispatch_db(content_db):
+    # Current Python followup payloads require the full production SQL contract,
+    # including the execution-window migration, rather than the 372 snapshot.
+    return content_db
 
 
 @pytest.fixture(scope='module')
@@ -144,14 +152,14 @@ async def test_canonical_arguments_use_same_original_operation_and_cannot_be_reb
         assert c.execute('SELECT count(*) FROM tool_invocations WHERE task_id=%s',(f['task'],)).fetchone()[0]==1
 
 
-def test_followup_after_several_main_rounds_preserves_context_and_cumulative_budget(dispatch_db):
+def test_followup_after_several_main_rounds_preserves_context_and_cumulative_budget(current_dispatch_db):
     from tests.test_task_execution_followup_reuse_postgres import new_turn,adopt
     from services.task_execution.followup import payload,FollowupObservation
-    f,b,s,cp,call=initial(dispatch_db)
+    f,b,s,cp,call=initial(current_dispatch_db)
     s=s.model_copy(update={'revision':s.revision+1,'model_rounds_used':2,'status':'partial'})
     cp={**cp,'_task_execution':s.model_dump(mode='json')}
     with connect(f) as c:assert save(c,f,cp,expected=0)['outcome']=='saved'
-    _,fresh,source,obs,_=new_turn(dispatch_db,old=f)
+    _,fresh,source,obs,_=new_turn(current_dispatch_db,old=f)
     current={'messages':[{'role':'user','content':source['message']}],'opaque_current':{'keep':True},
         'next_model_round':3,'_task_direct_plan_owner':fresh['task'],
         '_task_direct_plan':{'explanation':'保留原成果','steps':[{'step':'读取原结果','status':'in_progress'}]}}
@@ -163,6 +171,8 @@ def test_followup_after_several_main_rounds_preserves_context_and_cumulative_bud
         assert reply['outcome']=='saved'
         restored=reply['payload']
         assert restored['_task_execution']['model_rounds_used']==5
+        assert restored['_task_execution']['execution_window'] == {
+            'input_message_id': fresh['message'], 'model_rounds_used': 3, 'correction_count': 0}
         assert restored['opaque_context']=={'keep':True}
         assert restored['_task_followup_input_checkpoint']==current
         assert restored['messages'][:len(cp['messages'])]==cp['messages']
@@ -337,7 +347,7 @@ async def test_sync_handler_database_gate_scopes_each_transaction_without_leakin
 @pytest.mark.asyncio
 @pytest.mark.parametrize('legacy_evidence', [False, True])
 async def test_code_failure_followup_reuses_original_root_and_only_dispatches_repair(
-    dispatch_db, monkeypatch, legacy_evidence,
+    current_dispatch_db, monkeypatch, legacy_evidence,
 ):
     from unittest.mock import AsyncMock
     from services.task_execution.contracts import Artifact, TaskState
@@ -347,7 +357,7 @@ async def test_code_failure_followup_reuses_original_root_and_only_dispatches_re
     from tests.test_task_execution_followup_reuse_postgres import new_turn, adopt
     from tests.test_task_execution_model_bridge import call
 
-    old = seed(dispatch_db)
+    old = seed(current_dispatch_db)
     b = replace(bootstrap(), task_id=UUID(old['task']), actor_user_id=UUID(old['user']),
         conversation_id=UUID(old['conv']), input_message_id=UUID(old['message']))
     b = replace(b, execution_identity=b.execution_identity.model_copy(update={'workspace_owner_id': old['user']}))
@@ -379,7 +389,7 @@ async def test_code_failure_followup_reuses_original_root_and_only_dispatches_re
     user_text = ('继续刚才失败的接续测试。直接使用上轮第一步工具已经返回的 MAX 和 MIN，'
                  '仅补做第二步：实际调用一次代码工具计算 MAX 减 MIN，并报告结果。'
                  '保留上轮成功输出和失败记录，不读文件、不重算第一步、不再触发测试错误。')
-    _, fresh, source, _, _ = new_turn(dispatch_db, old=old, text=user_text)
+    _, fresh, source, _, _ = new_turn(current_dispatch_db, old=old, text=user_text)
 
     async def checkpoint(point, payload):
         from services.replay_checkpoint_store import DatabaseReplayCheckpointStore, ReplayCheckpointBoundary

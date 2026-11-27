@@ -255,12 +255,14 @@ async def test_task_total_text_budget_still_rejects_without_losing_saved_drafts(
 
 @pytest.mark.asyncio
 async def test_wrong_patch_nesting_is_repaired_without_rewriting_other_items_or_authorizing_images():
+    from tests.semantic_fixtures import observed_revision
     r, p, h, q = case()
     initial = {'title': '三套方案', 'items': [{'title': str(i), 'body': f'原稿{i}'} for i in range(1, 4)]}
     await execute(r, p, h, q, [call(co.SAVE, {'document': initial}, 'save-original')])
     old = r.task_execution_state
     row, = co.catalog(old)
     base = {'artifact_id': row['artifact_id'], 'item_index': 1}
+    observed_revision(r, q, row, [1])
     await execute(r, p, h, q, [call(co.SAVE, {'base': base,
         'updates': [{'item_index': 1, 'body': '第一套修订原文'}]}, 'bad-patch')])
     error = json.loads(p.messages[-1]['content'])

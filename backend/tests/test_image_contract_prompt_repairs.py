@@ -112,6 +112,7 @@ async def test_real_focus_rejection_names_the_field_without_changing_selected_ta
 @pytest.mark.asyncio
 async def test_revision_for_square_preserves_other_specs_inputs_and_other_items():
     from tests.test_content_objects import registered, ref
+    from tests.semantic_fixtures import observed_revision
     r, p, h, q, row = await registered()
     before = r.task_execution_state
     _, original, _ = co.load(before, ref(row))
@@ -121,6 +122,8 @@ async def test_revision_for_square_preserves_other_specs_inputs_and_other_items(
         {'item_index': 1, 'item': {'body': '修改为竖版画布，产品结构不变。', 'options': options}}]}, 'portrait')])
     current, = co.catalog(r.task_execution_state)
     _, portrait, _ = co.load(r.task_execution_state, ref(current))
+    assert current["revision"] == row["revision"] + 1
+    observed_revision(r, q, current, [1])
     await execute(r, p, h, q, [call(co.SAVE, {'base': ref(current), 'updates': [
         {'item_index': 1, 'item': {'body': '正方形画布，产品结构不变。',
             'options': {**portrait.items[0].options, 'aspect_ratio': '1:1'}}}],
