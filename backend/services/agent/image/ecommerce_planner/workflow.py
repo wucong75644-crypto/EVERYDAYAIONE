@@ -211,6 +211,10 @@ async def classify_workflow(text, previous=None, *, org_id=None, selected_skill=
     """Select specialized planning only on explicit intent; errors are not missing input."""
     from core.config import get_settings
     from services.intent_router import IntentRouter
+    from services.task_execution.reference_boundary import NativeContext, ModelReferenceBoundary, REFERENCE_GUIDANCE
+    # Reject transport-only snapshots before any business lookup or model call.
+    context = NativeContext(context or {})
+    references = ModelReferenceBoundary(image_references)
     settings = get_settings()
     if not settings.intent_router_enabled or not settings.dashscope_api_key:
         logger.warning("IMAGE_WORKFLOW_ROUTER_UNAVAILABLE")
@@ -356,21 +360,23 @@ async def classify_workflow(text, previous=None, *, org_id=None, selected_skill=
             '后者不是用户明确指定，不把本次上传自动当成编辑授权。')
     native_saved_groups = (context or {}).get('saved_groups', ())
     if image_references is not None:
-        for group in (context or {}).get('saved_groups', ()):
-            image_references.contents.add(group)
+        references.register_context(NativeContext(context))
         wire_context['materials'] = ImageRequestContext.model_json_schema()['properties']['materials']
         def short_inputs(parts):
             return [{**{key: value for key, value in part.items() if key != 'material_index'},
-                     **image_references.encode(route_refs[part['material_index'] - 1])}
+                     **references.context(NativeContext(route_refs[part['material_index'] - 1]))}
                     if part.get('material_index') else part for part in parts]
         if isinstance(routed_input, list):
             routed_input = short_inputs(routed_input)
         if context.get('historical_materials'):
-            context = {**context, 'historical_materials': short_inputs(context['historical_materials'])}
-        tool = image_references.schema(tool)
-        context = image_references.encode(context)
+            context = {**context, 'historical_materials': [
+                {**{key: value for key, value in part.items() if key != 'material_index'},
+                 **route_refs[part['material_index'] - 1]} if part.get('material_index') else part
+                for part in context['historical_materials']]}
+        tool = references.schema(tool)
+        context = references.context(NativeContext(context))
         prompt = prompt.replace('artifact_id', 'content_ref')
-        prompt += ' 稿件从当前目录复制content_ref与条目编号；后台保留真实ID、版本和来源，不根据短引用自动批准或执行。'
+        prompt += REFERENCE_GUIDANCE
         prompt = prompt.replace('canvas_image只选本轮实际附件中的编辑目标，不选风格参考。',
                                 'canvas_ref只选本条实际附件中的编辑目标，不选风格参考。')
         prompt = prompt.replace('origin=append的图片属于独立追加事件，选为底图时用canvas_resource填写image:<material_index>，不把它编号成原消息附件。',
@@ -387,7 +393,7 @@ async def classify_workflow(text, previous=None, *, org_id=None, selected_skill=
     router = IntentRouter()
     try:
         payload = await router.call_tool_model(api_key=settings.dashscope_api_key, model=settings.intent_router_model,
-            system_prompt=prompt, text=json.dumps({"raw_user_input": routed_input, "previous_workflow": image_references.encode(previous) if image_references is not None else previous, "selected_skill": selected_skill,
+            system_prompt=prompt, text=json.dumps({"raw_user_input": routed_input, "previous_workflow": references.context(NativeContext(previous)) if image_references is not None and previous is not None else previous, "selected_skill": selected_skill,
                 "available_context": context}, ensure_ascii=False),
             tools=[tool], timeout=settings.intent_router_timeout if turn_catalog else min(settings.intent_router_timeout, 5.0), max_tokens=2048)
         calls = payload["choices"][0]["message"].get("tool_calls", [])
@@ -404,7 +410,7 @@ async def classify_workflow(text, previous=None, *, org_id=None, selected_skill=
             if issues:
                 return {'kind': 'unavailable', 'rejection': {'code': 'IMAGE_WORKFLOW_ARGUMENTS_INVALID',
                     'issues': issues, 'rejected_arguments': args}}
-            args = image_references.decode(args)
+            args = references.arguments(args)
         if (not isinstance(args, dict) or set(args) - {'kind','mode','reuse_through_stage','intent','image_count','request_context'}
                 or not {'kind','mode','reuse_through_stage','intent','image_count'} <= args.keys()
                 or args.get('kind') not in {'main_images','ordinary_image','needs_input','unrelated'}
@@ -691,7 +697,7 @@ class EcommerceWorkflow:
             if images or has_sources or any(group.get('confirmation_tool') in {'generate_image','generate_video'} for group in groups):
                 result.update(saved_groups=groups, image_results=images, original_user_request=state.original_goal)
         from services.task_execution import request_resolution
-        recent = request_resolution.model_context(self.runtime)
+        recent = request_resolution.native_context(self.runtime)
         if recent is not None:
             result['request_resolution'] = recent
             # Both classifiers see the same selectable catalog, including older
@@ -703,7 +709,8 @@ class EcommerceWorkflow:
             if focused is not None:
                 result['original_user_request'] = focused['text_excerpt']
                 result.pop('image_results', None)  # Unselected recovery receipts are history, not focus.
-        return result or None
+        from services.task_execution.reference_boundary import NativeContext
+        return NativeContext(result) if result else None
 
     def action_input(self):
         changes = getattr(getattr(self.runtime, 'task_user_changes', None), 'items', ())

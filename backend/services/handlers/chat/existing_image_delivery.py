@@ -71,22 +71,19 @@ def complete(runtime, request, blocks, refs=None):
 async def deliver(runtime, request, prepared, blocks, *, execute, finish):
     """Reuse the original dispatcher, permission checks, checkpoint and sink."""
     from . import content_tools
-    from services.task_execution.image_reference_catalog import for_runtime
+    from services.task_execution.reference_boundary import NativeArguments, NativeToolCall
 
     refs = references(runtime, request)
     if not refs or not prepared.content_controls_available or content_tools.READ not in prepared.content_visible_tool_names:
         return False
     if not complete(runtime, request, blocks, refs):
-        encoded = for_runtime(runtime)
         calls = []
         for ref in refs:
             resolution.check_display(runtime, request, ref)
             args = {'show_image': ref}
-            if encoded:
-                args = encoded.encode(args)
             identity = json.dumps([input_revision(runtime, request), ref], sort_keys=True)
-            calls.append({'name': content_tools.READ, 'arguments': json.dumps(args),
-                          'id': 'display_' + hashlib.sha256(identity.encode()).hexdigest()[:24]})
+            calls.append(NativeToolCall(name=content_tools.READ, arguments=NativeArguments(args),
+                          call_id='display_' + hashlib.sha256(identity.encode()).hexdigest()[:24]))
         await execute(calls)
         if not complete(runtime, request, blocks, refs):
             await finish(FAILED)
@@ -114,11 +111,8 @@ def selection_rejection(runtime, request, reference):
     if (selected.get('status') == 'resolved'
             and selected.get('input_revision') == input_revision(runtime, request)):
         return None
-    from services.task_execution.image_reference_catalog import for_runtime
-    args = selection_arguments(reference)
-    encoded = for_runtime(runtime)
-    if encoded:
-        args = encoded.encode(args)
+    from services.task_execution.reference_boundary import for_runtime, NativeContext
+    args = for_runtime(runtime).context(NativeContext(selection_arguments(reference)))
     return {'ok': False, 'accepted': False, 'code': 'REQUEST_TARGET_SELECTION_REQUIRED',
         'message': '已确认用户要求展示旧图，但尚未绑定具体图片，本次未展示。'
                    '核实候选后先单独选择目标；需要看图时先view_image。不要重新生成或换成其他图。',
@@ -133,7 +127,7 @@ def stage(runtime, request, blocks):
 
 def recovery_context(runtime, request, blocks):
     from services.task_execution.image_history import recovered, requires_view
-    from services.task_execution.image_reference_catalog import for_runtime
+    from services.task_execution.reference_boundary import for_runtime, NativeContext
     candidates = recovered(runtime)
     examples = [{'reference': image['reference'], 'requires_view_before_selection': requires_view(runtime, image['reference']),
                  'selection_arguments': selection_arguments(image['reference'])}
@@ -149,8 +143,7 @@ def recovery_context(runtime, request, blocks):
             '目标明确后后台按已校验目标展示；不要重新生成。'
             '确实需要用户选择时单独用respond_without_execution(purpose=clarification)提出具体问题；'
             '查询无结果、权限不足或文件不可用时如实说明，不能只说稍后发图。'}
-    encoded = for_runtime(runtime)
-    return '[Existing image delivery]\n' + json.dumps(encoded.encode(facts) if encoded else facts, ensure_ascii=False)
+    return '[Existing image delivery]\n' + json.dumps(for_runtime(runtime).context(NativeContext(facts)), ensure_ascii=False)
 
 
 def offer(runtime, request, tools):

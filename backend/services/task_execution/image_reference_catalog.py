@@ -432,7 +432,8 @@ class ImageReferences:
                 for part in message['content']:
                     if isinstance(part, dict) and part.get('type') in {'text', 'input_text'} and isinstance(part.get('text'), str):
                         part['text'] = self.text(part['text'])
-        result.append({'role': 'system', 'content':
+        from .reference_boundary import REFERENCE_GUIDANCE
+        result.append({'role': 'system', 'content': REFERENCE_GUIDANCE +
             '图片选择统一复制当前目录的image_ref；编辑用image_ref和edit_instruction，'
             '素材项的reference必须是对象{"image_ref":"当前目录编号"}，不能直接填编号字符串；'
             'view_image、show_image填写对象中的image_ref。不要填写图片消息ID和位置。'

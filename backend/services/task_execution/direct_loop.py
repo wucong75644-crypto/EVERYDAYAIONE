@@ -228,8 +228,8 @@ def context_message(runtime,*,state=None):
         for artifact in facts['previous_task'].get('artifacts',[]):artifact.pop('inline_text',None)
     from .content_objects import TAG, catalog, with_item_sources
     facts['content_objects'] = catalog(state, for_model=True)
-    from .request_resolution import model_context
-    request_context = model_context(runtime)
+    from .request_resolution import native_context
+    request_context = native_context(runtime)
     if request_context is not None:
         facts['current_request'] = request_context
     if source is not None and state is None and (request_context or {}).get('catalog_version') != 2:
@@ -761,7 +761,10 @@ def restored_content_calls(runtime, visible_tools):
             return []
         if any(c['function']['name'] not in visible_tools for c in original):
             return []
-        return [{**c['function'], 'id': c['id'] + ':continued'} for c in original]
+        from .reference_boundary import NativeArguments, NativeToolCall
+        return [NativeToolCall(name=c['function']['name'],
+                    arguments=NativeArguments(json.loads(c['function']['arguments'])),
+                    call_id=c['id'] + ':continued') for c in original]
     return []
 
 

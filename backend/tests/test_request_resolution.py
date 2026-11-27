@@ -291,7 +291,7 @@ async def test_router_image_token_resolves_real_content_position_instead_of_coun
     monkeypatch.setattr('core.config.get_settings', lambda: SimpleNamespace(intent_router_enabled=True, dashscope_api_key='offline', intent_router_model='offline', intent_router_timeout=5))
     monkeypatch.setattr('services.intent_router.IntentRouter', lambda: router)
     result = await classify_workflow([{'type': 'text', 'text': '改这张'}, {'type': 'image', 'reference': {'message_id': current, 'content_index': 1}}],
-                                     context={'request_resolution': rr.model_context(r)})
+                                     context={'request_resolution': rr.native_context(r)})
     assert result['request_context']['target']['source_message_id'] == current
     assert result['request_context']['target']['content_index'] == 1
     offered = router.call_tool_model.await_args.kwargs['tools'][0]['function']['parameters']['$defs']['Target']

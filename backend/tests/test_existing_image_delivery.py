@@ -154,7 +154,7 @@ async def test_router_wire_requires_and_explains_the_display_action(monkeypatch)
     monkeypatch.setattr('core.config.get_settings', lambda: SimpleNamespace(intent_router_enabled=True,
         dashscope_api_key='offline', intent_router_model='offline', intent_router_timeout=15))
     monkeypatch.setattr('services.intent_router.IntentRouter', lambda: router)
-    selected = await classify_workflow('最早那张灯塔图再发一下，不用重新做', context={'request_resolution': rr.model_context(r)})
+    selected = await classify_workflow('最早那张灯塔图再发一下，不用重新做', context={'request_resolution': rr.native_context(r)})
     assert selected['request_context']['image_action'] == 'display_existing'
     wire = router.call_tool_model.await_args.kwargs
     assert 'display_existing' in json.dumps(wire, ensure_ascii=False)

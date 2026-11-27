@@ -244,7 +244,7 @@ async def test_router_and_correction_use_same_image_identity_and_content_owner_c
         {'function': {'name': 'select_image_workflow', 'arguments': json.dumps(output)}}]}}]}))
     monkeypatch.setattr('core.config.get_settings', lambda: SimpleNamespace(intent_router_enabled=True, dashscope_api_key='offline', intent_router_model='offline', intent_router_timeout=15))
     monkeypatch.setattr('services.intent_router.IntentRouter', lambda: router)
-    selected = await classify_workflow([{'type': 'text', 'text': '开始吧'}], context={'request_resolution': rr.model_context(r)})
+    selected = await classify_workflow([{'type': 'text', 'text': '开始吧'}], context={'request_resolution': rr.native_context(r)})
     assert selected['request_context']['target']['source_message_id'] == target['source_message_id']
     args = router.call_tool_model.await_args.kwargs
     assert args['timeout'] == 15
@@ -268,12 +268,12 @@ async def test_canvas_material_alias_maps_current_attachment_without_defaulting_
     monkeypatch.setattr('core.config.get_settings', lambda: SimpleNamespace(intent_router_enabled=True, dashscope_api_key='offline', intent_router_model='offline', intent_router_timeout=5))
     monkeypatch.setattr('services.intent_router.IntentRouter', lambda: router)
     parts = [{'type': 'image', 'name': 'new.png', 'reference': rows[0]['images'][0]['reference']}]
-    value = await classify_workflow(parts, context={'request_resolution': rr.model_context(r)})
+    value = await classify_workflow(parts, context={'request_resolution': rr.native_context(r)})
     assert value['request_context']['canvas_image'] == 1
     assert 'canvas_resource' not in value['request_context']
     raw['request_context']['canvas_image'] = 2
     router.call_tool_model.return_value['choices'][0]['message']['tool_calls'][0]['function']['arguments'] = json.dumps(raw)
-    assert await classify_workflow(parts, context={'request_resolution': rr.model_context(r)}) == {'kind': 'unavailable'}
+    assert await classify_workflow(parts, context={'request_resolution': rr.native_context(r)}) == {'kind': 'unavailable'}
 
 
 @pytest.mark.asyncio
@@ -289,11 +289,11 @@ async def test_ordinary_submission_preserves_target_with_a_proven_redundant_size
     monkeypatch.setattr('core.config.get_settings', lambda: SimpleNamespace(intent_router_enabled=True, dashscope_api_key='offline', intent_router_model='offline', intent_router_timeout=5))
     monkeypatch.setattr('services.intent_router.IntentRouter', lambda: router)
     parts = [{'type': 'image', 'name': 'b.png', 'origin': 'history', 'reference': {'message_id': mid, 'content_index': 1}}]
-    value = await classify_workflow(parts, context={'request_resolution': rr.model_context(r)})
+    value = await classify_workflow(parts, context={'request_resolution': rr.native_context(r)})
     assert value['intent'] == 'write_then_submit_images' and value['mode'] == 'new'
     assert value['request_context']['size'] == {'mode': 'inherit_reference'}
     assert value['request_context']['target']['source_message_id'] == mid
     raw['request_context']['size']['reference_index'] = 1
     router.call_tool_model.return_value['choices'][0]['message']['tool_calls'][0]['function']['arguments'] = json.dumps(raw)
-    invalid = await classify_workflow(parts, context={'request_resolution': rr.model_context(r)})
+    invalid = await classify_workflow(parts, context={'request_resolution': rr.native_context(r)})
     assert invalid['kind'] == 'unavailable' and invalid['rejection']['code'] == 'IMAGE_WORKFLOW_ARGUMENTS_INVALID'

@@ -1434,7 +1434,6 @@ async def _run_loop(
             blocks=blocks,
             runtime=runtime,
             totals=totals,
-            native_content_restored=bool(restored),
             repeated_tool_call_guard=repeated_tool_call_guard,
             repeated_tool_call_nudge=(
                 _REPEATED_TOOL_CALL_NUDGE
@@ -1619,8 +1618,9 @@ async def _read_turn_impl(
     from services.task_execution.image_reference_catalog import for_runtime
     image_references = for_runtime(runtime) if not task_review else None
     if image_references is not None:
-        model_messages = image_references.messages(model_messages)
-        tools = image_references.tools(tools, plain_text_registration=getattr(prepared, 'plain_image_text_delivery', False))
+        from services.task_execution.reference_boundary import ModelReferenceBoundary
+        model_messages, tools = ModelReferenceBoundary(image_references).model_input(
+            model_messages, tools, plain_text_registration=getattr(prepared, 'plain_image_text_delivery', False))
         if content_tools.semantic_intent(request, runtime) in {'generate', 'edit', 'write_then_submit_images'}:
             model_messages.append({'role': 'system', 'content':
                 '当前语义动作包含实际图片交付。先核对所选需求及其等待条件；未要求等待确认时，'
@@ -2036,7 +2036,6 @@ async def _execute_tools_impl(
     recovery_only: bool = False,
     content_output_registration: bool = False,
     indexed_gaps: tuple[str, ...] = (),
-    native_content_restored: bool = False,
 ) -> str | None:
     totals = totals or StreamTotals()
     from services.task_execution.model_bridge import TASK_CONTROL_TOOLS, execute_control_batch
@@ -2046,7 +2045,13 @@ async def _execute_tools_impl(
     if runtime is not None:await refresh_user_changes(runtime)
     from services.task_execution.image_reference_catalog import for_runtime
     image_references = for_runtime(runtime)
+    from services.task_execution.reference_boundary import ModelReferenceBoundary, NativeToolCall, NativeContext
+    reference_boundary = ModelReferenceBoundary(image_references)
     model_call_arguments = {}
+    # Host deliveries use canonical calls and never pass through model decoding.
+    for native_call in calls:
+        if isinstance(native_call, NativeToolCall):
+            reference_boundary.native_call(native_call)
     if image_references is not None:
         from services.task_execution.contracts import TaskError
         from services.tools.argument_validation import decode_tool_arguments
@@ -2056,11 +2061,13 @@ async def _execute_tools_impl(
             try:
                 raw = decode_tool_arguments(call.get('arguments') or '{}')
                 model_call_arguments[call['id']] = raw
-                decoded = image_references.decode_call(call['name'], raw)
+                decoded = (reference_boundary.native_call(call) if isinstance(call, NativeToolCall)
+                           else reference_boundary.arguments(raw, tool=call['name']))
                 # Authenticated handoffs already contain canonical native args.
                 # All original read, scope, target and version gates still run below.
                 if (call['name'] == content_objects.SAVE and not recovery_only
-                        and not content_output_registration and not native_content_restored):
+                        and not content_output_registration
+                        and not isinstance(call, NativeToolCall)):
                     offered = getattr(prepared, 'content_visible_tools', {}).get(call['name'])
                     if offered is not None:
                         from services.task_execution.reference_prompt_format import MODEL_GUIDANCE, FormatArgumentsError
@@ -2070,7 +2077,7 @@ async def _execute_tools_impl(
                             issues = _issues(raw, public['parameters'], image_hints=False)
                             if issues:
                                 raise FormatArgumentsError(issues[:16])
-                decoded_calls.append({**call, 'arguments': json.dumps(decoded, ensure_ascii=False)} if decoded != raw else call)
+                decoded_calls.append(NativeToolCall(name=call['name'], arguments=decoded, call_id=call['id']))
             except TaskError as error:
                 reference_error = error
                 break
@@ -2082,18 +2089,8 @@ async def _execute_tools_impl(
                 finish_response(runtime, None, {'ok': False, 'code': str(reference_error)}, request=request)
             prepared.messages.append(_assistant_tool_message(turn_text, calls))
             for call in calls:
-                from services.task_execution.content_reference_catalog import ContentReferenceError
-                from services.task_execution.reference_prompt_format import FormatArgumentsError, MODEL_GUIDANCE
-                result = ({'ok': False, 'accepted': False, 'code': str(reference_error),
-                    'submission_state': 'not_dispatched', 'issues': reference_error.issues,
-                    'recovery': {'action': 'repair_arguments'}, 'message': MODEL_GUIDANCE}
-                    if isinstance(reference_error, FormatArgumentsError) else
-                    image_references.contents.repair(reference_error) if isinstance(reference_error, ContentReferenceError) else
-                    {'ok': False, 'accepted': False, 'code': str(reference_error),
-                    'submission_state': 'not_dispatched', 'message': '图片短引用不存在、已过期或与真实ID冲突。请从当前图片目录重新选择image_ref，不猜测编号。'})
                 offered = getattr(prepared, 'content_visible_tools', {}).get(call['name'])
-                if offered is not None:
-                    result['parameters'] = image_references.schema({'function': offered})['function']['parameters']
+                result = reference_boundary.repair(reference_error, offered)
                 output = json.dumps(result, ensure_ascii=False)
                 prepared.messages.append({'role': 'tool', 'tool_call_id': call['id'], 'content': output})
                 block = next((b for b in blocks if b.get('tool_call_id') == call['id']), None)
@@ -2406,7 +2403,8 @@ async def _execute_tools_impl(
                     key = 'content_ref' if actual.get('artifact_id') != target.get('artifact_id') else 'item_index'
                     result.update(submission_state='not_dispatched',
                         issues=[{'path': '$.' + field + '.' + key, 'reason': '引用有效但与本次已选择的目标或条目不一致'}],
-                        recovery={'action': 'repair_arguments', 'expected_target': image_references.encode(target)},
+                        recovery={'action': 'repair_arguments', 'expected_target': reference_boundary.context(
+                            NativeContext(target))},
                         message='本次未保存或派发。核对用户选择与expected_target；目标本身有误先纠正选择，否则复制其content_ref及条目编号，不自动换稿。')
                 if call['name'] == content_objects.SAVE:
                     from services.task_execution.content_delivery import finish_response

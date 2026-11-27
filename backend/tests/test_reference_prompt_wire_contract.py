@@ -252,10 +252,16 @@ async def test_public_reference_schema_is_enforced_before_native_save(restored):
     before = r.task_execution_state
     from services.handlers.chat.execution_engine import _execute_tools
     from services.handlers.chat.execution_sink import CollectingExecutionSink
+    if restored:
+        from services.task_execution.reference_boundary import NativeArguments, NativeToolCall
+        native_shape['base'] = {'artifact_id': row['artifact_id'], 'item_index': 3}
+        submitted = NativeToolCall(name=co.SAVE, arguments=NativeArguments(native_shape), call_id='wrong-wire-shape')
+    else:
+        submitted = call(co.SAVE, native_shape, 'wrong-wire-shape')
     await _execute_tools(runtime=r, prepared=p, handler=h, request=q,
-        calls=[call(co.SAVE, native_shape, 'wrong-wire-shape')], blocks=[], turn=0, turn_text='',
+        calls=[submitted], blocks=[], turn=0, turn_text='',
         next_model_round=1, previewed_call_ids=set(), cancellation_event=r.cancellation_event,
-        sink=CollectingExecutionSink(), native_content_restored=restored)
+        sink=CollectingExecutionSink())
     result = json.loads(p.messages[-1]['content'])
     if restored:
         # Host-restored canonical calls are not fresh model JSON, but must

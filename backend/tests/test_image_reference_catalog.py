@@ -257,13 +257,14 @@ async def test_route_repairs_complete_json_and_action_without_guessing_user_word
     async def transport(self, **kwargs):
         calls.append(kwargs)
         return {'choices': [{'message': {'tool_calls': [{'function': {'name': 'select_image_workflow',
-            'arguments': json.dumps(bad if len(calls) == 1 else good)}}]}}]}
+            'arguments': json.dumps(refs.encode(bad if len(calls) == 1 else good))}}]}}]}
     monkeypatch.setattr(IntentRouter, 'call_tool_model', transport)
     groups = [{'artifact_id': 'recipe', 'revision': 1, 'confirmation_tool': 'generate_image',
                'items': [{'item_index': 3, 'awaiting_confirmation': True}]}]
+    refs = ImageReferences({**source, 'saved_groups': groups})
     text = [{'type': 'text', 'text': '第三个做成一张图，正方形，一千就行。'}]
     result = await workflow.classify_current_window(text, context={'request_resolution': source, 'saved_groups': groups},
-        image_references=ImageReferences(source))
+        image_references=refs)
     assert len(calls) == 2 and result.get('intent') == 'execute_saved', result
     assert result['request_context']['media']['approved'] == [3]
     assert json.loads(calls[0]['text'])['raw_user_input'] == json.loads(calls[1]['text'])['raw_user_input'] == text
@@ -381,8 +382,8 @@ async def test_router_short_reference_is_decoded_before_original_frame_validatio
         assert 'material_index' not in kwargs['text']
         return {'choices': [{'message': {'tool_calls': [{'function': {'name': 'select_image_workflow', 'arguments': json.dumps(answer)}}]}}]}
     monkeypatch.setattr(IntentRouter, 'call_tool_model', route)
-    result = await classify_workflow([], context={'request_resolution': refs.encode({'catalog_version': 2,
-        'image_results': source['image_results']})}, image_references=refs)
+    result = await classify_workflow([], context={'request_resolution': {'catalog_version': 2,
+        'image_results': source['image_results']}}, image_references=refs)
     assert 'request_context' in result, result
     assert result['image_count'] is None  # Editing uses its existing single-image contract.
     target = result['request_context']['target']

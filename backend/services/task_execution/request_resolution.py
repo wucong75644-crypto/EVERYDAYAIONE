@@ -200,7 +200,7 @@ def active_request(snapshot):
     return None
 
 
-def model_context(runtime):
+def native_context(runtime):
     snapshot = context(runtime)
     if snapshot is None:
         return None
@@ -253,26 +253,24 @@ def model_context(runtime):
             'quoted_images是客户端携带的历史引用，保留原始来源；selected_images是模型解析的使用关系，不能冒充用户明确指定。'
             'chat_turn_status只表示聊天回合，不表示图片任务完成。没有保存稿的需求仍是有效候选，不用旧稿补缺。'
             '保存稿标题属于历史记录，不解释为当前任务。content目标填写source_message_id，复制其source_request.message_id；'
-            '图片目标复制reference.message_id和content_index，纠正和路由用相同引用。'
+            '图片目标复制目录中的图片选择字段，纠正和路由使用同一引用。'
             '新上传和历史参考可同时使用，没有上传不代表自动继承最近图片。')
         result['instruction'] += ('用户已经明确的约束应当保留，不自行提出删除/改写等新选项或反复确认；'
             '仅当执行确实缺少必要信息且无法从原话取得时澄清。目标已明确且未改变时无需重复调用目标纠正工具。')
-    from .image_reference_catalog import for_runtime
-    images = for_runtime(runtime)
-    if images is not None:
-        result = images.encode(result)
-        result['image_reference_version'] = 1
-        result['image_reference_catalog'] = images.candidates
-        result['instruction'] = result['instruction'].replace(
-            '图片目标复制reference.message_id和content_index，纠正和路由用相同引用。',
-            '图片目标复制image_ref，纠正和路由用同一短引用。')
-        result['instruction'] += ('图片选择复制image_ref；编辑、素材和只读图片工具使用同一短引用。'
-            '最近目录不是全部历史，缺少指定旧图时先list_conversation_images分页查询并view_image核实；'
-            '已找回历史图也可选择，不用其他候选替代。'
-            '编号绑定当前输入快照，不复制其他输入中的编号。后台保留真实消息ID、位置及轮次来源。'
-            '尚未保存的需求选request或image后准备新稿，不能编造content目标、稿件ID或basis；'
-            'content仅用于目录中真实存在且版本匹配的保存稿。')
-    return result
+    from .reference_boundary import NativeContext
+    return NativeContext(result)
+
+
+def model_context(runtime):
+    """Explicit transport projection; native consumers use native_context."""
+    result = native_context(runtime)
+    if result is None:
+        return None
+    from .reference_boundary import for_runtime
+    boundary = for_runtime(runtime)
+    projected = boundary.context(result)
+
+    return projected
 
 
 def freeze_frame(runtime, request, frame, intent):

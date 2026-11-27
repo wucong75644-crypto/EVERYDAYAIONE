@@ -138,10 +138,10 @@ def page(handler, request, context, runtime, arguments):
         position = cursor['position']
     cache_key = json.dumps(value.model_dump(mode='json'), sort_keys=True)
     if cache_key in journal['pages']:
-        from .image_reference_catalog import for_runtime
+        from .reference_boundary import for_runtime, NativeContext
         reply = copy.deepcopy(journal['pages'][cache_key])
         selection_metadata(runtime, reply['images'])
-        return for_runtime(runtime).encode(reply)
+        return for_runtime(runtime).context(NativeContext(reply))
     native = native_resolver(handler, request, context)
     def query():
         builder = handler.db.table('messages').select(
@@ -222,5 +222,5 @@ def page(handler, request, context, runtime, arguments):
                                 '无候选且has_more=true继续翻页；无法确定时用respond_without_execution澄清。'}}
     journal['pages'][cache_key] = reply
     runtime.checkpoint_base[KEY] = journal
-    from .image_reference_catalog import for_runtime
-    return for_runtime(runtime).encode(copy.deepcopy(reply))
+    from .reference_boundary import for_runtime, NativeContext
+    return for_runtime(runtime).context(NativeContext(reply))

@@ -19,6 +19,8 @@ class ContentReferences:
         self.profiles, self.authored_calls = {}, set()
 
     def add(self, group, *, current=True):
+        from .reference_boundary import require_native
+        require_native(group)
         identity = group['artifact_id']
         handle = 'doc_' + self.scope + '_' + hashlib.sha256(identity.encode()).hexdigest()[:12]
         if handle in self.references and self.references[handle] != identity:
