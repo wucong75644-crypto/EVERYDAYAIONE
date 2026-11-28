@@ -121,6 +121,10 @@ async def test_simple_customer_history_sizes_and_new_request_windows(content_db,
         assert revised['items'][:2] == previous['items'][:2]
         assert revised['items'][2]['options']['resolution'] == '2K'
         await turn('new_task_no_generation', '换个新任务，想三个绿叶封面方案，本子还是这个样子。先看方案，不要出图。')
+        upload_shown = await turn('display_original_upload_before_lighthouse', '最早上传的本子原图也发我看看，不用重新做。')
+        upload_parts = upload_shown['message']['content']
+        upload_parts = json.loads(upload_parts) if isinstance(upload_parts, str) else upload_parts
+        assert any(p.get('type') == 'image' and p.get('source_message_id') for p in upload_parts)
         shown = await turn('find_and_display_old_lighthouse', '更早的图片也翻一下，最早那张蓝白灯塔图再发我看看，不用重新做。')
         parts = shown['message']['content']
         if isinstance(parts, str): parts = json.loads(parts)
@@ -143,9 +147,10 @@ def test_saved_customer_evidence():
     evidence = (root / 'evidence.json').read_bytes()
     rows = json.loads(raw)
     assert [row['case'] for row in rows] == ['reference_skill_three_drafts', 'saved_draft_resize_and_generate',
-        'text_only_resolution_revision', 'new_task_no_generation', 'find_and_display_old_lighthouse', 'edit_same_historical_image']
+        'text_only_resolution_revision', 'new_task_no_generation', 'display_original_upload_before_lighthouse',
+        'find_and_display_old_lighthouse', 'edit_same_historical_image']
     assert all(row['status'] == 'passed' for row in rows)
-    first, made, changed, new_task, shown, edited = rows
+    first, made, changed, new_task, upload_shown, shown, edited = rows
     original = first['catalog'][-1]
     assert [item['options'] for item in original['items']] == [
         {'aspect_ratio': '3:2', 'resolution': '1K'}, {'aspect_ratio': '3:2', 'resolution': '1K'},

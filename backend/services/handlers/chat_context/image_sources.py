@@ -31,13 +31,19 @@ def image_sources(row, org_id=None, visible_indices=()):
             continue
         path = part.get("workspace_path")
         available = bool(path) and not part.get("failed")
-        source = "generated" if row.get("role") == "assistant" else "uploaded"
+        from services.image_provenance import kind
+        provenance = kind(part, row.get('role'))
+        source = {'generated_result': 'generated', 'user_upload': 'uploaded'}.get(provenance, provenance)
         # Client origin hints are not assertions about another message/asset.
         if row.get("role") == "user" and part.get("source_message_id"):
             source = "quoted_pending_verification"
         item = {"name": str(part.get("name") or "图片"), "source": source,
+                'provenance': provenance,
                 "image_index": len(result) + 1,
                 "available": available, "visually_present": index in visible_indices}
+        if part.get('source_message_id') is not None and row.get('role') == 'assistant':
+            item['original_reference'] = {'message_id': part['source_message_id'],
+                                          'content_index': part.get('source_content_index')}
         if row.get("id"):
             item.update(message_id=str(row["id"]), content_index=index)
         if available:

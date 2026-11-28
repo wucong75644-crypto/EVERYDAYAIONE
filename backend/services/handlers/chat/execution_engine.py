@@ -1069,6 +1069,8 @@ async def _run_loop(
                 current_images=content_objects.current_source_images(request),
                 first_delivery=first_delivery,
                 image_reference_catalog=for_runtime(runtime),
+                writing_new=(content_tools.semantic_intent(request, runtime) == 'write'
+                             and not content_tools.revises_saved_item(request, runtime)),
             ), *content_tools.SCHEMAS]
             from services.task_execution import item_confirmation
             media = item_confirmation.directive(request, runtime)
@@ -1205,6 +1207,25 @@ async def _run_loop(
                         block.update(status='cancelled', output='已收到补充素材，按更新后的要求继续。')
                         await sink.on_block_update(block)
                 continue
+        from services.task_execution.content_completion import phase as content_phase, incomplete_text
+        pending_content = content_phase(runtime, request)
+        if not calls and pending_content:
+            from services.task_execution.text_delivery import check as check_delivery
+            from services.task_execution.reference_boundary import for_runtime as reference_boundary
+            rejection = check_delivery(runtime, request, {'purpose': 'explanation'})
+            if turn_text:
+                prepared.messages.append({'role': 'assistant', 'content': turn_text})
+            if rejection['stopped'] or prepared.budget.stop_reason:
+                notice = {'type': 'text', 'text': incomplete_text(pending_content), 'content_incomplete': True}
+                blocks.append(notice); totals.text += notice['text']
+                await sink.on_block(notice)
+                return None
+            prepared.messages.append({'role': 'system', 'content': '[Current content action correction]\n'
+                + json.dumps(reference_boundary(runtime).value(rejection), ensure_ascii=False)})
+            await runtime.safe_point(SafePoint.AFTER_MODEL, replay_payload=_build_replay_context(
+                prepared.messages, blocks, turn, next_model_round=model_round,
+                repeated_tool_call_guard=repeated_tool_call_guard))
+            continue
         if not calls and existing_image_delivery.action(runtime, request) == 'display_existing' and not existing_image_delivery.complete(runtime, request, blocks):
             if totals.last_finish_reason != 'length' and existing_image_delivery.request_continuation(runtime, request, prepared, blocks):
                 await runtime.safe_point(SafePoint.AFTER_MODEL, replay_payload=_build_replay_context(
@@ -1584,7 +1605,9 @@ async def _read_turn_impl(
     from . import existing_image_delivery
     display_pending = (existing_image_delivery.action(runtime, request) == 'display_existing'
                        and not existing_image_delivery.complete(runtime, request, blocks))
-    defer_narrative = defer_narrative or image_reply or silent_delivery or bool(missing_delivery) or video_pending or display_pending
+    from services.task_execution.content_completion import phase as content_phase
+    draft_pending = content_phase(runtime, request) if not task_review else None
+    defer_narrative = defer_narrative or image_reply or silent_delivery or bool(missing_delivery) or video_pending or display_pending or bool(draft_pending)
     from services.handlers.interrupt_anchor import project_interrupt_history
 
     skills = runtime.skill_runtime if runtime and not task_review else None
@@ -1621,6 +1644,12 @@ async def _read_turn_impl(
         from services.task_execution.reference_boundary import ModelReferenceBoundary
         model_messages, tools = ModelReferenceBoundary(image_references).model_input(
             model_messages, tools, plain_text_registration=getattr(prepared, 'plain_image_text_delivery', False))
+        if draft_pending:
+            model_messages.append({'role': 'system', 'content': '[Current saved draft action]\n'
+                + json.dumps(ModelReferenceBoundary(image_references).value(draft_pending), ensure_ascii=False)
+                + '\n按当前next_tool继续。需要修订时按实际读取条目填写base+updates；'
+                  '要求出图时continue_execution=true，只改文字为false。保存成功回执才表示已保存；'
+                  '实际执行回执才表示已提交。缺少必要信息时用clarification询问，不以说明代替保存或执行。'})
         if content_tools.semantic_intent(request, runtime) in {'generate', 'edit', 'write_then_submit_images'}:
             model_messages.append({'role': 'system', 'content':
                 '当前语义动作包含实际图片交付。先核对所选需求及其等待条件；未要求等待确认时，'
@@ -1839,6 +1868,8 @@ async def _read_turn_impl(
     else:
         ordered_calls.sort(key=lambda call: call.get("id", ""))
     chat_phase('model.end', task_id=request.task_id if request else None, model_round=model_round)
+    if draft_pending and ordered_calls:
+        turn_text = ''  # Publish the actual saved document/receipt after commit.
     prepared.last_thinking_duration_ms = model_timing.thinking_duration_ms
     timing = model_timing.summary(held=False,
                                   review=task_review)
@@ -1897,7 +1928,7 @@ async def _read_turn_impl(
         confirmed_item = media.approved[0] if media and media.confirmation_only and len(media.approved) == 1 else None
         turn_text = content_tools.verified_video_status_text(
             turn_text, fresh=video_receipts == {'new'}, confirmed_item=confirmed_item)
-    if (image_reply or silent_delivery or missing_delivery or video_pending or display_pending) and not content_output and turn_text:
+    if (image_reply or silent_delivery or missing_delivery or video_pending or display_pending) and not content_output and turn_text and not draft_pending:
         totals.text += turn_text
         await sink.on_text(turn_text)
     return turn_text, turn_thinking, ordered_calls, previewed_call_ids
@@ -2604,6 +2635,8 @@ async def _execute_tools_impl(
                         )
                         result = {'ok':True,'object':next(row for row in content_objects.catalog(candidate, for_model=True)
                                                          if row['artifact_id']==artifact.id)}
+                        from services.task_execution.content_revision import record_save
+                        record_save(runtime, request, value, artifact)
                         approval = bind_approval(runtime, request, related_state, save_value, artifact, candidate)
                         if approval is not None:
                             result['approved_execution'] = approval
@@ -3789,6 +3822,14 @@ async def _apply_budget_stop(
 ) -> None:
     if not prepared.budget.stop_reason:
         return
+    if runtime is not None and request is not None:
+        from services.task_execution.content_completion import phase, incomplete_text
+        pending = phase(runtime, request)
+        if pending:
+            notice = {'type': 'text', 'text': incomplete_text(pending), 'content_incomplete': True}
+            blocks.append(notice); totals.text += notice['text']
+            await sink.on_block(notice)
+            return
     from . import existing_image_delivery
     if (runtime is not None and request is not None
             and existing_image_delivery.action(runtime, request) == 'display_existing'

@@ -32,8 +32,20 @@ class ImageReferences:
                     'turn_number': row.get('turn_number'), 'provenance': 'quoted_image' if image.get('client_reference') else 'user_upload'})
         for image in snapshot.get('image_results', ()):
             handle = self.add({'message_id': image['source_message_id'], 'content_index': image['content_index']})
-            self.candidates.append({'image_ref': handle, 'name': image.get('name'),
-                'turn_number': image.get('generated_for_turn'), 'provenance': 'generated_result'})
+            for alias in image.get('displayed_in', ()):
+                identity = self.identity(alias)
+                if identity is not None:
+                    self.reverse[identity] = handle
+            entry = {'image_ref': handle, 'name': image.get('name'),
+                'turn_number': image.get('original_turn', image.get('generated_for_turn')),
+                'provenance': image.get('origin_kind', 'generated_result'),
+                'displayed_in': [{'display_message_id': a['message_id'],
+                                 'display_turn': a.get('turn_number')} for a in image.get('displayed_in', ())]}
+            existing = next((c for c in self.candidates if c['image_ref'] == handle), None)
+            if existing is None:
+                self.candidates.append(entry)
+            else:
+                existing.update(entry)
         for image in snapshot.get('_delivered_image_changes', ()):
             handle = self.add(image['reference'])
             self.candidates.append({'image_ref': handle, 'name': image.get('name'), 'provenance': 'delivered_attachment'})
@@ -187,7 +199,7 @@ class ImageReferences:
             if 'examples' in function['parameters']:
                 function['parameters']['examples'] = [self.contents.example(v) for v in function['parameters']['examples']]
             if function.get('description', '').startswith(MODEL_GUIDANCE):
-                function['description'] = MODEL_GUIDANCE + ' 完整JSON案例（示例不代表本次目标，引用须按真实目录选择）：' + json.dumps(
+                function['description'] += ' 完整JSON案例（示例不代表本次目标，引用须按真实目录选择）：' + json.dumps(
                     function['parameters']['examples'], ensure_ascii=False)
         if isinstance(function, dict) and function.get('name') in {'save_task_text', 'generate_image', 'generate_video', 'read_conversation_text', 'resolve_request_target', 'code_execute'}:
             function['description'] = function.get('description', '') + (

@@ -28,7 +28,7 @@ async def test_current_query_and_display_with_completed_customer_history(content
     scenario = os.environ.get('REQUEST_CONTEXT_REPLAY_SCENARIO')
     resize = scenario == 'resize'
     text_revision = scenario == 'text_revision'
-    image_edit = scenario == 'edit'
+    image_edit = scenario in {'edit', 'display_edit'}
     made = next(row for row in rows if row['case'] == 'saved_draft_resize_and_generate')
     cutoff_name = ('reference_skill_three_drafts' if resize else
                    'saved_draft_resize_and_generate' if text_revision else 'new_task_no_generation')
@@ -73,9 +73,20 @@ async def test_current_query_and_display_with_completed_customer_history(content
         install_reference(content_db, env)
         shutil.copytree(prior / 'workspace', env['root'] / 'workspace', dirs_exist_ok=True)
         facts = env['formal']['f']
+        displays = []
+        if scenario == 'display_edit':
+            for words in ('最早上传的本子原图也发我看看，不用重新做。',
+                          '最早那张蓝白灯塔图再发我看看，不用重新做。'):
+                displayed = await env['formal']['run'](facts, [TextPart(text=words)])
+                parts = displayed['message']['content']
+                parts = json.loads(parts) if isinstance(parts, str) else parts
+                images = [p for p in parts if p.get('type') == 'image']
+                assert len(images) == 1 and images[0].get('source_message_id')
+                displays.append(displayed)
+            assert images[0]['source_message_id'] == actual['receipt']['message_id']
         text = ('第三个做成一张图，正方形，一千就行。' if resize else
                 '第三个清楚点，改成两千，其他别改。先不用出图。' if text_revision else
-                '把最早那张蓝白灯塔图的桌布换成淡绿色，其他都别动。' if image_edit else
+                '还是最早那张灯塔图，只把桌布换成浅蓝色，封面的图案和文字别动。' if image_edit else
                 '更早的图片也翻一下，最早那张蓝白灯塔图再发我看看，不用重新做。')
         reply = await env['formal']['run'](facts, [TextPart(text=text)])
         if resize or text_revision:
@@ -122,6 +133,7 @@ async def test_current_query_and_display_with_completed_customer_history(content
             errors = wire_errors(env['wire'])
             file = env['root'] / 'history-image-edit-replay-result.json'
             file.write_text(json.dumps({'user_text': text, 'reply': reply, 'native': native,
+                'preceding_displays': displays,
                 'wire_errors': errors, 'expected_base_sha256': actual['sha256'],
                 'correct_historical_image': True, 'image_request_accepted': True,
                 'supplier_called': False}, ensure_ascii=False, indent=2, default=str)); file.chmod(0o600)

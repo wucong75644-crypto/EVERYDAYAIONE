@@ -11,7 +11,11 @@ GUIDANCE = ('用户要求文字方案时，explanation不能代替交付。先�
 def check(runtime, request, arguments):
     from services.handlers.chat.content_tools import semantic_context, semantic_intent
 
-    if arguments.get('purpose') != 'explanation' or semantic_intent(request, runtime) != 'write':
+    if arguments.get('purpose') != 'explanation':
+        return None
+    from .content_completion import phase, incomplete_text
+    pending = phase(runtime, request)
+    if pending is None and semantic_intent(request, runtime) != 'write':
         return None
     frame = semantic_context(request, runtime)
     expected = max(frame.media.wait_for, default=1) if frame else 1
@@ -22,7 +26,7 @@ def check(runtime, request, arguments):
             record = co.ContentRecord.model_validate_json(artifact.inline_text)
             objects[record.object_key] = record
     delivered = sum(len(record.document.items) for record in objects.values())
-    if delivered >= expected:
+    if pending is None and delivered >= expected:
         return None
     revision = input_revision(runtime, request)
     previous = runtime.checkpoint_base.get(KEY) or {}
@@ -32,8 +36,9 @@ def check(runtime, request, arguments):
     stopped = count >= 2
     return {'ok': False, 'accepted': False,
         'code': 'CONTENT_TEXT_DELIVERY_STOPPED' if stopped else 'CONTENT_TEXT_DELIVERY_REQUIRED',
-        'message': '本次方案尚未完整保存，未提交图片任务。' if stopped else GUIDANCE,
+        'message': (incomplete_text(pending) if pending else '本次方案尚未完整保存，未提交图片任务。') if stopped else GUIDANCE,
+        **({'pending_action': pending} if pending else {}),
         'expected_items': expected, 'delivered_items': delivered,
-        'recovery': {'tool': co.SAVE, 'source': 'current_save_tool_schema',
+        'recovery': {'tool': pending['next_tool'] if pending else co.SAVE, 'source': 'current_tool_schema',
                      'instruction': '使用当前新建或修订分支及其JSON案例；按真实要求填写，不复制示例内容。'},
         'stopped': stopped}

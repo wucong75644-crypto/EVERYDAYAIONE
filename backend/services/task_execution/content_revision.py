@@ -45,10 +45,40 @@ def record_read(runtime, request, artifact, record, item_index):
         journal = {'version': 1, 'owner_task_id': str(runtime.task_id), 'input_revision': revision, 'items': {}}
     else:
         journal = copy.deepcopy(journal)
-    journal['items'][f'{artifact.id}:{item_index}'] = {
+    key = f'{artifact.id}:{item_index}'
+    fresh = key not in journal['items']
+    journal['items'][key] = {
         'artifact_id': artifact.id, 'item_index': item_index, 'sha256': artifact.sha256,
         'revision': record.revision, 'object_key': record.object_key,
         'format_contract': content_format_contract(record.presentation_profile)}
+    runtime.checkpoint_base[KEY] = journal
+    if fresh:
+        _progress(runtime)
+
+
+def _progress(runtime):
+    # Reuse the existing bounded delivery correction. Only a new verified read
+    # or committed-save candidate advances it; repeated calls cannot reset it.
+    from .content_delivery import KEY as delivery_key
+    delivery = runtime.checkpoint_base.get(delivery_key)
+    if delivery and delivery.get('control_rejections'):
+        runtime.checkpoint_base[delivery_key] = {**delivery, 'control_rejections': 0}
+
+
+def record_save(runtime, request, value, artifact):
+    """Written in the same checkpoint as the candidate; readers verify its hash."""
+    if value.base is None:
+        return
+    revision = input_revision(runtime, request)
+    journal = copy.deepcopy(_journal(runtime))
+    if journal.get('input_revision') != revision:
+        journal = {'version': 1, 'owner_task_id': str(runtime.task_id), 'input_revision': revision, 'items': {}}
+    proof = {'base_artifact_id': value.base.artifact_id, 'artifact_id': artifact.id,
+             'sha256': artifact.sha256, 'item_indices': [u.item_index for u in value.updates]}
+    saved = journal.setdefault('saved', [])
+    if proof not in saved:
+        saved.append(proof)
+        _progress(runtime)
     runtime.checkpoint_base[KEY] = journal
 
 

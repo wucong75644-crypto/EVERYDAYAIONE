@@ -40,7 +40,8 @@ class Target(Fact):
     source_message_id: str | None = Field(default=None, description='图片复制target_fields.source_message_id；稿件复制source_request.message_id。不是轮次数或文件ID。')
     artifact_id: str | None = Field(default=None, min_length=1, max_length=200)
     revision: int | None = Field(default=None, strict=True, ge=1)
-    item_indices: tuple[StrictInt, ...] = Field(default=(), max_length=100)
+    item_indices: tuple[StrictInt, ...] = Field(default=(), max_length=100,
+        description='只列用户本次实际操作的原条目编号。第三个为[3]；第一和第三个为[1,3]。目录有三项不代表操作全部，未改项后台保留。')
     content_index: int | None = Field(default=None, strict=True, ge=0, description='复制target_fields.content_index，不自行按图片数量计数。')
 
     @field_validator('source_message_id')
@@ -86,6 +87,7 @@ def selection_schema(runtime=None):
     return {'type': 'function', 'function': {'name': SELECT,
         'description': '核对最近请求或读取来源后，明确选择/纠正本次动作与目标。只单独调用，不执行业务；'
                        'request_context填写所选需求的规格、素材和target，不沿用无关旧方案。intent=explain时用image_action=analyze表示分析，display_existing表示实际向用户展示已有图；改成其他意图时image_action填null。未准备执行稿、未派发且没有接回旧任务时可纠正。'
+                       ' 历史图片的名称和模型填写的role不是视觉事实；requires_view_before_selection=true时先单独调用read_conversation_text.view_image核实，再选择该图。重新展示仍引用原图image_ref，不作为新的生成事件。'
                        + action_target_contract.SELECTION_GUIDANCE,
         'parameters': {'type': 'object', 'additionalProperties': False, 'required': ['intent', 'request_context'],
                        'allOf': action_target_contract.schema_rules(), 'examples': action_target_contract.selection_examples(),
@@ -227,6 +229,11 @@ def native_context(runtime):
                 '目标不明确或缺少资料时，用respond_without_execution提交具体问题；该工具不执行业务。'
                 '已读来源后需要纠正选择时，先单独调用resolve_request_target，不能直接换content_source。'
                 '目标缺稿时依据真实需求准备新稿，不执行无关旧稿。'}
+    if snapshot.get('image_provenance_version') == 1:
+        from .image_history import requires_view
+        for image in result['image_results']:
+            image['requires_view_before_selection'] = requires_view(runtime, {
+                'message_id': image['source_message_id'], 'content_index': image['content_index']})
     if snapshot.get('catalog_version') == 2:
         from .request_catalog import project
         result['image_results'] = [{**image, 'target_fields': {'kind': 'image',
@@ -320,6 +327,10 @@ def freeze(runtime, request, raw, *, focus=None):
         if target.kind == 'request' and source is None:
             raise TaskError('REQUEST_TARGET_NOT_VISIBLE')
         if target.kind == 'image':
+            from .image_history import requires_view
+            reference = {'message_id': target.source_message_id, 'content_index': target.content_index}
+            if snapshot.get('image_provenance_version') == 1 and requires_view(runtime, reference):
+                raise TaskError('REQUEST_TARGET_IMAGE_REQUIRES_VIEW')
             if target.basis == 'current_input' and target.source_message_id != snapshot['input_message_id']:
                 if target.source_message_id != active_request(snapshot):
                     raise TaskError('REQUEST_TARGET_BASIS_INVALID')
@@ -410,6 +421,11 @@ def check(runtime, request, call, *, root_task_id=None):
         return ('REQUEST_TARGET_UNRESOLVED', '本次目标尚未明确或输入已变化。核对最近需求与方案，不派发历史旧稿；有歧义时询问具体目标。')
     target = value['target']
     from services.handlers.chat.content_tools import semantic_intent
+    if call['name'] == 'save_task_text' and target['kind'] != 'content' and semantic_intent(request, runtime) == 'write':
+        if args.get('base') or args.get('message_source') or args.get('new_content'):
+            return ('REQUEST_TARGET_NEW_DRAFT_REQUIRED',
+                    '本次要求新写文字方案。使用document新建，素材放document.items[].materials；'
+                    '省略new_content，不修订无关旧稿。continue_execution=false。')
     try:
         action_target_contract.validate(semantic_intent(request, runtime), target['kind'])
     except TaskError:
@@ -472,6 +488,10 @@ def check(runtime, request, call, *, root_task_id=None):
         return check(runtime, request, call, root_task_id=(source or {}).get('state', {}).get('root_task_id', ''))
     elif target['kind'] == 'image' and call['name'] == 'generate_image':
         selected = (target['source_message_id'], target['content_index'])
+        from .image_history import requires_view
+        if context(runtime).get('image_provenance_version') == 1 and requires_view(runtime, {
+                'message_id': selected[0], 'content_index': selected[1]}):
+            return ('REQUEST_TARGET_IMAGE_REQUIRES_VIEW', '尚未核实这张历史图片，先用view_image读取，核对用户要求后选择；本次未派发。')
         draft = args.get('draft')
         if isinstance(draft, dict) and not isinstance(draft.get('materials', ()), (list, tuple)):
             return None
@@ -551,19 +571,31 @@ async def recover_display_selection(runtime, request, prepared, reference):
             'source_message_id': reference['message_id'], 'content_index': reference['content_index']}}})
 
 
-def image_status_reply(runtime, request):
-    """Describe only this input's effects, or the explicitly selected old slot."""
+def current_image_effects(runtime, request):
+    """Shared native evidence, not model success prose or old task results."""
     from .content_delivery import input_revision
     from .reducer import digest
-    from services.handlers.chat.content_tools import IMAGE_STATUS_NOT_SUBMITTED
     value = binding(runtime)
     if value is None or value['input_revision'] != input_revision(runtime, request):
-        return IMAGE_STATUS_NOT_SUBMITTED
+        return [], False
     state = getattr(runtime, 'task_execution_state', None)
     steps = {b.step_id for b in state.call_bindings if b.tool_name == 'generate_image'
              and b.input_sha256 == digest(sorted(getattr(runtime, 'task_direct_seen', ())))} if state else set()
     operations = [op for op in state.operations if op.step_id in steps
                   and str(op.owner_task_id) == value['execution_task_id']] if state else []
+    reused = bool(state and any(a.kind == 'image' and a.image_reuse is not None and a.step_id in steps
+                     and str(a.delivery_task_id) == value['execution_task_id'] for a in state.artifacts))
+    return operations, reused
+
+
+def image_status_reply(runtime, request):
+    """Describe only this input's effects, or the explicitly selected old slot."""
+    from services.handlers.chat.content_tools import IMAGE_STATUS_NOT_SUBMITTED
+    from .content_delivery import input_revision
+    value = binding(runtime)
+    if value is None or value['input_revision'] != input_revision(runtime, request):
+        return IMAGE_STATUS_NOT_SUBMITTED
+    operations, reused = current_image_effects(runtime, request)
     statuses = {op.status for op in operations}
     if statuses & {'reserved', 'uncertain'}:
         return '图片请求的受理状态尚未确认，本轮不会重复提交。'
@@ -573,9 +605,9 @@ def image_status_reply(runtime, request):
         return '本次图片请求未全部成功，请查看具体错误。'
     if statuses and statuses <= {'completed'}:
         return '本次图片任务已完成。'
-    if state and any(a.kind == 'image' and a.image_reuse is not None and a.step_id in steps
-                     and str(a.delivery_task_id) == value['execution_task_id'] for a in state.artifacts):
+    if reused:
         return '已复用所选方案的已有图片，本轮没有新增生成。'
+    state = getattr(runtime, 'task_execution_state', None)
     target = value['target']
     if target['kind'] == 'content':
         from .content_objects import content_image_receipts

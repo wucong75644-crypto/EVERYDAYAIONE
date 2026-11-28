@@ -416,7 +416,7 @@ def _authoring_schema(value):
     return result
 
 
-def model_tools(tools, *, selectable_source_images=False, saved_text_available=False, server_image_plan=False, reuse_source=False, revise_saved=False, first_delivery=False, current_images=(), inline_image=False, generated_image_edit=False, single_image_edit=False, inline_only=False, previous_image_reference=None, planned_image_count=None, image_reference_catalog=None):
+def model_tools(tools, *, selectable_source_images=False, saved_text_available=False, server_image_plan=False, reuse_source=False, revise_saved=False, first_delivery=False, current_images=(), inline_image=False, generated_image_edit=False, single_image_edit=False, inline_only=False, previous_image_reference=None, planned_image_count=None, image_reference_catalog=None, writing_new=False):
     """Project the one entry contract selected by the current workflow."""
     from services.task_execution.reference_boundary import ModelReferenceBoundary
     from services.task_execution.content_objects import ContentReference, ImageContentReference, selection_parameters
@@ -444,7 +444,7 @@ def model_tools(tools, *, selectable_source_images=False, saved_text_available=F
         if name == 'save_task_text':
             original = copy.deepcopy(original)
             original['function']['parameters'] = _authoring_schema(original['function']['parameters'])
-        if name == 'save_task_text' and not server_image_plan and (reuse_source or revise_saved or first_delivery or current_images):
+        if name == 'save_task_text' and not server_image_plan and (reuse_source or revise_saved or first_delivery or current_images or writing_new):
             # Project the same backend action. The first turn has no historical
             # source to recover; an explicit follow-up already has its source.
             tool = copy.deepcopy(original)
@@ -454,10 +454,10 @@ def model_tools(tools, *, selectable_source_images=False, saved_text_available=F
             excluded = {'document', 'new_content'} if saved_revision else {'base', 'updates', 'message_source', 'new_content'}
             if revise_saved:
                 excluded.add('message_source')
-            for key in excluded if saved_revision or first_delivery else ():
+            for key in excluded if saved_revision or first_delivery or writing_new else ():
                 parameters['properties'].pop(key, None)
             forms = [form for form in parameters.pop('oneOf')
-                     if not (saved_revision or first_delivery) or excluded.isdisjoint(form['required'])]
+                     if not (saved_revision or first_delivery or writing_new) or excluded.isdisjoint(form['required'])]
             if len(forms) == 1:
                 parameters['required'] = forms[0]['required']
             else:
@@ -480,7 +480,7 @@ def model_tools(tools, *, selectable_source_images=False, saved_text_available=F
                 presentation = function['description'].replace(SCHEMA['function']['description'], '', 1)
                 function['description'] = presentation + ('执行已保存的条目直接调用目标工具。仅恢复历史正文时用message_source和'
                                            'continue_execution=true；修订用base和updates。' + revision_usage(reference))
-            elif first_delivery:
+            elif first_delivery or writing_new:
                 # Preserve authoring Skill presentation requirements in the prefix.
                 from services.task_execution.content_objects import SCHEMA, MIXED_TEXT_GUIDANCE, creation_examples
                 from services.task_execution.methods import REFERENCE_PROMPTS_PRESENTATION

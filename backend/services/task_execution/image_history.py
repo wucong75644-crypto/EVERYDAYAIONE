@@ -59,21 +59,31 @@ def recovered(runtime):
 
 def mark_viewed(runtime, reference):
     """Only the successful native visual read can set this receipt."""
-    if not any(item['reference'] == reference for item in recovered(runtime)):
+    if (runtime.checkpoint_base.get('_request_context_v1') or {}).get('image_reference_version') != 1:
         return
-    journal = runtime.checkpoint_base[KEY]
+    identity = scope(runtime)
+    journal = runtime.checkpoint_base.get(KEY) or {}
+    if journal.get('scope') != identity:
+        journal = {'scope': identity, 'images': [], 'cursors': {}, 'pages': {}}
+        runtime.checkpoint_base[KEY] = journal
     viewed = journal.setdefault('viewed', [])
     if reference not in viewed:
         viewed.append(copy.deepcopy(reference))
 
 
 def was_viewed(runtime, reference):
-    return (any(item['reference'] == reference for item in recovered(runtime))
-            and reference in (runtime.checkpoint_base.get(KEY) or {}).get('viewed', []))
+    journal = runtime.checkpoint_base.get(KEY) or {}
+    if (runtime.checkpoint_base.get('_request_context_v1') or {}).get('image_reference_version') != 1:
+        return False
+    return journal.get('scope') == scope(runtime) and reference in journal.get('viewed', [])
 
 
 def requires_view(runtime, reference):
     snapshot = runtime.checkpoint_base.get('_request_context_v1') or {}
+    if snapshot.get('image_provenance_version') == 1:
+        current = [image['reference'] for row in snapshot.get('requests', ())
+                   if row['message_id'] == snapshot['input_message_id'] for image in row.get('images', ())]
+        return reference not in current and not was_viewed(runtime, reference)
     known = [image['reference'] for row in snapshot.get('requests', ()) for image in row.get('images', ())]
     known += [{'message_id': image['source_message_id'], 'content_index': image['content_index']}
               for image in snapshot.get('image_results', ())]
@@ -88,6 +98,23 @@ def selection_metadata(runtime, images):
 
 
 def origin_metadata(db, context, native, row, part):
+    # Re-displaying an upload does not turn it into a newly generated image.
+    from services.handlers.chat_context.image_sources import content_parts
+    seen = set()
+    for _ in range(16):
+        if not part.get('source_message_id'):
+            break
+        pair = (part['source_message_id'], part.get('source_content_index'))
+        if pair in seen or type(pair[1]) is not int or pair[1] < 0:
+            raise ValueError('CHAT_IMAGE_PROVENANCE_INVALID')
+        seen.add(pair)
+        row = native._message(pair[0])  # Same conversation, subject and frozen revision.
+        parts = content_parts(row.get('content'))
+        if pair[1] >= len(parts) or not isinstance(parts[pair[1]], dict) or parts[pair[1]].get('type') != 'image':
+            raise ValueError('CHAT_IMAGE_PROVENANCE_INVALID')
+        part = parts[pair[1]]
+    if part.get('source_message_id'):
+        raise ValueError('CHAT_IMAGE_PROVENANCE_INVALID')
     source = row if row['role'] == 'user' else None
     native_task = None
     if row['role'] == 'assistant' and part.get('task_id'):
@@ -113,7 +140,10 @@ def origin_metadata(db, context, native, row, part):
     from services.handlers.chat_context.image_sources import content_parts
     excerpt = '\n'.join(p.get('text', '') for p in content_parts((source or {}).get('content'))
                         if isinstance(p, dict) and p.get('type') == 'text')[:400]
+    from services.image_provenance import kind
     return {'source_turn': number, 'generated_for_message_id': source.get('id') if source else None,
+            'origin_kind': kind(part, row['role']),
+            'original_reference': {'message_id': str(row['id']), 'content_index': pair[1]} if seen else None,
             'task_id': native_task, 'request_excerpt': excerpt}
 
 
@@ -190,13 +220,15 @@ def page(handler, request, context, runtime, arguments):
             locator = {'message_id': str(row['id']), 'content_index': index}
             # Source identity proof is server-owned, not a model-written caption.
             checksum = hashlib.sha256(json.dumps(part, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode()).hexdigest()
-            item = {'source_message_id': str(row['id']), 'content_index': index,
+            from services.image_provenance import kind
+            origin = origin_metadata(handler.db, context, native, row, part)
+            locator = origin.get('original_reference') or locator
+            item = {'source_message_id': locator['message_id'], 'content_index': locator['content_index'],
                 'source_sha256': checksum, 'context_revision': row['context_revision'],
-                'provenance': ('displayed_existing' if source == 'generated' else 'quoted_image')
-                    if part.get('source_message_id') else ('generated_result' if source == 'generated' else 'user_upload'),
+                'provenance': kind(part, row['role']),
                 'reference': locator,
                 'name': part.get('name'), 'width': part.get('width'), 'height': part.get('height'),
-                **origin_metadata(handler.db, context, native, row, part)}
+                **origin}
             if not any(i['reference'] == locator for i in journal['images']):
                 journal['images'].append(item)
             results.append(item)

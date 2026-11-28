@@ -33,9 +33,9 @@ def project(snapshot, groups, resolution):
             return {'kind': 'user_message' if available else 'reference_not_found_in_message',
                     'message_id': source['message_id'], 'turn_number': source.get('turn_number')}
         if generated is not None:
-            return {'kind': 'generated_result', 'message_id': generated['source_message_id'],
+            return {'kind': generated.get('origin_kind', 'generated_result'), 'message_id': generated['source_message_id'],
                     'for_message_id': generated.get('generated_for_message_id'),
-                    'turn_number': generated.get('generated_for_turn')}
+                    'turn_number': generated.get('original_turn', generated.get('generated_for_turn'))}
         return {'kind': 'history_not_in_recent_index'}
 
     saved = []

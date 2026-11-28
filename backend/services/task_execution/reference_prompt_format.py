@@ -24,6 +24,7 @@ MODEL_GUIDANCE = (
     '省略的章节由后台从本次已读取且版本一致的原稿保留；传入章节必须给出该章节的完整新正文。'
     '不改展示说明时省略presentation，'
     '不改执行正文时省略prompt；options若提供须保留未改选项，不换素材省略materials。'
+    '新建每条素材放document.items[].materials，修订素材放updates[].item.materials，顶层没有materials。'
     '修改规格时，同步修订prompt和presentation中与新规格冲突的要求，保留其他细节；不能只改options留下旧规格。'
     '只看方案或只改文字continue_execution=false；明确要求改稿并执行才设true，'
     '保存成功后按新回执执行，保存本身不派发生图。用户等待条件用confirmation保留，不授予批准。'
@@ -207,7 +208,12 @@ def project_tool(function):
         examples.append(partial)
     function['parameters'] = shape(parameters)
     function['parameters']['examples'] = examples
-    function['description'] = MODEL_GUIDANCE + ' 完整JSON案例（身份和正文须按真实目录及用户要求填写）：' + json.dumps(examples, ensure_ascii=False)
+    # Keep the dynamic phase, without reintroducing native body/display_prefix
+    # authoring instructions into the structured reference format.
+    description = function['description']
+    markers = (' 当前已选稿件的修订流程（', ' 仅在本次需要修订所选旧稿时，')
+    positions = [description.index(marker) for marker in markers if marker in description]
+    function['description'] = MODEL_GUIDANCE + (description[min(positions):] if positions else '')
     return function
 
 

@@ -51,6 +51,8 @@ async def stage_response(runtime, request, prepared, blocks, turn, model_round, 
     if control_pending:
         value['control_pending']=True
     previous = runtime.checkpoint_base.get(KEY) or {}
+    if previous.get('input_revision') == value['input_revision'] and previous.get('control_rejections'):
+        value['control_rejections'] = previous['control_rejections']
     if (previous.get('phase') == 'rejected' and previous.get('error_code') == co.DRAFT_CONFLICT
             and previous.get('input_revision') == value['input_revision']):
         value['visible_draft'] = previous.get('visible_draft', previous.get('text', ''))

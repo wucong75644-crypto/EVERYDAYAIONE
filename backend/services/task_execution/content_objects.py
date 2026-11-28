@@ -271,7 +271,7 @@ class SaveContent(Fact):
     confirmation: MediaDirective | None = Field(
         default=None, description='仅当用户设置了后续确认条件时填写tool、wait_for或wait_all。不是审批开关，不能填approved来批准刚写出的稿件。普通方案不新增确认。')
     new_content: Literal[True] | None = Field(
-        default=None, description='仅当本轮已明确要求实际执行且 continue_execution=true 时，随 document 标记新的执行正文。仅撰写文字、方案或新系列设计必须省略本字段，不能因内容是新作就填写。可在 materials 指定已选成图或原图。修订已有文字用 base 和 updates。')
+        default=None, description='仅当本轮已明确要求实际执行且 continue_execution=true 时，随 document 标记新的执行正文。仅撰写文字、方案或新系列设计必须省略本字段，不能因内容是新作就填写。每个条目的图片放 document.items[].materials，顶层没有materials。修订已有文字用 base 和 updates。')
     show_content: bool | None = Field(default=None, description=(
         '仅在用户同时要求交付文字且继续执行时设为true；只要求执行时省略，输入在后台登记。'))
 
@@ -403,9 +403,9 @@ SCHEMA = {'type': 'function', 'function': {'name': SAVE,
         '只执行已有成果时，直接将目录条目的content_source交给目标工具。未登记的分条正文用message_source指定原回复消息，后台定位整组原文；continue_execution=true。'
         '仅后台无法识别边界时才按已核实的完整行范围指定条目。'
         '用户明确修改一张成图时，可用document和new_content=true编写新的编辑指令，在materials绑定这张图。只修订历史文字用base和updates。'
-        'body包含最终要求和限制；按用户或方法要求交付的可见结构放display_prefix，内部说明放notes。materials记录用于执行或分析的素材，options仅记已确定执行规格。'
+        'body包含最终要求和限制；按用户或方法要求交付的可见结构放display_prefix，内部说明放notes。document.items[].materials记录每个条目用于执行或分析的素材，顶层没有materials；options仅记已确定执行规格。'
         '修订既有条目时，base使用该条目的content_source，updates每项为{item_index,item:{body:完整修订正文}}。后台绑定版本并保留未改条目、素材和规格。'
-        '本轮还要求执行时设continue_execution=true，再调用目标工具。有当前上传图片时，在每条的materials中绑定所用图片。还要求看文字时设show_content=true。'
+        '本轮还要求执行时设continue_execution=true，再调用目标工具。有当前上传图片时，在document.items[].materials中绑定所用图片。还要求看文字时设show_content=true。'
         + revision_usage(False),
     'parameters': save_parameters()}}
 

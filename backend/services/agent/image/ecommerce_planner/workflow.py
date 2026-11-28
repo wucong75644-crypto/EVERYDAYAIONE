@@ -335,7 +335,7 @@ async def classify_workflow(text, previous=None, *, org_id=None, selected_skill=
         '继续所选历史对象填selected_target；没有改变工作对象的闲聊才retain_previous。讨论不是执行授权，但不能因此丢失刚讨论的新任务。'
         'target.kind=current表示本条完整新要求，basis=current_input；'
         '继续最近需求用request及真实source_message_id，basis=active_request；准备它的新执行稿时intent用generate/edit/write，不得冒充execute_saved。'
-        '执行已有稿用content并复制artifact_id、revision、item_indices；编辑实际图用image并从image_target_references复制image_reference，后台解析真实消息及位置，不自行计算图片序号。'
+        '执行已有稿用content并复制artifact_id、revision；item_indices只列用户本次实际操作的条目，不是目录全部条目。用户说第三个时为[3]，未改条目由后台保留；明确操作第一和第三个时为[1,3]。编辑实际图用image并从image_target_references复制image_reference，后台解析真实消息及位置，不自行计算图片序号。'
         '编辑本轮上传/引用的图可用image与basis=current_input；历史结果用active_request或explicit_reference。image目标不要填写source_message_id或content_index。'
         '没有明确历史指向的后续确认应承接active_request_message_id；它没有执行稿时先准备该需求，不能跨过它执行更旧的完成稿。'
         '只有用户实际明确指向历史对象时basis=explicit_reference，不因历史稿唯一或已完成就使用explicit_reference。'
@@ -762,6 +762,7 @@ class EcommerceWorkflow:
         if request_resolution.context(self.runtime) is not None:
             from services.task_execution.contracts import TaskError
             frame = None
+            needs_view = False
             try:
                 frame = ImageRequestContext.model_validate(self.route.get('request_context') or {})
                 request_resolution.freeze_frame(self.runtime, self.request, frame, self.route.get('intent'))
@@ -778,14 +779,20 @@ class EcommerceWorkflow:
                         '缺执行稿时准备新稿，不能执行无关旧稿。'}
                 readonly = (self.route.get('intent') == 'explain' and frame is not None
                             and frame.image_action in {'display_existing', 'analyze'})
+                needs_view = (str(error) == 'REQUEST_TARGET_IMAGE_REQUIRES_VIEW' and frame is not None
+                              and self.route.get('intent') == 'edit')
+                if needs_view:
+                    rejected['rejection']['candidate_target'] = frame.target.model_dump(mode='json', exclude_none=True)
+                    rejected['rejection']['instruction'] = ('历史图尚未核实。先用read_conversation_text的view_image看候选，'
+                        '核对用户完整要求后用resolve_request_target选择；模型role是待核实说明，不是图片事实。')
                 repaired_frame = ({'target': {'kind': 'ambiguous', 'basis': 'ambiguous'},
-                    'focus': 'selected_target', 'image_action': frame.image_action} if readonly else {})
+                    'focus': 'selected_target', 'image_action': frame.image_action} if readonly or needs_view else {})
                 self.route = {'kind': 'ordinary_image', 'mode': 'new', 'reuse_through_stage': 0,
-                              'intent': 'explain' if readonly else 'other', 'request_context': repaired_frame}
+                              'intent': 'explain' if readonly else 'edit' if needs_view else 'other', 'request_context': repaired_frame}
             if request_resolution.binding(self.runtime)['status'] == 'ambiguous':
                 self.route = {**self.route, 'kind': 'ordinary_image', 'mode': 'new',
                               'reuse_through_stage': 0,
-                              'intent': ('explain' if self.route.get('intent') == 'explain' else 'other')}
+                              'intent': (self.route['intent'] if self.route.get('intent') == 'explain' or needs_view else 'other')}
         kind = self.route["kind"]
         intent = self.route.get('intent')
         if kind == 'unavailable':
