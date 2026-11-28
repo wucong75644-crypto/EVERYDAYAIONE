@@ -20,7 +20,7 @@ from services.tools.argument_validation import _issues
 from tests.test_content_objects import registered, document, ref
 from tests.test_content_revision_contract import configure_reference, read
 from tests.test_model_directed_loop import case, execute
-from tests.test_task_execution_model_bridge import call
+from tests.model_update_fixtures import call, model_arguments
 from tests.semantic_fixtures import semantic_request
 from tests.test_reference_prompt_wire_contract import public_first_tool
 
@@ -66,6 +66,7 @@ async def test_customer_approval_requires_revision_then_partial_sections_preserv
     p.content_visible_tools = {co.SAVE: content_tools.model_tools([co.save_schema(r)],
         revise_saved=True, saved_text_available=True)[0]['function']}
     public = refs.schema({'function': p.content_visible_tools[co.SAVE]})['function']
+    delta = model_arguments(delta)
     Draft202012Validator(public['parameters']).validate(delta)
     await execute(r, p, h, q, [call(co.SAVE, delta, 'patch')])
     result = json.loads(p.messages[-1]['content'])

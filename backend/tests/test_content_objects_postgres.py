@@ -9,7 +9,7 @@ from services.task_execution.direct_loop import end_candidate
 from services.task_execution.contracts import TaskState
 from tests.test_content_objects import document, ref
 from tests.test_model_directed_loop import case, execute
-from tests.test_task_execution_model_bridge import call
+from tests.model_update_fixtures import call
 from tests.test_task_execution_postgres import save
 from tests.test_model_directed_dispatch_postgres import dispatch_db, controls_db
 from tests.test_skill_composition_postgres import seed, connect

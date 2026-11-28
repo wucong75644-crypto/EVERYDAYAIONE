@@ -14,7 +14,8 @@ from services.task_execution.contracts import Artifact, TaskState
 from services.task_execution.direct_loop import schemas
 from tests.test_model_directed_loop import case, execute
 from tests.test_model_directed_records import operation_state, record_calls, Registry
-from tests.test_task_execution_model_bridge import call
+from tests.model_update_fixtures import call
+from tests.test_task_execution_model_bridge import call as raw_call
 from services.tools import ToolCall
 
 
@@ -263,11 +264,11 @@ async def test_wrong_patch_nesting_is_repaired_without_rewriting_other_items_or_
     row, = co.catalog(old)
     base = {'artifact_id': row['artifact_id'], 'item_index': 1}
     observed_revision(r, q, row, [1])
-    await execute(r, p, h, q, [call(co.SAVE, {'base': base,
-        'updates': [{'item_index': 1, 'body': '第一套修订原文'}]}, 'bad-patch')])
+    await execute(r, p, h, q, [raw_call(co.SAVE, {'base': base,
+        'updates': [{'item_index': 1, 'item': {'body': '第一套修订原文'}}]}, 'bad-patch')])
     error = json.loads(p.messages[-1]['content'])
-    assert error['code'] == co.INVALID_OBJECT
-    assert any(issue['loc'] == ['updates', 0, 'item'] for issue in error['issues'])
+    assert error['code'] == 'CONTENT_PRESENTATION_ARGUMENTS_INVALID'
+    assert any(issue['path'] == '$.updates[0].item' for issue in error['issues'])
     assert r.task_execution_state == old
     await execute(r, p, h, q, [call(co.SAVE, {'base': base,
         'updates': [{'item_index': 1, 'item': {'body': '第一套修订原文'}}]}, 'fixed-patch')])

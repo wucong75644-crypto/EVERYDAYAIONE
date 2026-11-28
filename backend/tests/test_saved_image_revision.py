@@ -10,7 +10,7 @@ from services.task_execution import content_objects as co, saved_image_revision 
 from tests.semantic_fixtures import semantic_request, observed_revision
 from tests.test_content_objects import registered, ref, document
 from tests.test_model_directed_loop import execute
-from tests.test_task_execution_model_bridge import call
+from tests.model_update_fixtures import call
 
 
 @pytest.mark.parametrize('presentation', [False, True])
@@ -190,11 +190,10 @@ async def test_display_analysis_and_unchanged_execution_remain_unaffected():
 
 @pytest.mark.asyncio
 async def test_historical_owner_is_checked_before_followup_adoption(monkeypatch):
-    from services.task_execution import direct_loop
     r, p, h, q, row = await portrait_case()
     previous = r.task_execution_state
     r.task_execution_state = None
-    monkeypatch.setattr(direct_loop, 'content_followup_state', lambda runtime: previous)
+    r.task_followup_candidate = {'state': previous.model_dump(mode='json')}
     await execute(r, p, h, q, [call('generate_image', {'content_source': ref(row, 3)})])
     assert json.loads(p.messages[-1]['content'])['code'] == revision.CODE
     assert r.task_execution_state is None

@@ -252,10 +252,12 @@ class ImageReferences:
                 from .reference_prompt_format import encode_example
                 from .content_update_wire import flat_examples
                 visible = [flat_examples(self.contents.example(self.encode(encode_example(v) if reference else v))) for v in native_examples]
-                function['description'] = function['description'].replace(
-                    json.dumps(native_examples, ensure_ascii=False), json.dumps(
-                        function['parameters'].get('examples', visible) if function.get('name') == 'save_task_text' else visible,
-                        ensure_ascii=False))
+                replacement = json.dumps(
+                    function['parameters'].get('examples', visible) if function.get('name') == 'save_task_text' else visible,
+                    ensure_ascii=False)
+                for examples in (native_examples, flat_examples(native_examples)):
+                    function['description'] = function['description'].replace(
+                        json.dumps(examples, ensure_ascii=False), replacement)
             from .action_target_contract import selection_examples
             function['description'] = function['description'].replace(
                 json.dumps(selection_examples(), ensure_ascii=False), json.dumps(

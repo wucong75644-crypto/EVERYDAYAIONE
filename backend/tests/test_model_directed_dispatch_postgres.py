@@ -42,7 +42,12 @@ def dispatch_db(controls_db,followup_db):
             c.execute((ROOT/f'migrations/{name}.sql').read_text())
     yield followup_db
     with psycopg.connect(followup_db) as c:
-        c.execute("DELETE FROM conversation_turn_checkpoints WHERE state ? '_task_execution'")
+        # A pre-execution checkpoint may only contain the direct bootstrap or
+        # read/seen records. Remove those test-owned rows before downgrading;
+        # keep the production rollback guards intact for both owner variants.
+        c.execute("""DELETE FROM conversation_turn_checkpoints
+            WHERE state ? '_task_execution' OR state ? '_task_direct_plan' OR state ? '_task_direct_seen'
+                OR state#>'{_task_bootstrap,input,model_directed}' = 'true'::jsonb""")
         c.execute('DELETE FROM agent_task_events');c.execute('DELETE FROM agent_task_states')
         c.execute('SET CONSTRAINTS ALL IMMEDIATE')
         for name in ('372_agent_task_direct_dispatch','371_agent_task_model_directed_records'):

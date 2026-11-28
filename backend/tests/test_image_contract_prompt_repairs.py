@@ -15,7 +15,7 @@ from services.task_execution.inline_image_action import SingleImageEdit, EDIT_GU
 from tests.test_image_reference_catalog import snapshot
 from tests.test_model_directed_loop import execute
 from tests.test_request_catalog import catalog_case
-from tests.test_task_execution_model_bridge import call
+from tests.model_update_fixtures import call
 
 
 def edit_rejection():
