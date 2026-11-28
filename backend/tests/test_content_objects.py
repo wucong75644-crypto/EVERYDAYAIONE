@@ -806,7 +806,10 @@ async def test_plain_answer_still_delivered_when_registration_tool_is_available(
     delivery = CollectingExecutionSink()
 
     async def stream(**kwargs):
-        assert co.SCHEMA in kwargs['tools']
+        from services.handlers.chat.content_tools import model_tools
+        projected, = model_tools([co.SCHEMA])
+        assert projected in kwargs['tools']
+        assert 'version' not in projected['function']['parameters']['$defs']['ContentDocument']['properties']
         yield StreamChunk(content='普通')
         assert delivery.text == '普通'
         yield StreamChunk(content='回答')

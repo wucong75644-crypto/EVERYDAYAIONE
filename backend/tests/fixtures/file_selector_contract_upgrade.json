@@ -1,0 +1,236 @@
+{
+  "file_analyze": {
+    "type": "function",
+    "function": {
+      "name": "file_analyze",
+      "description": "读取数据文件（.xlsx/.xls/.csv/.tsv）的完整结构，自动转为 Parquet 缓存。\n自动处理多级表头、合并单元格、表头偏移、特殊行检测，比手动 openpyxl 读取更准确。\n\nWhen to use:\n- attachments 中 status=raw 的 .xlsx/.xls/.csv/.tsv 文件首次治理\n- 需要 Parquet 路径供 code_execute 中 duckdb/pandas 查询\n\nWhen NOT to use:\n- 已 status=analyzed 的文件 — 直接用 <parquet> 字段 pd.read_parquet，禁止重复治理\n- 图片文件（.png/.jpg/.jpeg/.gif/.webp/.bmp）— 已通过视觉通道注入\n- PDF/Word/PPT/文本文件 — 用 code_execute + 对应库读取\n\nReturns: 列名、数据类型、行数、样本数据、Parquet 缓存相对路径。\n支持扩展名: .xlsx .xls .csv .tsv（其他不支持）\nfile_analyze 的读取参数直接复制 read_call：本轮附件提供 file_id，搜索结果提供 resource_ref。只传给出的一个选择器，不再补文件名或路径。没有 resource_ref 时省略；它只能是搜索返回的完整 fref1_ 引用，不能填 name、path 或 file_id。旧版合法多选择器调用仍支持，但必须全部指向同一文件。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "resource_ref": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^fref1_",
+            "description": "file_search 返回的资源引用，原样复制；可自动确定位置，系统仍检查当前动作权限。文件变化后需重新搜索。"
+          },
+          "file_id": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^fid_[a-z0-9]{8}$",
+            "description": "文件 ID（fid_xxx），从 <attachments> 的 <id> 字段 copy。新搜索结果优先使用 resource_ref。"
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "（兼容老协议）文件名或相对路径。与其他选择器同时提供时必须指向同一文件。"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "current",
+              "workspace"
+            ],
+            "description": "省略时根据已验证资源引用或本轮明确浏览范围定位，无绑定时为 current；显式 current 不扩大。用户指定工作区文件时才使用 workspace。"
+          }
+        },
+        "anyOf": [
+          {
+            "required": [
+              "resource_ref"
+            ],
+            "properties": {
+              "resource_ref": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "array",
+                    "minItems": 1
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "required": [
+              "file_id"
+            ],
+            "properties": {
+              "file_id": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "array",
+                    "minItems": 1
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "required": [
+              "path"
+            ],
+            "properties": {
+              "path": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "array",
+                    "minItems": 1
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "examples": [
+          {
+            "file_id": "fid_a3f2b1c9"
+          }
+        ]
+      }
+    }
+  },
+  "file_delete": {
+    "type": "function",
+    "function": {
+      "name": "file_delete",
+      "description": "删除工作区文件。传入文件名或相对路径列表。\n\n路径从 file_search 返回的结果中获取，无需手动拼写。\n执行前会弹窗让用户确认，用户拒绝则不删除。\n删除后 30 天内可从 CDN 恢复。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "resource_refs": {
+            "description": "file_search 返回的 resource_ref 列表，优先使用；不得自行编造。",
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^fref1_"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "^fref1_"
+                }
+              }
+            ]
+          },
+          "file_ids": {
+            "description": "要删除的 file_id 列表（如 ['fid_a3f2b1c9']）。从 <attachments> 的 <id> 或 file_search 返回的 [fid_xxx] 获取。",
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^fid_[a-z0-9]{8}$"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "^fid_[a-z0-9]{8}$"
+                }
+              }
+            ]
+          },
+          "files": {
+            "description": "（兼容老协议）文件名或相对路径列表。与 file_ids 同时提供时合并；不存在或歧义时整批不执行。",
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            ]
+          }
+        },
+        "anyOf": [
+          {
+            "required": [
+              "resource_refs"
+            ],
+            "properties": {
+              "resource_refs": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "array",
+                    "minItems": 1
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "required": [
+              "file_ids"
+            ],
+            "properties": {
+              "file_ids": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "array",
+                    "minItems": 1
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "required": [
+              "files"
+            ],
+            "properties": {
+              "files": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "array",
+                    "minItems": 1
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "examples": [
+          {
+            "resource_refs": [
+              "fref1_example"
+            ]
+          },
+          {
+            "file_ids": "fid_a3f2b1c9"
+          }
+        ]
+      }
+    }
+  }
+}

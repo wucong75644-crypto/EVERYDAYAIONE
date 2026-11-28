@@ -179,7 +179,7 @@ def test_three_representative_parameter_contracts_field_by_field(registry):
     expected = {
         "web_search": ({"query": "string"}, ["query"]),
         "file_search": ({"path": "string", "keyword": "string", "file_pattern": "string", "scope": "string"}, []),
-        "file_delete": ({"file_ids": "array", "files": "array", "resource_refs": "array"}, []),
+        "file_delete": ({"file_ids": ["string", "array"], "files": ["string", "array"], "resource_refs": ["string", "array"]}, []),
     }
     old = {t["function"]["name"]: t for t in get_chat_tools("org-a")}
     for name, (properties, required) in expected.items():
@@ -187,14 +187,15 @@ def test_three_representative_parameter_contracts_field_by_field(registry):
         assert new == old[name]
         parameters = new["function"]["parameters"]
         assert parameters.get("required", []) == required
-        assert {key: value["type"] for key, value in parameters["properties"].items()} == properties
+        assert {key: value["type"] if "type" in value else [form["type"] for form in value["anyOf"]]
+                for key, value in parameters["properties"].items()} == properties
         for key in parameters["properties"]:
             assert parameters["properties"][key] == old[name]["function"]["parameters"]["properties"][key]
     assert registry.require("file_search").to_schema()["function"]["parameters"]["properties"]["scope"]["enum"] == ["current", "workspace"]
     assert registry.require("file_search").to_legacy_validation_schema()["required"] == []
     delete = registry.require("file_delete").to_schema()["function"]["parameters"]["properties"]
-    assert delete["file_ids"]["items"] == {"type": "string", "pattern": "^fid_[a-z0-9]{8}$"}
-    assert delete["files"]["items"] == {"type": "string"}
+    assert delete["file_ids"]["anyOf"][1]["items"] == {"type": "string", "minLength": 1, "pattern": "^fid_[a-z0-9]{8}$"}
+    assert delete["files"]["anyOf"][1]["items"] == {"type": "string", "minLength": 1}
 
 
 @pytest.mark.parametrize("name,args", [

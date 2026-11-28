@@ -19,6 +19,7 @@ from services.tools import build_legacy_catalog, validate_legacy_coverage
 PRESENTATION_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/message_presentation_code_schema.json').read_text())
 BASELINE = json.loads((Path(__file__).parent / 'fixtures/tool_catalog_07_baseline.json').read_text())
 FILE_SEARCH_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/file_search_protocol_08_schema.json').read_text())
+FILE_SELECTOR_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/file_selector_contract_upgrade.json').read_text())
 TASK_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/scheduled_task_structured_schema.json').read_text())
 SMART_IMAGE_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/smart_image_25_config_upgrade.json').read_text())
 WEB_SEARCH_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/web_search_protocol_01_schema.json').read_text())
@@ -70,7 +71,7 @@ def image_upgrade_settings():
 
 
 def original_schemas(names, view):
-    return [ERP_SCOPE_UPGRADE[name] if name in ERP_SCOPE_UPGRADE else CHAT_IMAGE_UPGRADE['spec_changes'][name]['schema'] if 'schema' in CHAT_IMAGE_UPGRADE['spec_changes'].get(name, {}) else WEB_SEARCH_UPGRADE if name == 'web_search' else PRESENTATION_UPGRADE if name == 'code_execute' else FILE_SEARCH_UPGRADE if name == 'file_search' else TASK_UPGRADE['schema'] if name == 'manage_scheduled_task' else BASELINE['schema_views'].get(view, {}).get(name) or BASELINE['specs'][name]['schema']
+    return [FILE_SELECTOR_UPGRADE[name] if name in FILE_SELECTOR_UPGRADE else ERP_SCOPE_UPGRADE[name] if name in ERP_SCOPE_UPGRADE else CHAT_IMAGE_UPGRADE['spec_changes'][name]['schema'] if 'schema' in CHAT_IMAGE_UPGRADE['spec_changes'].get(name, {}) else WEB_SEARCH_UPGRADE if name == 'web_search' else PRESENTATION_UPGRADE if name == 'code_execute' else FILE_SEARCH_UPGRADE if name == 'file_search' else TASK_UPGRADE['schema'] if name == 'manage_scheduled_task' else BASELINE['schema_views'].get(view, {}).get(name) or BASELINE['specs'][name]['schema']
             for name in names]
 
 
@@ -123,6 +124,8 @@ def test_full_spec_contract_unchanged(catalog, name):
                 value = False
             if key == 'schema' and name in ERP_SCOPE_UPGRADE:
                 value = ERP_SCOPE_UPGRADE[name]
+            if key == 'schema' and name in FILE_SELECTOR_UPGRADE:
+                value = FILE_SELECTOR_UPGRADE[name]
             assert actual[key] == value, (name, key)
 
 
@@ -395,7 +398,7 @@ def test_preflight_obeys_legacy_knowledge_retirement(monkeypatch, enabled):
     ('file_delete', {'files': ['uploads/approved.csv']}, 'general'),
     ('trigger_erp_sync', {'sync_type': 'order'}, 'erp'),
 ])
-def test_prior_confirmation_binding_remains_valid(catalog, baseline_catalog, name, args, domain):
+def test_confirmation_binding_tracks_authorized_contract_changes(catalog, baseline_catalog, name, args, domain):
     from services.tools import ToolContext, ToolPolicy, ToolConfirmation
     context = ToolContext(actor_user_id='actor-a', workspace_owner_id='actor-a', org_id='org-a',
                           context_scope='user', personal_context_allowed=True, confirmation_available=True,
@@ -405,6 +408,17 @@ def test_prior_confirmation_binding_remains_valid(catalog, baseline_catalog, nam
     before = ToolPolicy(baseline_catalog).decide(name, context, args)
     after = ToolPolicy(catalog).decide(name, context, args)
     assert before.outcome == after.outcome == 'require_confirmation'
+    if name in FILE_SELECTOR_UPGRADE:
+        # A changed file selector contract invalidates the old approval. Never
+        # preserve a stale approval by masking a real schema digest change.
+        assert before.confirmation_binding != after.confirmation_binding
+        stale = ToolConfirmation(binding=before.confirmation_binding, status='approved')
+        rejected = ToolPolicy(catalog).decide(name, context, args, confirmation=stale)
+        assert rejected.outcome == 'deny'
+        assert rejected.reason == 'confirmation_binding_mismatch'
+        fresh = ToolConfirmation(binding=after.confirmation_binding, status='approved')
+        assert ToolPolicy(catalog).decide(name, context, args, confirmation=fresh).outcome == 'allow'
+        return
     assert before.confirmation_binding == after.confirmation_binding
     approval = ToolConfirmation(binding=before.confirmation_binding, status='approved')
     assert ToolPolicy(catalog).decide(name, context, args, confirmation=approval).outcome == 'allow'

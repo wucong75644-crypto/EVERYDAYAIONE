@@ -204,7 +204,10 @@ class TestFileIdSchemaConsistency:
         )
         props = delete["function"]["parameters"]["properties"]
         assert "file_ids" in props
-        items = props["file_ids"]["items"]
+        scalar, array = props["file_ids"]["anyOf"]
+        assert scalar == {"type": "string", "minLength": 1, "pattern": r"^fid_[a-z0-9]{8}$"}
+        assert array["type"] == "array"
+        items = array["items"]
         assert items.get("pattern") == r"^fid_[a-z0-9]{8}$"
 
 
