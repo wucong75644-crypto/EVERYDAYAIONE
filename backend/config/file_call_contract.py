@@ -22,3 +22,34 @@ def file_analyze_arguments(*, file_id: str | None = None,
     if len(values) != 1 or any(not isinstance(v, str) or not v for v in values.values()):
         raise ValueError("A read call requires exactly one supplied file selector")
     return values
+
+
+
+def selector_parameters(name, parameters):
+    """The same selector shapes for canonical tools and model validation."""
+    import copy
+    from services.agent.file_id import FID_PATTERN
+    from services.file_resources import FileReferenceCodec
+    if name not in {'file_delete', 'file_analyze'}:
+        return parameters
+    result = copy.deepcopy(parameters)
+    props = result['properties']
+    names = ('resource_refs', 'file_ids', 'files') if name == 'file_delete' else ('resource_ref', 'file_id', 'path')
+    for key in names:
+        field = props[key]
+        scalar = {'type': 'string', 'minLength': 1}
+        if key in {'file_id', 'file_ids'}:
+            scalar['pattern'] = FID_PATTERN
+        elif key in {'resource_ref', 'resource_refs'}:
+            scalar['pattern'] = '^' + FileReferenceCodec.prefix
+        description = field.get('description', '')
+        if name == 'file_delete':
+            props[key] = {'description': description, 'anyOf': [scalar, {'type': 'array', 'items': scalar}]}
+        else:
+            props[key] = {**scalar, 'description': description}
+    # Arrays omitted/empty alongside another real target retain their existing semantics.
+    result['anyOf'] = [{'required': [key], 'properties': {key: {'anyOf': [
+        {'type': 'string', 'minLength': 1}, {'type': 'array', 'minItems': 1}]}}} for key in names]
+    result['examples'] = ([{'resource_refs': ['fref1_example']}, {'file_ids': 'fid_a3f2b1c9'}]
+                          if name == 'file_delete' else [{'file_id': 'fid_a3f2b1c9'}])
+    return result

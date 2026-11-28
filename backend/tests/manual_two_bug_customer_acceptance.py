@@ -34,14 +34,20 @@ def wire_errors(wire):
             continue
         body = event['body']
         for item in body.get('input', body.get('messages', [])):
-            if item.get('type') != 'function_call_output':
+            if item.get('type') != 'function_call_output' and item.get('role') != 'tool':
                 continue
+            output = item.get('output', item.get('content', ''))
+            if isinstance(output, list):
+                output = next((p.get('text', '') for p in output if p.get('type') in {'text', 'input_text'}), '')
             try:
-                value = json.loads(item.get('output', ''))
+                value = json.loads(output)
             except (TypeError, ValueError):
-                continue
+                try:
+                    value = json.loads(output.splitlines()[0])
+                except (TypeError, ValueError, AttributeError, IndexError):
+                    continue
             if isinstance(value, dict) and value.get('ok') is False and not is_content_handoff(value):
-                errors[item.get('call_id')] = value
+                errors[item.get('call_id', item.get('tool_call_id'))] = value
     return [{'call_id': key, 'result': value} for key, value in errors.items()]
 
 

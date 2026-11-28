@@ -59,7 +59,7 @@ FILE_TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
 
 def build_file_tools() -> List[Dict[str, Any]]:
     """构建文件操作工具定义（file_search / file_analyze / file_delete / restore_file）"""
-    return [
+    tools = [
         {
             "type": "function",
             "function": {
@@ -209,3 +209,9 @@ def build_file_tools() -> List[Dict[str, Any]]:
             },
         },
     ]
+
+    from config.file_call_contract import selector_parameters
+    for tool in tools:
+        function = tool['function']
+        function['parameters'] = selector_parameters(function['name'], function['parameters'])
+    return tools

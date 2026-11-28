@@ -119,6 +119,10 @@ async def test_old_reference_contract_is_visible_without_active_skill_and_repair
         Draft202012Validator(params).validate(example)
         assert json.dumps(example, ensure_ascii=False) in projected['description']
         native = refs.decode_call(co.SAVE, example)
+        if 'reference_sections' in native['updates'][0]['item']:
+            patch = co.ContentItemPatch.model_validate(native['updates'][0]['item'])
+            assert patch.reference_sections.prompt['positive']
+            continue  # Verified-read merging is covered by the customer regression.
         item = co.ContentItem(title='案例', **native['updates'][0]['item'])
         assert valid_reference_prompts_presentation(co.ContentDocument(title='案例', display_prefix='# 参考图判断\n摄影参考。', items=(item,)))
     result = await read(r, p, h, q, row, 3)

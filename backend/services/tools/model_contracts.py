@@ -24,13 +24,9 @@ REVIEWED_MODEL_TOOLS = frozenset({
 def model_parameters(name, parameters):
     """Close the top-level model input without altering the canonical ToolSpec."""
     projected = {**parameters, 'additionalProperties': False}
-    if name == 'file_delete':
-        # The resolver accepts either a single selector or a list, without
-        # changing its value or introducing a new approval fingerprint.
-        projected['properties'] = {
-            key: {**field, 'type': ['array', 'string']}
-            for key, field in parameters['properties'].items()
-        }
+    if name in {'file_delete', 'file_analyze'}:
+        from config.file_call_contract import selector_parameters
+        projected = selector_parameters(name, projected)
     elif name in {'erp_agent', 'erp_analyze'}:
         # Both native handlers already accept query as a fallback for task.
         # Describe that compatibility without rewriting the recorded arguments.

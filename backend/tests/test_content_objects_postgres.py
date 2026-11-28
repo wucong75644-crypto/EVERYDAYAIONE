@@ -957,7 +957,9 @@ async def test_chat_executes_from_registration_to_page_receipt(content_db, monke
                 offered = next(tool['function']['parameters'] for tool in kwargs['tools']
                                if tool['function']['name'] == 'generate_image')
                 if 'edit_instruction' in model_arguments or previous_edit:
-                    assert set(offered['properties']) == {'source_message_id', 'source_content_index', 'edit_instruction', 'materials'}
+                    assert set(offered['properties']) == {'source_message_id', 'source_content_index', 'source_reference', 'edit_instruction', 'materials'}
+                    assert offered['required'] == ['edit_instruction']
+                    assert any(set(branch['required']) == {'source_message_id', 'source_content_index'} for branch in offered['oneOf'])
                     assert 'previous_result_edit' not in offered['properties']
                 else:
                     assert 'draft' in offered['properties']

@@ -66,6 +66,8 @@ def content_format_contract(profile_id):
         'display_sections': ['方案标题', *REFERENCE_PROMPTS_DISPLAY_HEADINGS] if profile_id else [],
         'document_sections': ['参考图判断'] if profile_id else [],
         'read_before_revision': True, 'preserve_omitted_fields': True,
+        **({'revision_sections': 'field_patch_after_verified_read', 'new_sections': 'complete',
+            'options_update': 'replace_complete_options'} if profile_id else {}),
         **({'model_fields': {'document.reference_analysis': '参考图判断',
              'item.presentation': dict(DISPLAY_FIELDS), 'item.prompt': dict(PROMPT_FIELDS)}} if profile_id else {})}
 

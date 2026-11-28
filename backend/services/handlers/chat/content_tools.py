@@ -240,11 +240,15 @@ def prefers_reference_text(request, runtime, *, saved_source_available=False, se
     """Only a verified, fresh writing phase may use host text registration."""
     from services.task_execution.direct_loop import active_image_methods
     from services.task_execution.methods import REFERENCE_PROMPTS_PROFILE
+    from services.task_execution import item_confirmation
 
     if (server_image_plan or saved_source_available or image_execution_request(request, runtime)
             or requires_continued_delivery(request, runtime) or getattr(runtime, 'task_image_completion', None) is not None
             or getattr(getattr(runtime, 'task_user_changes', None), 'items', ())
             or getattr(runtime, '_steer_messages', ())):
+        return False
+    media = item_confirmation.directive(request, runtime)
+    if media.wait_for or media.wait_all:
         return False
     methods = active_image_methods(runtime)
     return len(methods) == 1 and next(iter(methods.values()))[0] == REFERENCE_PROMPTS_PROFILE
@@ -396,6 +400,22 @@ SCHEMAS = (
     LIST_IMAGES_SCHEMA,
 )
 
+def _authoring_schema(value):
+    """Keep the fixed storage protocol version out of model-authored documents."""
+    if isinstance(value, list):
+        return [_authoring_schema(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    result = {key: _authoring_schema(item) for key, item in value.items()}
+    if result.get('title') == 'ContentDocument':
+        result.get('properties', {}).pop('version', None)
+        result['required'] = [key for key in result.get('required', ()) if key != 'version']
+    # JSON examples are input objects, not schema nodes. Keep them aligned too.
+    if isinstance(result.get('document'), dict):
+        result['document'].pop('version', None)
+    return result
+
+
 def model_tools(tools, *, selectable_source_images=False, saved_text_available=False, server_image_plan=False, reuse_source=False, revise_saved=False, first_delivery=False, current_images=(), inline_image=False, generated_image_edit=False, single_image_edit=False, inline_only=False, previous_image_reference=None, planned_image_count=None, image_reference_catalog=None):
     """Project the one entry contract selected by the current workflow."""
     from services.task_execution.reference_boundary import ModelReferenceBoundary
@@ -421,6 +441,9 @@ def model_tools(tools, *, selectable_source_images=False, saved_text_available=F
         if inline_only and name == 'save_task_text':
             # The inline entry already saves its draft atomically.
             continue
+        if name == 'save_task_text':
+            original = copy.deepcopy(original)
+            original['function']['parameters'] = _authoring_schema(original['function']['parameters'])
         if name == 'save_task_text' and not server_image_plan and (reuse_source or revise_saved or first_delivery or current_images):
             # Project the same backend action. The first turn has no historical
             # source to recover; an explicit follow-up already has its source.

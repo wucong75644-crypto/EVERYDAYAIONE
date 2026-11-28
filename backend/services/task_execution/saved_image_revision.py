@@ -28,8 +28,8 @@ def approves_revision(state, draft, frame):
             and record.confirmation_tool == media.tool
             and set(media.approved) <= set(record.confirmation_items)
             and set(media.approved) == {update.item_index for update in draft.updates}
-            and any(size_changes(record.document.items[index - 1].options,
-                frame.size_for(index)) for index in media.approved))
+            and (not media.confirmation_only or any(size_changes(record.document.items[index - 1].options,
+                frame.size_for(index)) for index in media.approved)))
     except (ValueError, KeyError, IndexError):
         return False
 
@@ -108,6 +108,66 @@ def size_changes(options, size):
     return changes
 
 
+
+def execution_requirement(runtime, request, reference, *, options, materials, revision):
+    """One read-only decision for model availability and pre-dispatch validation."""
+    from services.handlers.chat.content_tools import semantic_context, semantic_intent
+    from .item_confirmation import directive
+    frame = semantic_context(request, runtime)
+    if frame is None or semantic_intent(request, runtime) not in {
+            'execute_saved', 'repeat', 'edit', 'generate', 'write', 'write_then_submit_images'}:
+        return None
+    if semantic_intent(request, runtime) == 'generate' and (frame.target is None or frame.target.kind != 'content'):
+        return None
+    size = frame.size_for(reference.item_index)
+    changes = size_changes(options, size)
+    reason = '旧稿规格与本次要求不同，尚未提交图片。'
+    target = frame.target
+    if (semantic_intent(request, runtime) in {'write', 'write_then_submit_images', 'edit'}
+            and target is not None and target.kind == 'content'
+            and target.artifact_id == reference.artifact_id and target.revision == revision):
+        changes['saved_revision'] = 'required'
+        reason = '当前请求要求修订所选旧稿；先读取并保存修改，不能直接执行未修改的版本。'
+    media = directive(request, runtime)
+    if (media.tool == 'generate_image' and media.approved and not media.confirmation_only
+            and reference.artifact_id == media.artifact_id and revision == media.revision
+            and reference.item_index in media.approved):
+        changes['saved_revision'] = 'required'
+        reason = '本次已批准该条目，但要求先修订；不是等待用户确认。先读取并修订，保存成功后仅执行新版。'
+    inputs = [co.Material.model_validate(m) if isinstance(m, dict) else m for m in materials]
+    missing = [m.model_dump(mode='json', exclude_none=True) for m in (frame.materials or ())
+        if m.usage == 'input' and m.reference not in [old.reference for old in inputs if old.usage == 'input']]
+    if missing:
+        changes['materials'] = missing
+        reason = '旧稿未绑定本次明确选择的参考图，不能降为文生图；先读取并修订素材绑定。'
+    return {'required_changes': changes, 'requested_size': size, 'message': reason} if changes else None
+
+
+def pending_execution(runtime, request):
+    """Plan only the resolved saved target; never select or approve another source."""
+    from .request_resolution import binding, groups
+    selected = binding(runtime) or {}
+    target = selected.get('target') or {}
+    if selected.get('status') != 'resolved' or target.get('kind') != 'content':
+        return []
+    group = next((g for g in groups(runtime) if g['artifact_id'] == target.get('artifact_id')
+        and g['revision'] == target.get('revision')), None)
+    if group is None:
+        return []  # Unknown/stale targets retain the existing scope/version recovery.
+    result = []
+    for item in group['items']:
+        index = item['item_index']
+        if index not in target.get('item_indices', ()):
+            continue
+        reference = co.ContentReference(artifact_id=group['artifact_id'], item_index=index)
+        inputs = group.get('item_inputs', ())
+        requirement = execution_requirement(runtime, request, reference, options=item.get('options', {}),
+            materials=inputs[index - 1] if len(inputs) >= index else (), revision=group['revision'])
+        if requirement:
+            result.append({'content_source': reference.model_dump(mode='json', exclude_none=True), **requirement})
+    return result
+
+
 def check(runtime, request, calls, state):
     """Reject an unchanged execution or incomplete revision before adoption/IO."""
     from services.handlers.chat.content_tools import semantic_context, semantic_intent
@@ -119,8 +179,6 @@ def check(runtime, request, calls, state):
     if semantic_intent(request, runtime) == 'generate' and (frame.target is None or frame.target.kind != 'content'):
         return {}
     size = frame.size_for()
-    if not size and not frame.size_rules and not frame.materials:
-        return {}
     errors = {}
     for call in calls:
         try:
@@ -128,15 +186,14 @@ def check(runtime, request, calls, state):
             if call['name'] == 'generate_image' and isinstance(args.get('content_source'), dict):
                 reference = co.ContentReference.model_validate({key: args['content_source'][key]
                     for key in ('artifact_id', 'item_index', 'sha256') if key in args['content_source']})
-                _, _, item = co.load(state, reference)
-                size = frame.size_for(reference.item_index)
-                changes = size_changes(item.options, size)
-                reason = '旧稿规格与本次要求不同，尚未提交图片。'
-                missing = [material.model_dump(mode='json', exclude_none=True) for material in (frame.materials or ())
-                    if material.usage == 'input' and material.reference not in [m.reference for m in item.materials]]
-                if missing:
-                    changes['materials'] = missing
-                    reason = '旧稿未绑定本次明确选择的参考图，不能降为文生图；先读取并修订素材绑定。'
+                _, record, item = co._load_record(state, reference)
+                requirement = execution_requirement(runtime, request, reference, options=item.options,
+                    materials=item.materials, revision=record.revision)
+                if requirement is None:
+                    continue
+                size = requirement['requested_size']
+                changes = requirement['required_changes']
+                reason = requirement['message']
             elif call['name'] == co.SAVE and args.get('base'):
                 draft = co.SaveContent.model_validate(args)
                 _, document, _ = co.load(state, draft.base)

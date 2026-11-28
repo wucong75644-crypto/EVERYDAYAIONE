@@ -58,8 +58,9 @@ class ImageReferences:
                                        else {pair[0]: pair[1]})
         return self.reverse[pair]
 
-    def field(self):
-        return {'type': 'string', **({'enum': list(self.references)} if self.references else {}),
+    def field(self, *, message_only=False):
+        handles = [handle for handle, ref in self.references.items() if not message_only or 'message_id' in ref]
+        return {'type': 'string', **({'enum': handles} if self.references else {}),
                 'description': '复制当前图片目录的image_ref。短引用绑定当前输入快照，不能沿用其他轮次的编号。'}
 
     def decode(self, value, path='$'):
@@ -90,7 +91,7 @@ class ImageReferences:
         reference = self.references.get(value['image_ref']) if isinstance(value['image_ref'], str) else None
         if reference is None:
             raise TaskError('IMAGE_REFERENCE_UNKNOWN_OR_STALE')
-        locator_fields = {'message_id', 'content_index', 'source_message_id', 'source_content_index',
+        locator_fields = {'source_reference', 'message_id', 'content_index', 'source_message_id', 'source_content_index',
                           'resource_ref', 'file_id', 'asset_id'}
         if any(result.get(key) is not None for key in locator_fields):
             raise TaskError('IMAGE_REFERENCE_IDENTITY_CONFLICT')
@@ -101,9 +102,10 @@ class ImageReferences:
                 raise TaskError('IMAGE_REFERENCE_REQUIRES_CURRENT_TARGET')
             result.update(source_message_id=reference['message_id'], content_index=reference['content_index'])
         elif 'edit_instruction' in result:
-            if 'message_id' not in reference:
-                raise TaskError('IMAGE_REFERENCE_REQUIRES_DRAFT')
-            result.update(source_message_id=reference['message_id'], source_content_index=reference['content_index'])
+            if 'message_id' in reference:
+                result.update(source_message_id=reference['message_id'], source_content_index=reference['content_index'])
+            else:
+                result['source_reference'] = reference
         else:
             result.update(reference)
         return result
@@ -136,6 +138,9 @@ class ImageReferences:
         index_key = 'source_content_index' if 'source_content_index' in value else 'content_index'
         reference = ({'message_id': value.get(mid_key), 'content_index': value.get(index_key)}
                      if isinstance(value.get(mid_key), str) and type(value.get(index_key)) is int else value)
+        if 'edit_instruction' in value and isinstance(value.get('source_reference'), dict):
+            reference = value['source_reference']
+            result.pop('source_reference', None)
         handle = self.reverse.get(self.identity(reference))
         if handle:
             result.pop(mid_key, None)
@@ -203,20 +208,21 @@ class ImageReferences:
             function['description'] = function['description'].replace('artifact_id', 'content_ref')
         if isinstance(function, dict) and function.get('name') in {'generate_image', 'resolve_request_target', 'read_conversation_text'}:
             function['description'] = function.get('description', '') + ' 图片选择使用当前目录image_ref，后台解析真实图片身份，不填写图片消息ID和位置。'
-        if isinstance(function, dict) and function.get('name') == 'read_conversation_text' and self.references:
+        message_handle = next((handle for handle, ref in self.references.items() if 'message_id' in ref), None)
+        if isinstance(function, dict) and function.get('name') == 'read_conversation_text' and message_handle:
             if 'show_image' in function['parameters'].get('properties', {}):
-                example = {'show_image': {'image_ref': next(iter(self.references))}}
+                example = {'show_image': {'image_ref': message_handle}}
                 function['description'] += (' 已有图片展示参数示例（从目录选择用户指定图，不默认选示例）：'
                     + json.dumps(example, ensure_ascii=False)
                     + '。view_image同样填写对象，但只供模型分析，不能代替向用户展示。')
             elif 'view_image' in function['parameters'].get('properties', {}):
-                example = {'view_image': {'image_ref': next(iter(self.references))}}
+                example = {'view_image': {'image_ref': message_handle}}
                 function['description'] += (' 当前可用核图参数示例（只说明字段，不替用户选图）：'
                     + json.dumps(example, ensure_ascii=False)
                     + '。核图不等于展示，需展示时核对后单独选择目标。')
-        if isinstance(function, dict) and function.get('name') == 'resolve_request_target' and self.references:
+        if isinstance(function, dict) and function.get('name') == 'resolve_request_target' and message_handle:
             example = {'intent': 'edit', 'request_context': {'focus': 'selected_target',
-                'target': {'kind': 'image', 'basis': 'explicit_reference', 'image_ref': next(iter(self.references))}}}
+                'target': {'kind': 'image', 'basis': 'explicit_reference', 'image_ref': message_handle}}}
             function['description'] += (' 完整图片目标格式示例（仅说明字段，不代表替用户选中示例图片；'
                 'image_ref须按用户实际指代从当前目录复制）：' + json.dumps(example, ensure_ascii=False)
                 + '。image_ref是单个字符串，不是image_refs数组；basis只使用定义中的枚举。'
@@ -264,14 +270,16 @@ class ImageReferences:
                     'description': '如需显式指定当前上传/追加图作为画布，复制它的image_ref。历史编辑选target底图即可，不把历史图当本条附件。'}
         if {'source_message_id', 'source_content_index', 'edit_instruction'} <= props.keys():
             props.pop('source_message_id'); props.pop('source_content_index')
+            props.pop('source_reference', None)
+            result.pop('oneOf', None)
             props['image_ref'] = self.field()
             result['required'] = [k for k in result.get('required', ()) if k not in {'source_message_id', 'source_content_index'}] + ['image_ref']
         elif {'message_id', 'content_index'} <= props.keys():
             # MaterialReference supports other native file selectors as well.
             # The image locator form becomes a single snapshot-bound handle.
             props.pop('message_id'); props.pop('content_index')
-            props['image_ref'] = self.field()
             image_required = {'message_id', 'content_index'} <= set(value.get('required', ()))
+            props['image_ref'] = self.field(message_only=image_required)
             result['required'] = [k for k in result.get('required', ()) if k not in {'message_id', 'content_index'}]
             if image_required:
                 result['required'].append('image_ref')
@@ -286,7 +294,7 @@ class ImageReferences:
                     branch.get('properties', {}).pop(key, None)
         if props.get('kind', {}).get('enum') and 'image' in props['kind']['enum'] and 'basis' in props:
             props.pop('content_index', None)
-            props['image_ref'] = self.field()
+            props['image_ref'] = self.field(message_only=True)
             props['source_message_id']['description'] = '仅用于request或content目标的真实来源消息ID；image目标使用image_ref，不填写此字段。'
             for branch in result.get('oneOf', ()):
                 if branch.get('properties', {}).get('kind', {}).get('const') == 'image':
@@ -327,6 +335,8 @@ class ImageReferences:
         if offered:
             result['parameters'] = self.schema({'function': offered})['function']['parameters']
         roots = {str(issue['loc'][0]) for issue in result.get('issues', ()) if issue.get('loc')}
+        if offered:
+            roots &= result['parameters'].get('properties', {}).keys()
         required = {}
         if 'document' in roots:
             required.update({'document': ['title', 'items'], 'document.items[]': ['title', 'body'],
@@ -352,13 +362,13 @@ class ImageReferences:
             result['message'] += usage
         if required:
             result['required_fields'] = required
-        from .reference_prompt_format import MODEL_GUIDANCE
+        from .reference_prompt_format import MODEL_GUIDANCE, save_recovery_fields
         if offered and offered.get('description', '').startswith(('按当前参考图提示词方法', MODEL_GUIDANCE)):
-            from .reference_prompt_format import MODEL_GUIDANCE
             result['message'] = MODEL_GUIDANCE
-            result['required_fields'] = ({'document': ['title', 'reference_analysis', 'items'],
-                'document.items[]': ['title', 'presentation', 'prompt']}
-                if 'document' in roots else {'base': ['content_ref', 'item_index'], 'updates[]': ['item_index', 'item']})
+        if offered:
+            required, forms = save_recovery_fields(result['parameters'], roots)
+            result['required_fields'] = required
+            result['allowed_forms'] = forms
         result['message'] += ' 仅按所附parameters修复出错字段，保留原操作形式、全部正文、素材用途及规格。'
         return result
 
@@ -474,6 +484,11 @@ class ImageReferences:
                             '.display_prefix', '.presentation').replace('.body', '.prompt')
                 if isinstance(projected.get('message'), str):
                     from .content_objects import MATERIAL_REFERENCE_GUIDANCE
+                    if self.reference_format:
+                        from .content_objects import IMAGE_REVISION_GUIDANCE
+                        projected['message'] = projected['message'].replace(IMAGE_REVISION_GUIDANCE,
+                            IMAGE_REVISION_GUIDANCE.replace('display_prefix', 'presentation').replace(
+                                'body', 'prompt').replace('artifact_id', 'content_ref'))
                     projected['message'] = projected['message'].replace(MATERIAL_REFERENCE_GUIDANCE,
                         '图片素材填写reference:{"image_ref":"当前目录编号"}，reference不是字符串；保留role和usage。')
                     projected['message'] = projected['message'].replace(

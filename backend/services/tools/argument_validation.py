@@ -95,6 +95,10 @@ def _schema_issues(value, schema, root, path, depth, image_hints):
         if count != 1:
             add("必须且只能选择一种参数形式")
     if isinstance(value, Mapping):
+        for bound, violates in (('minProperties', len(value) < schema.get('minProperties', 0)),
+                                ('maxProperties', len(value) > schema.get('maxProperties', len(value)))):
+            if violates:
+                add(f'{bound}={schema[bound]}')
         properties = schema.get("properties", {})
         for key in schema.get("required", ()):
             if key not in value:

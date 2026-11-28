@@ -72,7 +72,7 @@ def install_entry_schema(dsn,root,settings,monkeypatch):
         c.execute((migrations/'380_conversation_steer_attachments.sql').read_text())
         c.execute('GRANT SELECT ON org_departments,org_positions,org_member_assignments TO everydayai')
         for key in ['current','ecom']:
-            cap=json.loads((Path('/private/tmp/skill-employee-20-20261122')/f'manual-compare-{key}-private.json').read_text())
+            cap=json.loads((Path(os.environ.get('SKILL_FORMAL_BASE_CAPTURE_ROOT', '/private/tmp/skill-employee-20-20261122'))/f'manual-compare-{key}-private.json').read_text())
             p,r=cap['package'],cap['revision'];raw=base64.b64decode(cap['document_base64'])
             assert hashlib.sha256(raw).hexdigest()==r['content_sha256']
             dest=skillroot/r['nas_path'];dest.parent.mkdir(parents=True,exist_ok=True);dest.write_bytes(raw)

@@ -12,7 +12,7 @@ class MediaDirective(BaseModel):
     wait_all: bool = Field(default=False, description='用户要求该工具的全部成果等后续确认才执行；即使本轮尚未写出方案也要填写。')
     approved: list[Annotated[int, Field(ge=1, le=100)]] = Field(default_factory=list, max_length=100,
         description='本轮同意的真实待确认条目；普通选择ready方案不是新的审批。')
-    confirmation_only: bool = False
+    confirmation_only: bool = Field(default=False, description='true表示只确认原版执行；false且approved非空表示已批准先修订再执行，旧版不可直接派发。')
     artifact_id: str | None = Field(default=None, min_length=1, max_length=200)
     revision: int | None = Field(default=None, ge=1)
 
@@ -81,7 +81,7 @@ def record_slot(runtime, state, call, reference):
 
 def _check_directive(call, state, value, *, allow_new=False):
     from . import content_objects as content
-    approval = set(value.approved) if value.confirmation_only and value.tool==call['name'] else set()
+    approval = set(value.approved) if value.tool==call['name'] else set()
     current_wait = value.tool==call['name'] and bool(value.wait_all or value.wait_for)
     catalog = content.catalog(state, for_model=True)
     if not current_wait and not approval and not any(row.get('confirmation_tool') for row in catalog):

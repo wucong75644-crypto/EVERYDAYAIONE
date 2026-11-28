@@ -6,6 +6,8 @@ import re
 from typing import Annotated, Any, Literal
 from uuid import UUID
 from pydantic import Field, field_validator, model_serializer, model_validator
+from pydantic.json_schema import SkipJsonSchema
+from .reference_prompt_format import ReferenceSectionPatch
 from .contracts import Artifact, Fact, Key, TaskError, MAX_INLINE_TEXT_CHARS
 from .item_confirmation import MediaDirective
 from .reducer import digest, register_artifacts, complete_step
@@ -216,6 +218,14 @@ class ContentRecord(Fact):
 
 
 class ContentItemPatch(Presentation):
+    reference_sections: SkipJsonSchema[ReferenceSectionPatch | None] = None
+
+    @model_serializer(mode='wrap')
+    def native_fields(self, handler):
+        value = handler(self)
+        if self.reference_sections is None:
+            value.pop('reference_sections', None)
+        return value
     title: str | None = Field(default=None,min_length=1,max_length=300)
     body: str | None = Field(default=None,min_length=1,max_length=20000,description='修改后的完整最终原文；替换该条原文，不附加旧版本的文字。')
     materials: tuple[Material,...] | None = Field(default=None,max_length=16,description='仅用户要求改变执行素材时提供；否则省略，由后台保留原引用，不重新填写。')
@@ -708,6 +718,8 @@ def save(runtime, call, registry, *, has_image_attachments=False, source_images=
     from .direct_loop import active_image_methods
     from .methods import REFERENCE_PROMPTS_PROFILE
     value = SaveContent.model_validate_json(call['arguments'])
+    if any(update.item.reference_sections is not None for update in value.updates):
+        raise TaskError('CONTENT_SECTION_PATCH_REQUIRES_READ')
     if request_context is None and '_media_decisions_v1' in getattr(runtime,'checkpoint_base',{}):
         from services.agent.image.ecommerce_planner.workflow import ImageRequestContext
         request_context = ImageRequestContext()

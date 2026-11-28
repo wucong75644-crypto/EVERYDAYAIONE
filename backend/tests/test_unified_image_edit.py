@@ -105,12 +105,16 @@ async def test_conflicting_previous_and_explicit_image_never_selects_one_silentl
     h._execute_tool_calls.assert_not_awaited()
 
 
-@pytest.mark.parametrize('source', ['selected-history', 'uploaded-original', 'previous-result'])
+@pytest.mark.parametrize('source', ['selected-history', 'uploaded-original', 'previous-result',
+                                    'resource_ref', 'file_id', 'asset_id'])
 async def test_all_target_sources_preserve_same_instruction_and_reference_before_registration(monkeypatch, source):
     r, p, h, q = case()
     q = replace(q, content=[TextPart(text='把指定图片背景改黑')])
     args = arguments()
     selected = {'message_id': args['source_message_id'], 'content_index': 0}
+    if source in {'resource_ref', 'file_id', 'asset_id'}:
+        selected = {source: 'verified-resource'}
+        args = {'source_reference': selected, 'edit_instruction': args['edit_instruction']}
     if source == 'previous-result':
         monkeypatch.setattr(inline, 'previous_result_reference', lambda *unused: selected)
         args = {'previous_result_edit': args['edit_instruction'], 'edit_instruction': args['edit_instruction']}

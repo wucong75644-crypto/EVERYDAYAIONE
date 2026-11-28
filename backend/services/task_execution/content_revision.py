@@ -146,21 +146,96 @@ def pending_reads(runtime, request):
 
 
 def offer(runtime, request, tools):
-    """Only offer saved-text mutation after the selected source was read."""
+    """Expose saved-text actions only after their actual prerequisites are met."""
     from .content_objects import SAVE
+    from .saved_image_revision import pending_execution
+    from .image_reference_catalog import for_runtime
+    from .reference_boundary import ModelReferenceBoundary
     needed = pending_reads(runtime, request)
-    if not needed:
+    revisions = pending_execution(runtime, request)
+    if not needed and not revisions:
         return tools
+    boundary = ModelReferenceBoundary(for_runtime(runtime))
+    workflow = {'stage': 'read_required' if needed else 'revision_required',
+        'read_required_for_revision': bool(needed),
+        'read_calls': [{'tool': 'read_conversation_text', 'arguments': args} for args in needed],
+        'items': revisions, 'next_tool': 'read_conversation_text' if needed else SAVE,
+        'steps': ['read_saved_item', 'save_revision', 'execute_saved_revision']}
+    # Convert the complete object, not just field names embedded in prose.
+    public = boundary.value(workflow)
+    from .request_resolution import binding
+    selected_indices = set(((binding(runtime) or {}).get('target') or {}).get('item_indices', ()))
+    blocked_indices = {row['content_source']['item_index'] for row in revisions}
     result = []
-    for tool in tools:
-        function = tool.get('function', {})
-        if function.get('name') == SAVE:
+    for original in tools:
+        function = original.get('function', {})
+        name = function.get('name')
+        if needed and name == SAVE:
             continue
-        if function.get('name') == 'read_conversation_text':
-            tool = copy.deepcopy(tool)
-            tool['function']['description'] += (
-                ' 本次所选旧稿尚未读取，修订工具将在成功读取后提供。先按真实目标调用：'
-                + json.dumps(needed, ensure_ascii=False)
-                + '。这些是已选稿件的读取参数，不是新的选图建议；原样执行旧稿无需修订。')
+        if revisions and name == 'generate_image' and selected_indices <= blocked_indices:
+            continue
+        tool = copy.deepcopy(original)
+        if revisions and name == 'generate_image':
+            # Mixed selections can still execute their already-ready items.
+            source = tool['function']['parameters']['properties']['content_source']
+            source['not'] = {'required': ['item_index'],
+                'properties': {'item_index': {'enum': sorted(blocked_indices)}}}
+        if name in {'read_conversation_text', SAVE}:
+            if revisions:
+                tool['function']['description'] += (
+                    ' 当前已选稿件的修订流程（后台核验状态，不是新的选图建议）：'
+                    + json.dumps(public, ensure_ascii=False)
+                    + '。read_calls里的arguments可直接调用；成功读取后按本工具JSON结构修订，'
+                    '是否生成仍以本次用户要求为准；要求生成时仅用保存成功的新回执，不调用旧版本。')
+            else:
+                tool['function']['description'] += (
+                    ' 仅在本次需要修订所选旧稿时，先按以下已核验参数读取：'
+                    + json.dumps(public['read_calls'], ensure_ascii=False)
+                    + '。原样执行旧稿无需额外读取或保存；仅查看原文不要求修订或生成。')
         result.append(tool)
     return result
+
+
+def materialize_sections(runtime, request, call):
+    """Merge section deltas only after a server-observed read of this version."""
+    from . import content_objects as co
+    from .contracts import TaskError
+    from .direct_loop import content_followup_state
+    from .reference_prompt_format import PROFILE, encode_item, decode_save
+    from .reference_boundary import NativeArguments, NativeToolCall
+    if call['name'] != co.SAVE:
+        return call
+    try:
+        raw = json.loads(call['arguments'])
+    except (ValueError, TypeError):
+        return call  # Preserve the normal malformed-JSON repair contract.
+    if not isinstance(raw, dict) or not any(isinstance(u, dict) and isinstance(u.get('item'), dict)
+            and 'reference_sections' in u['item'] for u in (raw.get('updates') if isinstance(raw.get('updates'), list) else ())):
+        return call
+    value = co.SaveContent.model_validate(raw)
+    rejection = check_call(runtime, request, call)
+    if rejection is not None:
+        raise TaskError(rejection['code'])
+    state = runtime.task_execution_state or content_followup_state(runtime)
+    artifact, record, _ = co._load_record(state, value.base)
+    if not co.is_current(state, artifact.id):
+        raise TaskError('CONTENT_BASE_VERSION_CHANGED')
+    if record.presentation_profile != PROFILE:
+        raise TaskError('CONTENT_SECTION_PROFILE_MISMATCH')
+    arguments = json.loads(call['arguments'])
+    for update, raw in zip(value.updates, arguments['updates']):
+        patch = update.item.reference_sections
+        if patch is None:
+            continue
+        if update.item_index > len(record.document.items):
+            raise TaskError('CONTENT_UPDATE_INVALID')
+        old = record.document.items[update.item_index - 1]
+        original = encode_item(old.model_dump(mode='json'))
+        delta = raw['item'].copy()
+        delta.pop('reference_sections')
+        for name in patch.model_fields_set:
+            delta[name] = {**original[name], **getattr(patch, name)}
+        normalized = decode_save({'base': arguments['base'], 'updates': [
+            {'item_index': update.item_index, 'item': delta}]}, lambda *_: old.title)
+        raw['item'] = normalized['updates'][0]['item']
+    return NativeToolCall(name=call['name'], arguments=NativeArguments(arguments), call_id=call['id'])

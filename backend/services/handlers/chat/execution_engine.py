@@ -2253,7 +2253,16 @@ async def _execute_tools_impl(
                             exact_tool = visible.get(query.strip().casefold())
                             from services.task_execution.content_revision import pending_reads
                             required_reads = pending_reads(runtime, request) if query == content_objects.SAVE else []
-                            if required_reads:
+                            from services.task_execution.saved_image_revision import pending_execution
+                            pending_revisions = pending_execution(runtime, request)
+                            if pending_revisions and 'generate_image' not in visible:
+                                blocked.add('generate_image')
+                            if query == 'generate_image' and pending_revisions and exact_tool is None:
+                                result = {'ok': True, 'tools': [], 'status': 'revision_before_execution',
+                                    'message': '当前已选旧稿须先读取并修订保存，再执行成功回执中的新版。',
+                                    'recovery': {'steps': ['read_saved_item', 'save_revision', 'execute_saved_revision'],
+                                                 'items': pending_revisions}}
+                            elif required_reads:
                                 result = {'ok': True, 'tools': [], 'status': 'read_before_revision',
                                     'message': '保存工具在成功读取所选旧稿后提供。先调用read_conversation_text。',
                                     'recovery': {'tool': 'read_conversation_text', 'calls': required_reads}}
@@ -2421,9 +2430,21 @@ async def _execute_tools_impl(
                     await sink.on_block_update(block)
             return None
         if scoped_content and not recovery_only and not content_output_registration:
-            from services.task_execution.content_revision import check_call as check_revision_read
-            read_errors = {call['id']: result for call in calls
-                           if (result := check_revision_read(runtime, request, call)) is not None}
+            from services.task_execution.content_revision import check_call as check_revision_read, materialize_sections
+            read_errors, normalized_calls = {}, []
+            for call in calls:
+                result = check_revision_read(runtime, request, call)
+                if result is not None:
+                    read_errors[call['id']] = result
+                    continue
+                try:
+                    normalized_calls.append(materialize_sections(runtime, request, call))
+                except (ValueError, TypeError, KeyError) as error:
+                    read_errors[call['id']] = reference_boundary.repair(error,
+                        getattr(prepared, 'content_visible_tools', {}).get(call['name']))
+            if not read_errors:
+                calls = normalized_calls
+                assistant = _assistant_tool_message(turn_text, calls)
             if read_errors:
                 prepared.messages.append(assistant)
                 for call in calls:

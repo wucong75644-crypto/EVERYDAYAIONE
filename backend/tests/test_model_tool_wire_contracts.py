@@ -98,8 +98,9 @@ async def test_single_edit_publishes_flat_contract_only_for_supported_requests(m
         'source_content_index': 0,
         'edit_instruction': '桌面调浅，保留福字主体',
     }
-    assert set(parameters['properties']) == {*arguments, 'materials'}
-    assert set(parameters['required']) == set(arguments)
+    assert set(parameters['properties']) == {*arguments, 'materials', 'source_reference'}
+    assert parameters['required'] == ['edit_instruction']
+    assert any(set(branch['required']) == {'source_message_id', 'source_content_index'} for branch in parameters['oneOf'])
     assert 'Material' in parameters['$defs']
     validator = Draft202012Validator(parameters)
     assert validator.is_valid(arguments)
@@ -303,8 +304,8 @@ def test_previous_result_is_a_candidate_not_a_second_edit_contract(previous):
     projected, = content_tools.model_tools([native], inline_image=True, generated_image_edit=True,
         previous_image_reference=reference if previous else None)
     schema = projected['function']['parameters']
-    assert set(schema['properties']) == {'source_message_id', 'source_content_index', 'edit_instruction', 'materials'}
-    assert 'oneOf' not in schema
+    assert set(schema['properties']) == {'source_message_id', 'source_content_index', 'edit_instruction', 'materials', 'source_reference'}
+    assert len(schema['oneOf']) == 2  # Two locator shapes share one edit action.
     assert ('上一轮唯一已完成结果的候选引用' in projected['function']['description']) is previous
     args = {'source_message_id': reference['message_id'], 'source_content_index': 2,
             'edit_instruction': '背景改为浅灰，保留主体。'}

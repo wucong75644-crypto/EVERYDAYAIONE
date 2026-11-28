@@ -39,6 +39,10 @@ def test_model_visible_revision_examples_validate_after_final_tool_projection(pr
         co.SaveContent.model_validate(native)
         if presentation:
             from services.task_execution.methods import valid_reference_prompts_presentation
+            if 'reference_sections' in native['updates'][0]['item']:
+                patch = co.ContentItemPatch.model_validate(native['updates'][0]['item'])
+                assert patch.reference_sections.prompt['positive']
+                continue  # A patch becomes a complete item only after a verified read.
             item = co.ContentItem(title='示例', **native['updates'][0]['item'])
             document = co.ContentDocument(title='示例', display_prefix='# 参考图判断\n产品摄影参考图。', items=(item,))
             assert valid_reference_prompts_presentation(document)

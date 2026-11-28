@@ -131,6 +131,10 @@ async def test_method_text_recovers_from_proposal_without_another_model_call():
 async def test_streaming_preference_does_not_replace_revisions_or_execution_protocols():
     r, p, h, q = await writing_case()
     assert content_tools.prefers_reference_text(q, r)
+    for media in ({'tool': 'generate_image', 'wait_all': True},
+                  {'tool': 'generate_image', 'wait_for': [1, 2, 3]}):
+        waiting = semantic_request(q, 'write', media=media)
+        assert not content_tools.prefers_reference_text(waiting, r)
     assert not content_tools.prefers_reference_text(q, r, saved_source_available=True)
     assert not content_tools.prefers_reference_text(q, r, server_image_plan=True)
     assert not content_tools.prefers_reference_text(semantic_request(replace(q, content=[TextPart(text='生成一张图片')]), 'generate'), r)
@@ -404,5 +408,7 @@ def test_single_edit_contract_keeps_polishing_and_distinguishes_latest_output_fr
     assert '不覆盖你的编辑指令' in description
     assert '最近已完成的相关结果' in description and '明确说原图' in description
     assert '直接复制用户编辑要求' not in description and '后台绑定原文' not in description
-    assert set(offered['function']['parameters']['required']) == {
-        'source_message_id', 'source_content_index', 'edit_instruction'}
+    parameters = offered['function']['parameters']
+    assert parameters['required'] == ['edit_instruction']
+    assert any(set(branch['required']) == {'source_message_id', 'source_content_index'}
+               for branch in parameters['oneOf'])

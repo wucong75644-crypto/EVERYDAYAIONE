@@ -11,7 +11,8 @@ import hashlib
 import re
 from typing import Optional
 
-_FID_PATTERN = re.compile(r"^fid_[a-z0-9]{8}$")
+FID_PATTERN = r"^fid_[a-z0-9]{8}$"
+_FID_PATTERN = re.compile(FID_PATTERN)
 
 
 def compute_fid(org_id: Optional[str], workspace_path: str) -> str:

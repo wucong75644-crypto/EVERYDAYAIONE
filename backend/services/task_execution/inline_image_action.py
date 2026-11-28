@@ -43,15 +43,32 @@ class InlineRequest(Fact):
 
 
 class SingleImageEdit(Fact):
-    source_message_id: UUID = Field(description='原样复制所选编辑底图的 reference.message_id；可选当前附件或可访问的历史图片。')
-    source_content_index: StrictInt = Field(ge=0, description='原样复制 reference.content_index，从 0 开始。')
+    model_config = {**Fact.model_config, 'json_schema_extra': {'oneOf': [
+        {'required': ['source_message_id', 'source_content_index'], 'properties': {'source_reference': {'type': 'null'}}},
+        {'required': ['source_reference'], 'properties': {'source_message_id': {'type': 'null'}, 'source_content_index': {'type': 'null'},
+            'source_reference': {'not': {'type': 'null'}}}}]}}
+    source_reference: content.MaterialReference | None = Field(default=None, description='后台解析的追加资源底图，与消息定位互斥；来自已交付图片目录，仍核验资源权限和版本。')
+    source_message_id: UUID | None = Field(default=None, description='原样复制所选编辑底图的 reference.message_id；可选当前附件或可访问的历史图片。')
+    source_content_index: StrictInt | None = Field(default=None, ge=0, description='原样复制 reference.content_index，从 0 开始。')
     edit_instruction: str = Field(min_length=1, max_length=20000, description='本次修改以及需要保留的内容。')
     materials: tuple[content.Material, ...] = Field(default=(), max_length=15,
         description='其他参考图及用途，不重复填写编辑底图。' + content.MATERIAL_GUIDANCE)
 
+    @model_validator(mode='after')
+    def one_base(self):
+        pair = self.source_message_id is not None and self.source_content_index is not None
+        partial = (self.source_message_id is None) != (self.source_content_index is None)
+        if partial or pair == (self.source_reference is not None):
+            raise ValueError('CHAT_INLINE_IMAGE_BASE_REQUIRED')
+        return self
+
+    @property
+    def reference(self):
+        return self.source_reference or content.MaterialReference(
+            message_id=str(self.source_message_id), content_index=self.source_content_index)
+
     def content_item(self):
-        reference = content.MaterialReference(message_id=str(self.source_message_id),
-                                              content_index=self.source_content_index)
+        reference = self.reference
         additional = []
         for material in self.materials:
             if material.reference == reference:
@@ -320,7 +337,7 @@ async def prepare(runtime, handler, request, prepared, call, args, registry, *, 
             explicit_size = frame.size_for(1)
             item = item.model_copy(update={'options': {key: explicit_size[key]
                 for key in ('aspect_ratio', 'resolution') if key in explicit_size}})
-    current=current_attachment_edit(request) if edit is not None else None
+    current=current_attachment_edit(request) if edit is not None and edit.source_reference is None else None
     if current is not None:
         message,index,target,text,images=current
         if (str(edit.source_message_id),edit.source_content_index)!=(message,index):
@@ -350,18 +367,15 @@ async def prepare(runtime, handler, request, prepared, call, args, registry, *, 
     from services.handlers.chat.content_tools import semantic_intent
     item = await complete_transfer_materials(item, handler, request, context, runtime=runtime)
     if edit is not None:
-        base = next(m for m in item.materials if m.reference.message_id == str(edit.source_message_id)
-                    and m.reference.content_index == edit.source_content_index)
+        base = next(m for m in item.materials if m.reference == edit.reference)
         if base.usage != 'input':
             raise TaskError('CHAT_INLINE_IMAGE_SELECTION_CONFLICT')
     if semantic_intent(request, runtime) == 'edit':
-        item = await label_current_inputs(item, handler, request, context, runtime=runtime, edit_reference=({'message_id': str(edit.source_message_id),
-                'content_index': edit.source_content_index} if edit is not None else None))
+        item = await label_current_inputs(item, handler, request, context, runtime=runtime, edit_reference=(edit.reference.model_dump(mode='json', exclude_none=True) if edit is not None else None))
     if edit is not None:
         def verify_edit_source():
             resolver = native_resolver(handler, request, context)
-            material=next(material for material in item.materials if str(material.reference.message_id)==str(edit.source_message_id)
-                          and material.reference.content_index==edit.source_content_index)
+            material=next(material for material in item.materials if material.reference == edit.reference)
             resolver.resolve([
                 {**material.reference.model_dump(mode='json', exclude_none=True), 'role': material.role},
             ])
