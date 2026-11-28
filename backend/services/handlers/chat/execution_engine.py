@@ -2089,6 +2089,7 @@ async def _execute_tools_impl(
 ) -> str | None:
     totals = totals or StreamTotals()
     from services.task_execution.model_bridge import TASK_CONTROL_TOOLS, execute_control_batch
+    from services.task_execution.model_directed import enabled as direct_enabled
     from services.task_execution.requirement_review import coverage_blocked
     from services.task_execution.plan_facts import pending_review
     from services.task_execution.requirement_changes import refresh as refresh_user_changes,blocked as revision_blocked,phase_repair
@@ -2098,6 +2099,11 @@ async def _execute_tools_impl(
     from services.task_execution.reference_boundary import ModelReferenceBoundary, NativeToolCall, NativeContext
     reference_boundary = ModelReferenceBoundary(image_references)
     model_call_arguments = {}
+    repair_chat_images = (getattr(prepared, 'content_controls_available', False)
+                          and not content_tools.uses_server_image_plan(prepared))
+    syntax_owners = {*TASK_CONTROL_TOOLS, *SKILL_CONTROL_TOOLS, 'update_task_plan'}
+    if getattr(prepared, 'content_controls_available', False) or direct_enabled(runtime):
+        syntax_owners.discard(content_objects.SAVE)  # Structured drafts own their strict save contract.
     # Host deliveries use canonical calls and never pass through model decoding.
     for native_call in calls:
         if isinstance(native_call, NativeToolCall):
@@ -2136,7 +2142,13 @@ async def _execute_tools_impl(
                 decoded_calls.append(NativeToolCall(name=call['name'], arguments=decoded, call_id=call['id'])
                     if image_references is not None else call)
             except ArgumentSyntaxError as error:
-                syntax_errors[call['id']] = error
+                if (call['name'] in syntax_owners
+                        or (call['name'] == 'generate_image' and not repair_chat_images)):
+                    # Keep the original control in its batch. Its strict parser
+                    # owns the domain receipt, barrier and correction allowance.
+                    decoded_calls.append(call)
+                else:
+                    syntax_errors[call['id']] = error
             except TaskError as error:
                 reference_error = error
                 break
@@ -2202,7 +2214,6 @@ async def _execute_tools_impl(
                 await candidate_workflow.initialize(recover_previous=False)
                 prepared.ecom_workflow = candidate_workflow
                 break
-    from services.task_execution.model_directed import enabled as direct_enabled
     direct_errors={}
     repair_batch = None
     use_repair_contract = runtime is not None and not any(
@@ -2211,8 +2222,6 @@ async def _execute_tools_impl(
         for call in calls
     )
     if use_repair_contract and not recovery_only:
-        repair_chat_images = (getattr(prepared, 'content_controls_available', False)
-                              and not content_tools.uses_server_image_plan(prepared))
         repair_batch = tool_argument_repairs.Batch.prepare(
             runtime, request, calls, getattr(prepared, 'content_visible_tools', {}),
             repair_chat_images=repair_chat_images)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+from services.tools.argument_validation import decode_tool_arguments
 from typing import Any, Literal
 
 from pydantic import Field, ValidationError, field_serializer, model_serializer
@@ -202,8 +203,8 @@ class SkillRuntime:
                 actions.add('plan')
             elif call['name'] == 'generate_image':
                 try:
-                    args = json.loads(call.get('arguments') or '{}')
-                except (ValueError, TypeError):
+                    args = decode_tool_arguments(call.get('arguments') or '{}')
+                except (ValueError, TypeError, RecursionError):
                     continue  # The existing argument-correction boundary owns malformed input.
                 if isinstance(args, dict):
                     actions.add('execute_ready' if args.get('plan_source') else 'execute_prompt')
@@ -270,18 +271,18 @@ class SkillRuntime:
             while pending:
                 def ready(call):
                     try:
-                        key = json.loads(call.get('arguments') or '{}').get('skill_id')
+                        key = decode_tool_arguments(call.get('arguments') or '{}').get('skill_id')
                         candidate = self.directory.get(key)
                         contract = getattr(getattr(candidate, 'catalog_metadata', None), 'coordination', None)
                         return contract is None or set(contract.requires) <= available
-                    except (ValueError, TypeError, AttributeError):
+                    except (ValueError, TypeError, AttributeError, RecursionError):
                         return True
                 index = next((i for i, call in enumerate(pending) if ready(call)), 0)
                 call = pending.pop(index)
                 ordered.append(call)
                 try:
-                    available.add(json.loads(call.get('arguments') or '{}').get('skill_id'))
-                except (ValueError, TypeError, AttributeError):
+                    available.add(decode_tool_arguments(call.get('arguments') or '{}').get('skill_id'))
+                except (ValueError, TypeError, AttributeError, RecursionError):
                     pass
 
         for call in calls:
@@ -292,8 +293,8 @@ class SkillRuntime:
             ordered.append(call)
             if call['name'] == DEACTIVATE_SKILL:
                 try:
-                    available.discard(json.loads(call.get('arguments') or '{}').get('skill_id'))
-                except (ValueError, TypeError, AttributeError):
+                    available.discard(decode_tool_arguments(call.get('arguments') or '{}').get('skill_id'))
+                except (ValueError, TypeError, AttributeError, RecursionError):
                     pass
         flush()
         return ordered
@@ -580,7 +581,7 @@ class SkillRuntime:
             if not isinstance(raw_arguments, str):
                 return control_result("SKILL_ACTIVATION_INVALID")
             bounded(raw_arguments, MAX_ARGS_BYTES, "SKILL_ARGS_BUDGET_EXCEEDED")
-            request = json.loads(raw_arguments)
+            request = decode_tool_arguments(raw_arguments)
             if not isinstance(request, dict) or set(request) != {"skill_id"} or not isinstance(request["skill_id"], str):
                 return control_result("SKILL_ACTIVATION_INVALID")
             key = request["skill_id"]
@@ -604,7 +605,7 @@ class SkillRuntime:
             return control_result("SKILL_DEACTIVATED", ok=True, skill_id=key)
         except CompositionConflict as error:
             return control_result(str(error), conflicting_skills=list(error.keys), state_unchanged=True)
-        except (ValueError, TypeError, SkillError):
+        except (ValueError, TypeError, SkillError, RecursionError):
             return control_result("SKILL_ACTIVATION_INVALID")
 
     async def activate_manual(self, selection: SkillSelection) -> dict:
@@ -629,10 +630,10 @@ class SkillRuntime:
         if (self.recommendation_batch is not None and not (manual or session or scheduled)
                 and isinstance(raw_arguments, str) and len(raw_arguments) <= MAX_ARGS_BYTES + 256):
             try:
-                request = json.loads(raw_arguments)
+                request = decode_tool_arguments(raw_arguments)
                 key = request.get("skill_id") if isinstance(request, dict) else None
                 candidate = self.directory.get(key) if isinstance(key, str) else None
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, RecursionError):
                 candidate = None
             if candidate is not None:
                 from services.skills.recommendation_service import model_feedback
@@ -649,7 +650,7 @@ class SkillRuntime:
             if not isinstance(raw_arguments, str):
                 raise SkillError("SKILL_ACTIVATION_INVALID")
             bounded(raw_arguments, MAX_ARGS_BYTES + 256, "SKILL_ARGS_BUDGET_EXCEEDED")
-            request = json.loads(raw_arguments)
+            request = decode_tool_arguments(raw_arguments)
             if (not isinstance(request, dict) or set(request) - {"skill_id", "args"}
                     or not isinstance(request.get("skill_id"), str)):
                 raise SkillError("SKILL_ACTIVATION_INVALID")
@@ -736,7 +737,7 @@ class SkillRuntime:
             return control_result(str(error), required_args=error.required_args)
         except SkillError as error:
             return control_result(str(error))
-        except (TypeError, ValueError, UnicodeError):
+        except (TypeError, ValueError, UnicodeError, RecursionError):
             return control_result("SKILL_ACTIVATION_INVALID")
         except Exception:
             # Storage/DB exception strings may contain paths, SQL or credentials.

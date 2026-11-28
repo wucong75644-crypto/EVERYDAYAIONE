@@ -20,9 +20,12 @@ from tests.test_task_execution_model_bridge import call
 def test_target_example_and_field_descriptions_match_offered_short_contract():
     refs = ImageReferences(snapshot())
     tool = refs.schema(rr.selection_schema())['function']
-    example = json.loads(tool['description'].split('目录复制）：')[1].split('。image_ref')[0])
-    Draft202012Validator(tool['parameters']).validate(example)
-    assert '不代表替用户选中' in tool['description']
+    examples = tool['parameters']['examples']
+    assert examples and any(e['request_context']['target']['kind'] == 'image' for e in examples)
+    for example in examples:
+        Draft202012Validator(tool['parameters']).validate(example)
+        assert json.dumps(example, ensure_ascii=False) in tool['description']
+    assert 'image_ref必须按用户实际指代选择，不能抄示例' in tool['description']
     field = tool['parameters']['$defs']['Target']['properties']['source_message_id']
     assert 'image目标使用image_ref' in field['description']
     assert 'target_fields.source_message_id' not in field['description']

@@ -40,6 +40,8 @@ ERP_CALCULATE_WRITE_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/erp_
 # must require the original confirmation path; all other ERP contracts stay pinned.
 ERP_SCOPE_UPGRADE.update(ERP_CALCULATE_WRITE_UPGRADE['schemas'])
 CHAT_IMAGE_UPGRADE = json.loads((Path(__file__).parent / 'fixtures/chat_image_default_tool_upgrade.json').read_text())
+# Host-only selector typing; the final model boundary strips this annotation.
+CHAT_IMAGE_UPGRADE['spec_changes']['generate_image']['schema']['function']['parameters']['properties']['references']['items']['x-reference-kind'] = 'image'
 
 def _knowledge_guidance_upgrade(value):
     if isinstance(value, dict):

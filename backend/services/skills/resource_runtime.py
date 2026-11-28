@@ -1,5 +1,6 @@
 """Pinned read-only Skill resources; no business dispatch or authority expansion."""
 import json
+from services.tools.argument_validation import decode_tool_arguments
 
 from services.skills.contracts import SkillError
 from services.skills.renderer import (
@@ -43,7 +44,7 @@ async def read_skill_asset(state, raw):
         if not isinstance(raw, str):
             raise SkillError('SKILL_ASSET_REQUEST_INVALID')
         bounded(raw, MAX_ARGS_BYTES, 'SKILL_ARGS_BUDGET_EXCEEDED')
-        request = json.loads(raw)
+        request = decode_tool_arguments(raw)
         if (not isinstance(request, dict) or set(request) != {'skill_id', 'asset_id'}
                 or not all(isinstance(value, str) for value in request.values())):
             raise SkillError('SKILL_ASSET_REQUEST_INVALID')
@@ -90,7 +91,7 @@ async def read_skill_asset(state, raw):
     except SkillError as error:
         code = 'SKILL_ASSET_BUDGET_EXCEEDED' if str(error) == 'SKILL_RENDER_BUDGET_EXCEEDED' else str(error)
         return {'ok': False, 'code': code}
-    except (TypeError, ValueError, UnicodeError):
+    except (TypeError, ValueError, UnicodeError, RecursionError):
         return {'ok': False, 'code': 'SKILL_ASSET_REQUEST_INVALID'}
     except Exception:
         return {'ok': False, 'code': 'SKILL_LOAD_UNAVAILABLE'}

@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import json
 import inspect
+from services.tools.argument_validation import decode_tool_arguments
 from pydantic import ValidationError
 
 from services.conversation_commands import SafePoint
@@ -255,8 +256,8 @@ async def execute_control_batch(*, prepared, runtime, calls, assistant, blocks,
             display = None
         else:
             try:
-                arguments = json.loads(call.get('arguments', ''))
-            except (ValueError, TypeError):
+                arguments = decode_tool_arguments(call.get('arguments', ''))
+            except (ValueError, TypeError, RecursionError):
                 arguments = None
             display = None
             if call['name'] == REVISION_TOOL:

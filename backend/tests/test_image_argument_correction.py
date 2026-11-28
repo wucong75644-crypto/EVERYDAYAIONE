@@ -215,7 +215,9 @@ async def test_actual_actor_automatically_activates_corrects_once_and_accepts_on
     exe.handler.assert_awaited_once_with("generate_image", good)
     assert any(b.get("type") == "skill_step" and b.get("status") == "completed" for b in blocks)
     actual_schema = next(t for t in requests[-1]["tools"] if t["function"]["name"] == "generate_image")
-    assert actual_schema == enabled.to_schema()
+    from services.task_execution.reference_boundary import ModelReferenceBoundary
+    assert actual_schema == ModelReferenceBoundary(None).schema(enabled.to_schema())
+    assert 'x-reference-kind' not in json.dumps(actual_schema)
     feedback = json.dumps(requests[-1]["messages"], ensure_ascii=False)
     assert "output_format" in feedback and "not_accepted" in feedback
     metrics = totals.usage["image_argument_metrics"]

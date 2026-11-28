@@ -9,6 +9,7 @@ import copy
 import hashlib
 import re
 import json
+from services.tools.argument_validation import decode_tool_arguments
 from dataclasses import replace
 from uuid import UUID
 
@@ -283,8 +284,8 @@ def plan_guard_calls(calls):
     normalized=[]
     for call in calls:
         try:
-            WorkingPlanUpdate.model_validate(json.loads(call.get('arguments','')))
-        except (ValueError,TypeError):
+            WorkingPlanUpdate.model_validate(decode_tool_arguments(call.get('arguments','')))
+        except (ValueError,TypeError,RecursionError):
             normalized.append({**call,'arguments':'{"invalid_working_plan":true}'})
         else:normalized.append(call)
     return normalized
@@ -301,7 +302,7 @@ def stage_plan_calls(runtime,prepared,blocks,calls,assistant):
     prepared.messages.append(copy.deepcopy(assistant))
     for call in plans:
         try:
-            update = WorkingPlanUpdate.model_validate_json(call.get('arguments', ''))
+            update = WorkingPlanUpdate.model_validate(decode_tool_arguments(call.get('arguments', '')))
             plan = WorkingPlan(explanation=update.explanation, steps=update.steps)
             state = runtime.task_execution_state
             plan_id = runtime.task_direct_plan_id
@@ -321,7 +322,7 @@ def stage_plan_calls(runtime,prepared,blocks,calls,assistant):
         except TaskError as error:
             result = {'ok': False, 'code': str(error), 'state_unchanged': True,
                 'instruction': '目标计划或版本不可用。核对当前候选及用户意图，不能为修改请求另建计划。'}
-        except (ValueError,TypeError) as error:
+        except (ValueError,TypeError,RecursionError) as error:
             errors=error.errors(include_input=False,include_url=False,include_context=False)[:12] if isinstance(error,ValidationError) else [
                 {'loc':[],'type':'json_object_required','msg':'arguments必须为JSON对象。'}]
             result={'ok':False,'code':'TASK_WORKING_PLAN_INVALID','state_unchanged':True,

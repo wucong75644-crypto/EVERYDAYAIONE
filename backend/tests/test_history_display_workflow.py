@@ -39,7 +39,8 @@ async def test_identify_keeps_valid_readonly_intent_and_execution_guards(intent,
         w.route['request_context']['target'] = {'kind': 'image', 'basis': 'explicit_reference',
             'source_message_id': str(uuid4()), 'content_index': 0}
     await w.identify()
-    assert w.value.intent == expected
+    # An unresolved edit keeps its action; a nonexistent explicit image still fails closed.
+    assert w.value.intent == ('edit' if intent == 'edit' and target_kind == 'ambiguous' else expected)
     assert rr.binding(r)['status'] == 'ambiguous'
     r.workflow_projection = w.value.model_dump(mode='json')
     assert display.action(r, q) == action
@@ -61,7 +62,7 @@ def test_schema_and_examples_follow_selection_and_analysis_stage(monkeypatch):
     assert '"show_image":' not in wire['description']
     schema = refs.schema(rr.selection_schema(r))['function']
     readonly = [e for e in schema['parameters']['examples'] if e['intent'] == 'explain']
-    assert {e['request_context']['image_action'] for e in readonly} == {'display_existing', 'analyze'}
+    assert {e['request_context']['image_action'] for e in readonly} == {'display_existing'}
     for example in readonly:
         Draft202012Validator(schema['parameters']).validate(example)
         assert json.dumps(readonly, ensure_ascii=False) in schema['description']
@@ -69,6 +70,11 @@ def test_schema_and_examples_follow_selection_and_analysis_stage(monkeypatch):
     assert 'show_image' in display.offer(r, q, [read])[0]['function']['parameters']['properties']
     r.workflow_projection['request_context']['image_action'] = 'analyze'
     assert 'show_image' not in display.offer(r, q, [read])[0]['function']['parameters']['properties']
+    analysis = for_runtime(r).schema(rr.selection_schema(r))['function']
+    examples = [e for e in analysis['parameters']['examples'] if e['intent'] == 'explain']
+    assert {e['request_context']['image_action'] for e in examples} == {'analyze'}
+    for example in examples:
+        Draft202012Validator(analysis['parameters']).validate(example)
 
 
 @pytest.mark.asyncio
