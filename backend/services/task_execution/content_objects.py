@@ -7,7 +7,7 @@ from typing import Annotated, Any, Literal
 from uuid import UUID
 from pydantic import Field, field_validator, model_serializer, model_validator
 from pydantic.json_schema import SkipJsonSchema
-from .reference_prompt_format import ReferenceSectionPatch
+from .reference_prompt_format import ReferenceSectionPatch, RENDERED_LIMITS
 from .contracts import Artifact, Fact, Key, TaskError, MAX_INLINE_TEXT_CHARS
 from .item_confirmation import MediaDirective
 from .reducer import digest, register_artifacts, complete_step
@@ -35,6 +35,7 @@ class ContentReference(Fact):
     sha256: str | None = Field(default=None, pattern=r'^[a-f0-9]{64}$')
 
 class ImageMessageReference(Fact):
+    model_config = {**Fact.model_config, 'json_schema_extra': {'x-reference-kind': 'image'}}
     message_id: UUID
     content_index: int = Field(strict=True, ge=0)
 
@@ -68,6 +69,7 @@ _MATERIAL_LOCATOR_FIELDS = frozenset(key for locator in _MATERIAL_LOCATORS for k
 
 class MaterialReference(Fact):
     model_config = {**Fact.model_config, 'json_schema_extra': {
+        'x-reference-kind': 'image',
         'oneOf': [
             {'required': list(locator), 'properties': {
                 key: {'type': locator.get(key, 'null')} for key in sorted(_MATERIAL_LOCATOR_FIELDS)
@@ -110,7 +112,7 @@ class Material(Fact):
 
 class Presentation(Fact):
     display_prefix: str | None = Field(
-        default=None, min_length=1, max_length=12000,
+        default=None, min_length=1, max_length=RENDERED_LIMITS['presentation'],
         description='用户可见的原版 Markdown 前缀，包含本块标题和展示段落；后端只展示一次，不传给执行工具。')
 
     @model_serializer(mode='wrap')
@@ -123,7 +125,7 @@ class Presentation(Fact):
 
 class ContentItem(Presentation):
     title: str = Field(min_length=1, max_length=300, description='条目名称，由页面添加编号。')
-    body: str = Field(min_length=1, max_length=20000,description='用户可见并交给目标工具的完整最终原文，包括全部执行要求、限制和禁止项；后台逐字传递，不再拼接其他文字。')
+    body: str = Field(min_length=1, max_length=RENDERED_LIMITS['prompt'],description='用户可见并交给目标工具的完整最终原文，包括全部执行要求、限制和禁止项；后台逐字传递，不再拼接其他文字。')
     materials: tuple[Material, ...] = Field(default=(), max_length=16,
         description='按用户意图填写实际使用的素材。只交付文字时可省略，后台保留当前原图供后续选择。' + MATERIAL_GUIDANCE)
     options: dict[str, Any] = Field(default_factory=dict,
@@ -227,7 +229,7 @@ class ContentItemPatch(Presentation):
             value.pop('reference_sections', None)
         return value
     title: str | None = Field(default=None,min_length=1,max_length=300)
-    body: str | None = Field(default=None,min_length=1,max_length=20000,description='修改后的完整最终原文；替换该条原文，不附加旧版本的文字。')
+    body: str | None = Field(default=None,min_length=1,max_length=RENDERED_LIMITS['prompt'],description='修改后的完整最终原文；替换该条原文，不附加旧版本的文字。')
     materials: tuple[Material,...] | None = Field(default=None,max_length=16,description='仅用户要求改变执行素材时提供；否则省略，由后台保留原引用，不重新填写。')
     options: dict[str,Any] | None = Field(default=None,description='仅修改输出规格时提供；否则省略，由后台保留原规格。')
 
@@ -342,10 +344,34 @@ def creation_examples(require_presentation=False):
 
 def save_parameters(*, require_presentation=False):
     parameters = SaveContent.model_json_schema()
+    parameters['x-content-profile'] = 'reference-prompts-v1' if require_presentation else 'ordinary'
+    patch = parameters['$defs']['ContentItemPatch']
+    patch['minProperties'] = 1
+    for field in patch['properties'].values():
+        if 'anyOf' in field:
+            alternatives = [v for v in field['anyOf'] if v.get('type') != 'null']
+            field['anyOf'] = alternatives
+            field.pop('default', None)
+    parameters['allOf'].extend([
+        {'if': {'required': ['base']}, 'then': {'properties': {'updates': {'minItems': 1}}},
+         'else': {'properties': {'updates': {'maxItems': 0}}}},
+        {'if': {'required': ['message_source']}, 'then': {
+            'required': ['continue_execution'], 'properties': {
+                'continue_execution': {'const': True}, 'show_content': {'enum': [False, None]}}}},
+    ])
     # SaveContent.choice already forbids approving existing items here. Mirror
     # that rule in the shared directive's model-visible save-only projection.
     approval = parameters['$defs']['MediaDirective']['properties']['approved']
     approval.update(const=[], description='本保存工具不接受条目批准，省略或空数组；本次批准由真实用户请求及后台决策绑定。')
+    directive = parameters['$defs']['MediaDirective']
+    directive['properties']['confirmation_only']['const'] = False
+    for field in ('wait_for', 'approved'):
+        directive['properties'][field]['uniqueItems'] = True
+    directive['allOf'] = [{'if': {'anyOf': [
+        {'required': ['wait_all'], 'properties': {'wait_all': {'const': True}}},
+        {'required': ['wait_for'], 'properties': {'wait_for': {'minItems': 1}}},
+        {'required': ['approved'], 'properties': {'approved': {'minItems': 1}}},
+    ]}, 'then': {'required': ['tool'], 'properties': {'tool': {'type': 'string'}}}}]
     # Advertise each selector as an object. The oneOf controls the selector choice.
     parameters['properties']['document'] = parameters['$defs'][ContentDocument.__name__]
     parameters['properties']['base'] = {**selection_parameters(),

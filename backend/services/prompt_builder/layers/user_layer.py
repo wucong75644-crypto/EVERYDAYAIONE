@@ -105,6 +105,11 @@ class UserLayer:
             content = user_text
 
         user_msg = {"role": "user", "content": content}
+        from services.task_execution.image_visual_input import SOURCES
+        visible = [source for source in inp.image_sources if source.get('visually_present') and source.get('reference')]
+        if visible:
+            user_msg[SOURCES] = [{'reference': source['reference'], 'url': url}
+                                 for source, url in zip(visible, inp.image_urls)]
 
         # 决定附件 system block 是否单独返回
         attach_block = None

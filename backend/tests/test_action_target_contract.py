@@ -38,7 +38,8 @@ def test_complete_saved_and_image_examples_obey_final_selection_schema(monkeypat
         for intent in ('edit', 'write', 'write_then_submit_images', 'explain'):
             validator.validate({'intent': intent, 'request_context': {'focus': 'current_request',
                 'target': {'kind': 'image', 'basis': 'active_request', 'image_ref': ref}}})
-        assert '引用图片写新方案的完整JSON' in schema['function']['description']
+        assert not [e for e in params['examples'] if e['request_context']['target']['kind'] == 'image']
+        # An unbound directory may allow selection without implying a default candidate.
 
 
 @pytest.mark.asyncio

@@ -18,6 +18,9 @@ class ImageReferences:
         self.current_message = snapshot['input_message_id']
         self.current_images = []
         self.reference_format = False
+        self.ready_image_refs = None
+        self.selection_action = None
+        self.example_image_ref = None
         self.scope = hashlib.sha256(json.dumps(snapshot, sort_keys=True, default=str).encode()).hexdigest()[:10]
         from .content_reference_catalog import ContentReferences
         self.contents = ContentReferences(self.scope)
@@ -134,7 +137,8 @@ class ImageReferences:
             return [self.encode(item) for item in value]
         if not isinstance(value, dict):
             return value
-        result = {key: self.encode(item) for key, item in value.items()}
+        result = {key: copy.deepcopy(item) if key in {'message_source', 'source_prompt'} else self.encode(item)
+                  for key, item in value.items()}
         result = self.contents.encode(result)
         if 'format_contract' in value and isinstance(result.get('content_source'), dict):
             checksum = result['content_source'].pop('sha256', None)
@@ -168,7 +172,7 @@ class ImageReferences:
             return [self.schema(item) for item in value]
         if not isinstance(value, dict):
             return value
-        result = {key: self.schema(item) for key, item in value.items()}
+        result = {key: self.schema(item) for key, item in value.items() if key not in {'x-content-profile', 'x-reference-kind'}}
         if isinstance(result.get('description'), str):
             from .content_objects import MATERIAL_REFERENCE_GUIDANCE
             result['description'] = result['description'].replace(MATERIAL_REFERENCE_GUIDANCE,
@@ -184,21 +188,54 @@ class ImageReferences:
             function['description'] = function.get('description', '').replace(IMAGE_REVISION_GUIDANCE,
                 IMAGE_REVISION_GUIDANCE.replace('display_prefix', 'presentation').replace('body', 'prompt').replace('artifact_id', 'content_ref'))
         if isinstance(function, dict) and function.get('name') == 'save_task_text':
+            profile = value.get('function', {}).get('parameters', {}).get('x-content-profile')
+            if profile is not None:
+                function['parameters']['x-content-profile'] = profile
             if 'document' in function['parameters'].get('properties', {}):
                 from .content_objects import creation_examples
                 document_schema = function['parameters']['properties']['document']
-                reference = 'display_prefix' in document_schema.get('required', ())
+                reference = function['parameters'].get('x-content-profile') == 'reference-prompts-v1'
+                already_public = 'reference_analysis' in document_schema.get('properties', {})
                 example = creation_examples(reference)[0]
-                function['description'] += (' 新建参数的对象结构示例（内容须按实际要求填写，素材另按目录绑定）：'
+                if not reference and not already_public:
+                    function['description'] += (' 新建参数的对象结构示例（内容须按实际要求填写，素材另按目录绑定）：'
                     + json.dumps(example, ensure_ascii=False)
                     + '。items每项的标题字段固定为title，执行正文固定为body。'
                     '如用户要求等待确认，confirmation是JSON对象，例如'
                     '{"tool":"generate_image","wait_for":[1]}，不是序列化后的字符串；等待条目按实际要求填写。')
-            from .reference_prompt_format import project_tool, MODEL_GUIDANCE
+            from .reference_prompt_format import project_tool
             result['function'] = function = project_tool(function)
+            workflow = function.pop('_content_workflow', None)
+            if workflow:
+                from .reference_prompt_format import workflow_examples
+                function['parameters']['examples'] = workflow_examples(function['parameters'].get('examples', []), workflow['state'])
+                updates = function['parameters'].get('properties', {}).get('updates', {}).get('items')
+                if updates is not None:
+                    for item in workflow['state'].get('items', ()):
+                        fields = item.get('required_update_fields')
+                        if fields:
+                            updates.setdefault('allOf', []).append({
+                                'if': {'required': ['item_index'], 'properties': {'item_index': {
+                                    'const': item['content_source']['item_index']}}},
+                                'then': {'properties': {'item': {'required': fields}}}})
+                from .reference_prompt_format import workflow_guidance
+                function['description'] += workflow_guidance(workflow)
+            if 'message_source' in function['parameters'].get('properties', {}):
+                recovery_example = {'message_source': {'message_id': '00000000-0000-4000-8000-000000000001',
+                    'content_index': 0, 'items': [{'title': '原方案标题', 'first_line': 1, 'last_line': 2}]},
+                    'continue_execution': True}
+                examples = function['parameters'].setdefault('examples', [])
+                if recovery_example not in examples:
+                    examples.append(recovery_example)
+                function['description'] += (' 历史文字恢复的完整JSON结构示例：' + json.dumps(recovery_example, ensure_ascii=False)
+                    + '。先读取用户指定的原消息，复制真实message_id、content_index和行范围；示例ID与行号不能当实际来源。'
+                    'message_source是文字来源，不使用image_ref；已经登记的稿件使用content_ref读取和修订。')
             if 'examples' in function['parameters']:
+                from services.tools.argument_validation import _issues
                 function['parameters']['examples'] = [self.contents.example(v) for v in function['parameters']['examples']]
-            if function.get('description', '').startswith(MODEL_GUIDANCE):
+                function['parameters']['examples'] = [v for v in function['parameters']['examples']
+                    if not _issues(v, function['parameters'], image_hints=False)]
+            if profile == 'reference-prompts-v1' or (function['parameters'].get('properties', {}).get('document', {}).get('properties', {}).get('reference_analysis')):
                 function['description'] += ' 完整JSON案例（示例不代表本次目标，引用须按真实目录选择）：' + json.dumps(
                     function['parameters']['examples'], ensure_ascii=False)
         if isinstance(function, dict) and function.get('name') in {'save_task_text', 'generate_image', 'generate_video', 'read_conversation_text', 'resolve_request_target', 'code_execute'}:
@@ -212,7 +249,9 @@ class ImageReferences:
                 from .reference_prompt_format import encode_example
                 visible = [self.contents.example(self.encode(encode_example(v) if reference else v)) for v in native_examples]
                 function['description'] = function['description'].replace(
-                    json.dumps(native_examples, ensure_ascii=False), json.dumps(visible, ensure_ascii=False))
+                    json.dumps(native_examples, ensure_ascii=False), json.dumps(
+                        function['parameters'].get('examples', visible) if function.get('name') == 'save_task_text' else visible,
+                        ensure_ascii=False))
             from .action_target_contract import selection_examples
             function['description'] = function['description'].replace(
                 json.dumps(selection_examples(), ensure_ascii=False), json.dumps(
@@ -221,6 +260,8 @@ class ImageReferences:
         if isinstance(function, dict) and function.get('name') in {'generate_image', 'resolve_request_target', 'read_conversation_text'}:
             function['description'] = function.get('description', '') + ' 图片选择使用当前目录image_ref，后台解析真实图片身份，不填写图片消息ID和位置。'
         message_handle = next((handle for handle, ref in self.references.items() if 'message_id' in ref), None)
+        if self.ready_image_refs is not None:
+            message_handle = self.example_image_ref
         if isinstance(function, dict) and function.get('name') == 'read_conversation_text' and message_handle:
             if 'show_image' in function['parameters'].get('properties', {}):
                 example = {'show_image': {'image_ref': message_handle}}
@@ -232,39 +273,47 @@ class ImageReferences:
                 function['description'] += (' 当前可用核图参数示例（只说明字段，不替用户选图）：'
                     + json.dumps(example, ensure_ascii=False)
                     + '。核图不等于展示，需展示时核对后单独选择目标。')
-        if isinstance(function, dict) and function.get('name') == 'resolve_request_target' and message_handle:
-            example = {'intent': 'edit', 'request_context': {'focus': 'selected_target',
-                'target': {'kind': 'image', 'basis': 'explicit_reference', 'image_ref': message_handle}}}
-            function['description'] += (' 完整图片目标格式示例（仅说明字段，不代表替用户选中示例图片；'
-                'image_ref须按用户实际指代从当前目录复制）：' + json.dumps(example, ensure_ascii=False)
-                + '。image_ref是单个字符串，不是image_refs数组；basis只使用定义中的枚举。'
-                '当前目标已经正确绑定时直接执行，不重复纠正目标。')
-            readonly_examples = []
-            for action in ('display_existing', 'analyze'):
-                readonly = copy.deepcopy(example)
-                readonly['intent'] = 'explain'
-                readonly['request_context']['image_action'] = action
-                readonly_examples.append(readonly)
-            function['parameters'].setdefault('examples', []).extend(readonly_examples)
-            function['description'] += (' 展示旧图和仅分析的完整JSON分别为：'
-                + json.dumps(readonly_examples, ensure_ascii=False)
-                + '。示例图片编号仅说明结构，不是本次选择；实际复制用户指定候选的image_ref。'
-                  '展示必须先绑定具体目标，查询本身不完成选择；analyze只分析，不回显。')
-            new_plan = copy.deepcopy(example)
-            new_plan['intent'] = 'write'
-            new_plan['request_context']['focus'] = 'current_request'
-            function['description'] += (' 引用图片写新方案的完整JSON（不是编辑成图）：'
-                + json.dumps(new_plan, ensure_ascii=False) + '。实际动作按用户要求选择，不因存在图片就填写edit。')
-        if (isinstance(function, dict) and function.get('name') == 'generate_image' and self.references
+        selection_handle = next((handle for handle in self.references if 'message_id' in self.references[handle]
+            and (self.ready_image_refs is None or handle in self.ready_image_refs)), None)
+        if self.ready_image_refs is not None:
+            selection_handle = self.example_image_ref if self.example_image_ref in self.ready_image_refs else None
+        if isinstance(function, dict) and function.get('name') == 'resolve_request_target' and selection_handle:
+            from .image_history import selection_arguments
+            purposes = ([self.selection_action] if self.selection_action else
+                [('edit', None), ('explain', 'display_existing'), ('explain', 'analyze'), ('write', None)])
+            image_examples = [self.encode(selection_arguments(self.references[selection_handle], intent=intent, image_action=action))
+                              for intent, action in purposes if intent in {'edit', 'explain', 'generate', 'write', 'write_then_submit_images'}]
+            function['parameters'].setdefault('examples', []).extend(image_examples)
+            function['description'] += (' 当前动作的完整图片目标JSON示例（只说明结构，不替用户选图）：'
+                + json.dumps(image_examples, ensure_ascii=False)
+                + '。image_ref必须按用户实际指代选择，不能抄示例。image_action=analyze只分析，不回显；'
+                'display_existing才展示；引用图片写新方案仍是write，不能因有图片改成edit。')
+        example_image = self.example_image_ref if self.ready_image_refs is not None else next(iter(self.references), None)
+        if (isinstance(function, dict) and function.get('name') == 'generate_image' and example_image
                 and 'edit_instruction' in function['parameters'].get('properties', {})):
-            example = {'image_ref': next(iter(self.references)), 'edit_instruction': '本次修改和需要保留的内容'}
+            example = {'image_ref': example_image, 'edit_instruction': '本次修改和需要保留的内容'}
             function['description'] += (' 单图编辑格式示例（不代表替用户选图）：' + json.dumps(example, ensure_ascii=False)
                 + '。底图只填image_ref，不复制目录中的name、task_id等元数据。'
                 'materials只用于其他参考图，每项仅填写reference、role、usage。')
-            function['description'] += (' 无其他参考图时省略materials，不重复填写底图。其他参考图的完整结构示例：'
-                + json.dumps({'materials': [{'reference': {'image_ref': next(iter(self.references))},
-                    'role': '其他图片的颜色参考', 'usage': 'input'}]}, ensure_ascii=False)
-                + '。示例仅说明嵌套结构，实际参考图须按用户要求选择，不能照抄示例编号。')
+            if self.ready_image_refs is None:
+                function['description'] += (' 无其他参考图时省略materials，不重复填写底图。其他参考图的完整结构示例：'
+                    + json.dumps({'materials': [{'reference': {'image_ref': next(iter(self.references))},
+                        'role': '其他图片的颜色参考', 'usage': 'input'}]}, ensure_ascii=False)
+                    + '。示例仅说明嵌套结构，实际参考图须按用户要求选择，不能照抄示例编号。')
+        if isinstance(function, dict) and function.get('name') == 'resolve_request_target' and self.ready_image_refs is not None:
+            from services.tools.argument_validation import _issues
+            parameters = function['parameters']
+            definition = parameters.get('$defs', {}).get('Target', {})
+            ready = [handle for handle in self.references if handle in self.ready_image_refs
+                     and 'message_id' in self.references[handle]]
+            for branch in definition.get('oneOf', ()):
+                if branch.get('properties', {}).get('kind', {}).get('const') == 'image':
+                    branch['properties']['image_ref'] = {'enum': ready} if ready else False
+            parameters['examples'] = [example for example in parameters.get('examples', ())
+                                     if not _issues(example, parameters, image_hints=False)]
+            function['description'] += (' 图片目标只允许选择当前已满足前置条件的image_ref；'
+                '其他历史候选先按其next_step核图，下一次提供的选择合同会更新。没有可选图不等于没有候选；'
+                '不要为了绕过核图改成其他目标，也不默认选择示例。')
         props = result.get('properties', {})
         if {'body', 'title'} <= props.keys():
             props['title']['description'] = ('条目标题，必填title；不要使用heading等未定义字段。正文放body。'
@@ -286,7 +335,7 @@ class ImageReferences:
             result.pop('oneOf', None)
             props['image_ref'] = self.field()
             result['required'] = [k for k in result.get('required', ()) if k not in {'source_message_id', 'source_content_index'}] + ['image_ref']
-        elif {'message_id', 'content_index'} <= props.keys():
+        elif value.get('x-reference-kind') == 'image' and {'message_id', 'content_index'} <= props.keys():
             # MaterialReference supports other native file selectors as well.
             # The image locator form becomes a single snapshot-bound handle.
             props.pop('message_id'); props.pop('content_index')
@@ -346,6 +395,14 @@ class ImageReferences:
         """Describe the rejected form, without steering history recovery to new work."""
         if offered:
             result['parameters'] = self.schema({'function': offered})['function']['parameters']
+        if self.reference_format:
+            for issue in result.get('issues', ()):
+                if issue.get('loc'):
+                    loc = list(issue['loc'])
+                    loc = [('reference_analysis' if i == 1 and loc[0] == 'document' else 'presentation')
+                           if part == 'display_prefix' else 'prompt' if part == 'body' else part
+                           for i, part in enumerate(loc)]
+                    issue['loc'] = loc
         roots = {str(issue['loc'][0]) for issue in result.get('issues', ()) if issue.get('loc')}
         if offered:
             roots &= result['parameters'].get('properties', {}).keys()
@@ -362,9 +419,8 @@ class ImageReferences:
             result['message'] += ' confirmation须为JSON对象，按用户要求填写tool及wait_for或wait_all。'
         if roots & {'base', 'updates'}:
             from .content_objects import revision_usage, revision_examples
-            from .methods import REFERENCE_PROMPTS_PRESENTATION
-            from .reference_prompt_format import MODEL_GUIDANCE
-            reference = bool(offered and offered.get('description', '').startswith((REFERENCE_PROMPTS_PRESENTATION, MODEL_GUIDANCE)))
+            reference = bool(self.reference_format or (offered and
+                offered.get('parameters', {}).get('x-content-profile') == 'reference-prompts-v1'))
             required.update({'base': ['content_ref', 'item_index'],
                              'updates[]': ['item_index', 'item']})
             usage = revision_usage(reference)
@@ -375,7 +431,7 @@ class ImageReferences:
         if required:
             result['required_fields'] = required
         from .reference_prompt_format import MODEL_GUIDANCE, save_recovery_fields
-        if offered and offered.get('description', '').startswith(('按当前参考图提示词方法', MODEL_GUIDANCE)):
+        if self.reference_format or (offered and offered.get('parameters', {}).get('x-content-profile') == 'reference-prompts-v1'):
             result['message'] = MODEL_GUIDANCE
         if offered:
             required, forms = save_recovery_fields(result['parameters'], roots)
@@ -422,6 +478,10 @@ class ImageReferences:
     def messages(self, messages):
         result = copy.deepcopy(messages)
         for message in result:
+            message.pop('_visual_input_sources', None)
+            message.pop('_host_context_kind', None)
+            for part in message.get('content', ()) if isinstance(message.get('content'), list) else ():
+                part.pop('_visual_reference', None)
             metadata = message.pop('_image_locator_projection', None)
             if metadata:
                 from services.handlers.image_size_requirements import SIZE_GUIDANCE
@@ -565,5 +625,24 @@ def for_runtime(runtime):
                 catalog.candidates.append({'image_ref': handle, 'name': image.get('name'),
                     'turn_number': image.get('source_turn'), 'provenance': image['provenance'],
                     'context_revision': image['context_revision'], 'retrieved_from_history': True})
+        from .image_history import requires_view, selection_metadata, selection_purpose
+        catalog.selection_action = selection_purpose(runtime)
+        from .request_resolution import binding
+        selected = binding(runtime) or {}
+        target = selected.get('target') or {}
+        if target.get('kind') != 'image':
+            target = (selected.get('rejection') or {}).get('candidate_target') or {}
+        if (target.get('kind') == 'image' and isinstance(target.get('source_message_id'), str)
+                and type(target.get('content_index')) is int):
+            catalog.example_image_ref = catalog.reverse.get(catalog.identity({
+                'message_id': target['source_message_id'], 'content_index': target['content_index']}))
+        catalog.ready_image_refs = {handle for handle, ref in catalog.references.items()
+                                   if not requires_view(runtime, ref, model_view=True)}
+        for candidate in catalog.candidates:
+            ref = catalog.references[candidate['image_ref']]
+            if 'message_id' in ref:
+                state = {'reference': ref}
+                selection_metadata(runtime, [state], model_view=True)
+                candidate.update(catalog.encode({key: val for key, val in state.items() if key != 'reference'}))
         return catalog
     return None

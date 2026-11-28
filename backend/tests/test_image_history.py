@@ -121,10 +121,12 @@ def test_candidate_selection_examples_and_cached_view_requirements_match_native_
     runtime, handler, request, context, _ = case(monkeypatch)
     result = history.page(handler, request, context, runtime, {'source': 'generated', 'limit': 2})
     schema = for_runtime(runtime).schema(rr.selection_schema(runtime))['function']['parameters']
-    assert result['next_step']['tool'] == 'resolve_request_target'
+    assert result['next_step']['action'] == 'follow_candidate_next_step'
+    assert 'tool' not in result['next_step']
     for image in result['images']:
-        Draft202012Validator(schema).validate(image['selection_arguments'])
-        assert image['selection_arguments']['request_context']['target']['image_ref'] == image['image_ref']
+        assert image['next_step']['tool'] == 'read_conversation_text'
+        assert image['next_step']['arguments']['view_image']['image_ref'] == image['image_ref']
+        assert 'selection_arguments' not in image
         assert image['requires_view_before_selection'] is True
     selected = result['images'][0]
     native = for_runtime(runtime).decode(selected['reference'])

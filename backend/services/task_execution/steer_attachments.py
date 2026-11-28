@@ -76,7 +76,8 @@ def project(owner, attachments, *, visual_budget):
                 url = resolver.files.get_cdn_url(item.workspace_path) if len(images) < visual_budget else None
                 record['visually_present'] = bool(url)
                 if url:
-                    images.append({'type': 'image_url', 'image_url': {'url': url}})
+                    images.append({'type': 'image_url', 'image_url': {'url': url},
+                                   '_visual_reference': {'resource_ref': item.resource_ref}})
             else:
                 status = attachment_status(record['name'])
                 record['status'] = 'binary' if status == 'image' else status

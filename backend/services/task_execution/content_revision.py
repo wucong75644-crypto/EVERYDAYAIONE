@@ -193,6 +193,12 @@ def offer(runtime, request, tools):
         'steps': ['read_saved_item', 'save_revision', 'execute_saved_revision']}
     # Convert the complete object, not just field names embedded in prose.
     public = boundary.value(workflow)
+    from services.handlers.chat.content_tools import semantic_intent
+    public['continue_execution'] = semantic_intent(request, runtime) != 'write'
+    if (selected_format(runtime) or {}).get('profile_id') == 'reference-prompts-v1':
+        for item in public['items']:
+            item['required_update_fields'] = [{'body': 'prompt', 'display_prefix': 'presentation'}.get(key, key)
+                for key in item.get('required_update_fields', ())]
     from .request_resolution import binding
     selected_indices = set(((binding(runtime) or {}).get('target') or {}).get('item_indices', ()))
     blocked_indices = {row['content_source']['item_index'] for row in revisions}
@@ -210,7 +216,9 @@ def offer(runtime, request, tools):
             source = tool['function']['parameters']['properties']['content_source']
             source['not'] = {'required': ['item_index'],
                 'properties': {'item_index': {'enum': sorted(blocked_indices)}}}
-        if name in {'read_conversation_text', SAVE}:
+        if name == SAVE:
+            tool['function']['_content_workflow'] = {'revision_required': bool(revisions), 'state': public}
+        if name == 'read_conversation_text':
             if revisions:
                 tool['function']['description'] += (
                     ' 当前已选稿件的修订流程（后台核验状态，不是新的选图建议）：'

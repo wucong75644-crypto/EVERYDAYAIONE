@@ -47,6 +47,13 @@ def require_native(value, *, context=False):
             require_native(item, context=context)
 
 
+class ArgumentSyntaxError(TaskError):
+    def __init__(self, raw, error, tool):
+        from services.tools.argument_validation import argument_syntax_issue
+        self.issues = [argument_syntax_issue(raw, error)]
+        super().__init__('CONTENT_OBJECT_INVALID' if tool == 'save_task_text' else 'MODEL_TOOL_ARGUMENTS_INVALID')
+
+
 class NativeContext(dict):
     """Validated native snapshot; independently copied from the source state."""
     def __init__(self, value):
@@ -101,12 +108,23 @@ class ModelReferenceBoundary:
 
     def model_input(self, messages, tools, *, plain_text_registration=False):
         if not self.catalog:
-            return messages, tools
+            return messages, self.schema(tools)
         return (self.catalog.messages(messages),
                 self.catalog.tools(tools, plain_text_registration=plain_text_registration))
 
     def schema(self, value):
-        return self.catalog.schema(value) if self.catalog else copy.deepcopy(value)
+        if self.catalog:
+            return self.catalog.schema(value)
+        if isinstance(value, list):
+            return [self.schema(item) for item in value]
+        if not isinstance(value, dict):
+            return value
+        result = {key: self.schema(item) for key, item in value.items()
+                  if key not in {'x-content-profile', 'x-reference-kind', '_content_workflow'}}
+        if isinstance(value.get('_content_workflow'), dict):
+            from .reference_prompt_format import workflow_guidance
+            result['description'] = result.get('description', '') + workflow_guidance(value['_content_workflow'])
+        return result
 
     def arguments(self, value, *, tool=None) -> NativeArguments:
         if isinstance(value, (NativeContext, NativeArguments, ModelContext)):
@@ -136,18 +154,38 @@ class ModelReferenceBoundary:
     def repair(self, error, offered=None):
         from .content_reference_catalog import ContentReferenceError
         from .reference_prompt_format import FormatArgumentsError, MODEL_GUIDANCE
-        if isinstance(error, ContentReferenceError):
+        if isinstance(error, ArgumentSyntaxError):
+            result = {'ok': False, 'accepted': False, 'code': str(error),
+                'submission_state': 'not_dispatched', 'issues': error.issues,
+                'recovery': {'action': 'repair_arguments', 'preserve_original': True},
+                'message': '原调用未执行、未保存。修正JSON语法或重复字段，按当前parameters保持原操作形式、'
+                    '原目标、所有正文、素材和规格，不重新改写方案；后台不会自动补删括号。'}
+        elif isinstance(error, ContentReferenceError):
             result = self.catalog.contents.repair(error)
         elif isinstance(error, FormatArgumentsError):
             result = {'ok': False, 'accepted': False, 'code': str(error),
                 'submission_state': 'not_dispatched', 'issues': error.issues,
-                'recovery': {'action': 'repair_arguments'}, 'message': MODEL_GUIDANCE}
+                'recovery': {'action': 'repair_arguments'},
+                'message': (offered or {}).get('description') or MODEL_GUIDANCE}
         else:
             result = {'ok': False, 'accepted': False, 'code': str(error),
                 'submission_state': 'not_dispatched', 'recovery': {'action': 'repair_arguments'},
                 'message': '本次未执行。引用不存在、已过期或类型冲突；保留用户指定的目标，不自动换图或换稿。' + REFERENCE_GUIDANCE}
         if offered is not None:
-            result['parameters'] = self.schema({'function': offered})['function']['parameters']
+            public = self.schema({'function': offered})['function']
+            result['parameters'] = public['parameters']
+            if isinstance(error, FormatArgumentsError):
+                result['message'] = public['description'] + ' 仅修正错误字段，保留目标、原文、素材和规格。'
+            if isinstance(error, ArgumentSyntaxError):
+                from .reference_prompt_format import save_recovery_fields
+                result['required_fields'], result['allowed_forms'] = save_recovery_fields(result['parameters'], set())
+                result['message'] += ' 当前只允许所附allowed_forms的完整根对象，不能提交空对象或单独的条目；不要丢弃已有字段。'
+            if str(error) == 'CONTENT_OBJECT_INVALID' and not isinstance(error, ArgumentSyntaxError):
+                from .reference_prompt_format import save_recovery_fields
+                roots = {issue['path'][2:].split('.', 1)[0].split('[', 1)[0]
+                         for issue in getattr(error, 'issues', ()) if issue.get('path', '').startswith('$.')}
+                result['required_fields'], result['allowed_forms'] = save_recovery_fields(result['parameters'], roots)
+                result['message'] = public['description'] + ' 仅修正错误字段，保留目标、原文、素材和规格。'
         return result
 
 

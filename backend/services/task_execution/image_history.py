@@ -27,7 +27,8 @@ GUIDANCE = (
     '例如最早灯塔成图：{"order":"oldest_first","source":"generated","limit":10}。'
     'has_more=true时原样复制next_cursor继续，例如{"order":"oldest_first","source":"generated","limit":10,"cursor":"复制next_cursor"}。'
     '也可仅传{"cursor":"复制next_cursor","limit":10}，后台沿用游标绑定的排序和来源；显式填写order/source时必须与原查询一致。空页仍可能有下一页。'
-    '回执request_excerpt仅是原消息摘要，不能作为图片视觉事实；用read_conversation_text的'
+    '回执request_excerpt仅是原消息摘要，不能作为图片视觉事实。每个候选的next_step是当前下一步；'
+    'requires_view_before_selection=true时先核图，false时可按selection_arguments选择。核图参数为read_conversation_text的'
     '{"view_image":{"image_ref":"复制候选image_ref"}}核图，再用resolve_request_target明确本次目标：'
     '{"intent":"explain","request_context":{"focus":"selected_target","image_action":"display_existing",'
     '"target":{"kind":"image","basis":"explicit_reference","image_ref":"复制核实后的image_ref"}}}。'
@@ -57,8 +58,18 @@ def recovered(runtime):
         return []
 
 
+def canonical_reference(runtime, reference):
+    """Only frozen server-verified redisplay aliases can identify the original."""
+    snapshot = (getattr(runtime, 'checkpoint_base', {}) or {}).get('_request_context_v1') or {}
+    for image in snapshot.get('image_results', ()):
+        if any(reference.get('message_id') == alias.get('message_id') and
+               reference.get('content_index') == alias.get('content_index') for alias in image.get('displayed_in', ())):
+            return {'message_id': image['source_message_id'], 'content_index': image['content_index']}
+    return copy.deepcopy(reference)
+
+
 def mark_viewed(runtime, reference):
-    """Only the successful native visual read can set this receipt."""
+    """Host-attested model image inputs and successful native reads share this receipt."""
     if (runtime.checkpoint_base.get('_request_context_v1') or {}).get('image_reference_version') != 1:
         return
     identity = scope(runtime)
@@ -66,6 +77,7 @@ def mark_viewed(runtime, reference):
     if journal.get('scope') != identity:
         journal = {'scope': identity, 'images': [], 'cursors': {}, 'pages': {}}
         runtime.checkpoint_base[KEY] = journal
+    reference = canonical_reference(runtime, reference)
     viewed = journal.setdefault('viewed', [])
     if reference not in viewed:
         viewed.append(copy.deepcopy(reference))
@@ -75,11 +87,16 @@ def was_viewed(runtime, reference):
     journal = runtime.checkpoint_base.get(KEY) or {}
     if (runtime.checkpoint_base.get('_request_context_v1') or {}).get('image_reference_version') != 1:
         return False
-    return journal.get('scope') == scope(runtime) and reference in journal.get('viewed', [])
+    return journal.get('scope') == scope(runtime) and canonical_reference(runtime, reference) in journal.get('viewed', [])
 
 
-def requires_view(runtime, reference):
+def requires_view(runtime, reference, *, model_view=False):
     snapshot = runtime.checkpoint_base.get('_request_context_v1') or {}
+    reference = canonical_reference(runtime, reference)
+    if model_view:
+        from .image_visual_input import includes
+        if includes(runtime, reference):
+            return False
     if snapshot.get('image_provenance_version') == 1:
         current = [image['reference'] for row in snapshot.get('requests', ())
                    if row['message_id'] == snapshot['input_message_id'] for image in row.get('images', ())]
@@ -90,11 +107,40 @@ def requires_view(runtime, reference):
     return reference not in known and not was_viewed(runtime, reference)
 
 
-def selection_metadata(runtime, images):
-    from services.handlers.chat.existing_image_delivery import selection_arguments
+def selection_purpose(runtime):
+    projection = getattr(runtime, 'workflow_projection', None) or (getattr(runtime, 'checkpoint_base', {}) or {}).get('_ecom_workflow') or {}
+    return (projection['intent'], (projection.get('request_context') or {}).get('image_action')) if projection.get('intent') else None
+
+
+def selection_arguments(reference, *, intent='explain', image_action='display_existing'):
+    frame = {'focus': 'current_request' if intent in {'write', 'write_then_submit_images'} else 'selected_target', 'target': {'kind': 'image', 'basis': 'explicit_reference',
+        'source_message_id': reference['message_id'], 'content_index': reference['content_index']}}
+    frame['image_action'] = image_action if intent == 'explain' else None
+    return {'intent': intent, 'request_context': frame}
+
+
+def selection_recovery(runtime, reference, *, intent='explain', image_action='display_existing', model_view=False):
+    needed = requires_view(runtime, reference, model_view=model_view)
+    return {'action': 'view_before_selection' if needed else 'select_target',
+        'tool': 'read_conversation_text' if needed else 'resolve_request_target',
+        'arguments': {'view_image': reference} if needed else selection_arguments(reference, intent=intent, image_action=image_action)}
+
+
+def selection_metadata(runtime, images, *, model_view=False):
+    intent, action = selection_purpose(runtime) or ('explain', 'display_existing')
     for image in images:
-        image['requires_view_before_selection'] = requires_view(runtime, image['reference'])
-        image['selection_arguments'] = selection_arguments(image['reference'])
+        ref = image.get('reference') or {'message_id': image['source_message_id'], 'content_index': image['content_index']}
+        image['reference'] = ref
+        needed = requires_view(runtime, ref, model_view=model_view)
+        image['requires_view_before_selection'] = needed
+        image['next_step'] = selection_recovery(runtime, ref, intent=intent, image_action=action, model_view=model_view)
+        image.pop('selection_arguments', None)
+        if not needed:
+            image['selection_arguments'] = selection_arguments(ref, intent=intent, image_action=action)
+            if intent not in {'explain', 'edit', 'generate', 'write', 'write_then_submit_images'}:
+                image.pop('selection_arguments')
+                image['next_step'] = {'action': 'retain_current_action',
+                    'instruction': '该候选是图片来源；保留当前稿件目标与动作，需要改变时先核对用户要求。'}
 
 
 def origin_metadata(db, context, native, row, part):
@@ -248,8 +294,8 @@ def page(handler, request, context, runtime, arguments):
     selection_metadata(runtime, results)
     reply = {'ok': True, 'images': results, 'has_more': bool(token), 'next_cursor': token,
              'scope': 'authenticated_frozen_conversation_history', 'metadata_is_visual_confirmation': False,
-             'next_step': {'action': 'verify_and_select', 'tool': 'resolve_request_target',
-                 'instruction': '每个selection_arguments只对应该候选，不是默认选择。按用户指向核对；需要时先view_image，'
+             'next_step': {'action': 'follow_candidate_next_step',
+                 'instruction': '按用户指向核对候选，执行该候选next_step中的tool和arguments，不默认第一张。需要核图时先view_image，'
                                 '再单独选择具体目标，保持explain和display_existing。查询成功尚未展示，目标绑定后后台可自动交付。'
                                 '无候选且has_more=true继续翻页；无法确定时用respond_without_execution澄清。'}}
     journal['pages'][cache_key] = reply

@@ -780,19 +780,24 @@ class EcommerceWorkflow:
                 readonly = (self.route.get('intent') == 'explain' and frame is not None
                             and frame.image_action in {'display_existing', 'analyze'})
                 needs_view = (str(error) == 'REQUEST_TARGET_IMAGE_REQUIRES_VIEW' and frame is not None
-                              and self.route.get('intent') == 'edit')
+                              and self.route.get('intent') in {'edit', 'explain'})
                 if needs_view:
+                    from services.task_execution.image_history import selection_recovery
+                    rejected['rejection'].update(requested_intent=self.route.get('intent'), image_action=frame.image_action,
+                        recovery=selection_recovery(self.runtime, {
+                            'message_id': frame.target.source_message_id, 'content_index': frame.target.content_index},
+                            intent=self.route.get('intent'), image_action=frame.image_action))
                     rejected['rejection']['candidate_target'] = frame.target.model_dump(mode='json', exclude_none=True)
                     rejected['rejection']['instruction'] = ('历史图尚未核实。先用read_conversation_text的view_image看候选，'
                         '核对用户完整要求后用resolve_request_target选择；模型role是待核实说明，不是图片事实。')
                 repaired_frame = ({'target': {'kind': 'ambiguous', 'basis': 'ambiguous'},
                     'focus': 'selected_target', 'image_action': frame.image_action} if readonly or needs_view else {})
                 self.route = {'kind': 'ordinary_image', 'mode': 'new', 'reuse_through_stage': 0,
-                              'intent': 'explain' if readonly else 'edit' if needs_view else 'other', 'request_context': repaired_frame}
+                              'intent': self.route.get('intent') if readonly or needs_view else 'other', 'request_context': repaired_frame}
             if request_resolution.binding(self.runtime)['status'] == 'ambiguous':
                 self.route = {**self.route, 'kind': 'ordinary_image', 'mode': 'new',
                               'reuse_through_stage': 0,
-                              'intent': (self.route['intent'] if self.route.get('intent') == 'explain' or needs_view else 'other')}
+                              'intent': (self.route['intent'] if self.route.get('intent') in {'explain', 'edit'} or needs_view else 'other')}
         kind = self.route["kind"]
         intent = self.route.get('intent')
         if kind == 'unavailable':

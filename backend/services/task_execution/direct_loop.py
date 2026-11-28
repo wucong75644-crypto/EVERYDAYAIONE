@@ -250,7 +250,8 @@ def context_message(runtime,*,state=None):
     artifacts = facts['previous_task']['artifacts'] if 'previous_task' in facts else facts.get('artifacts', ())
     if isinstance(artifacts, list):
         artifacts[:] = [artifact for artifact in artifacts if TAG not in artifact.get('validations', ())]
-    return {'role':'system','content':PREFIX+INSTRUCTIONS+'\n'+json.dumps(facts,ensure_ascii=False)}
+    return {'role':'system','content':PREFIX+INSTRUCTIONS+'\n'+json.dumps(facts,ensure_ascii=False),
+            '_host_context_kind': 'task_execution'}
 
 
 def schemas(runtime,controller=None):

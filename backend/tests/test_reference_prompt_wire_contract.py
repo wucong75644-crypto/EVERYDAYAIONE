@@ -268,7 +268,7 @@ async def test_public_reference_schema_is_enforced_before_native_save(restored):
         # still pass the original server-observed read and scope checks.
         assert result['code'] == 'CONTENT_READ_REQUIRED'
     else:
-        assert result['code'] == 'CONTENT_PRESENTATION_ARGUMENTS_INVALID'
+        assert result['code'] == co.INVALID_OBJECT
         assert any(i['path'] == '$.updates[0].item.body' for i in result['issues'])
         patch = result['parameters']['properties']['updates']['items']['properties']['item']
         assert 'prompt' in patch['properties'] and 'body' not in patch['properties']

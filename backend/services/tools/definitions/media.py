@@ -37,7 +37,7 @@ def _schema_generate_image_async():
                     "prompt": {"type":"string", "minLength":1, "description":"一张图的完整最终提示词原文"},
                     "references": {"type":"array", "maxItems":16,
                         "description":"仅用户明确选定的原图；引用身份从附件/历史/搜索结果原样复制，禁止猜测编号", "items": {
-                        "type":"object", "additionalProperties":False, "required":["role"],
+                        "type":"object", "x-reference-kind":"image", "additionalProperties":False, "required":["role"],
                         "properties": {
                             "resource_ref":{"type":"string"}, "file_id":{"type":"string"},
                             "asset_id":{"type":"string"}, "message_id":{"type":"string"},

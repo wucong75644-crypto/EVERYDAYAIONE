@@ -369,10 +369,10 @@ READ_SCHEMA = schema(READ, '在当前会话固定历史中读取资料。修订�
                                'required': ['artifact_id', 'item_index'],
                                'properties': {'artifact_id': {'type': 'string'}, 'item_index': {'type': 'integer'},
                                               'sha256': {'type': 'string'}}},
-            'view_image': {'type': 'object', 'additionalProperties': False,
+            'view_image': {'type': 'object', 'x-reference-kind': 'image', 'additionalProperties': False,
                            'required': ['message_id', 'content_index'],
                            'properties': {'message_id': {'type': 'string'}, 'content_index': {'type': 'integer'}}},
-            'show_image': {'type': 'object', 'additionalProperties': False,
+            'show_image': {'type': 'object', 'x-reference-kind': 'image', 'additionalProperties': False,
                            'required': ['message_id', 'content_index'],
                            'properties': {'message_id': {'type': 'string'}, 'content_index': {'type': 'integer'}}},
             'image_task_id': {'type': 'string'}, 'image_task_status': {'type': 'string'}, 'list_images': {'type': 'boolean'}, 'message_id': {'type': 'string'}, 'text_exact': {'type': 'string', 'minLength': 1, 'maxLength': 20000},
@@ -416,7 +416,7 @@ def _authoring_schema(value):
     return result
 
 
-def model_tools(tools, *, selectable_source_images=False, saved_text_available=False, server_image_plan=False, reuse_source=False, revise_saved=False, first_delivery=False, current_images=(), inline_image=False, generated_image_edit=False, single_image_edit=False, inline_only=False, previous_image_reference=None, planned_image_count=None, image_reference_catalog=None, writing_new=False):
+def model_tools(tools, *, selected_saved=False, selectable_source_images=False, saved_text_available=False, server_image_plan=False, reuse_source=False, revise_saved=False, first_delivery=False, current_images=(), inline_image=False, generated_image_edit=False, single_image_edit=False, inline_only=False, previous_image_reference=None, planned_image_count=None, image_reference_catalog=None, writing_new=False):
     """Project the one entry contract selected by the current workflow."""
     from services.task_execution.reference_boundary import ModelReferenceBoundary
     from services.task_execution.content_objects import ContentReference, ImageContentReference, selection_parameters
@@ -452,20 +452,23 @@ def model_tools(tools, *, selectable_source_images=False, saved_text_available=F
             parameters = function['parameters']
             saved_revision = reuse_source or revise_saved
             excluded = {'document', 'new_content'} if saved_revision else {'base', 'updates', 'message_source', 'new_content'}
-            if revise_saved:
+            if revise_saved or selected_saved:
                 excluded.add('message_source')
             for key in excluded if saved_revision or first_delivery or writing_new else ():
                 parameters['properties'].pop(key, None)
             forms = [form for form in parameters.pop('oneOf')
                      if not (saved_revision or first_delivery or writing_new) or excluded.isdisjoint(form['required'])]
+            parameters['allOf'] = [rule for rule in parameters.get('allOf', ())
+                if not set(rule.get('if', {}).get('required', ())) & excluded]
+            if not parameters['allOf']:
+                parameters.pop('allOf')
             if len(forms) == 1:
                 parameters['required'] = forms[0]['required']
             else:
                 parameters['oneOf'] = forms
             if revise_saved:
                 from services.task_execution.content_objects import revision_usage, revision_examples, SCHEMA
-                from services.task_execution.methods import REFERENCE_PROMPTS_PRESENTATION
-                reference = function['description'].startswith(REFERENCE_PROMPTS_PRESENTATION)
+                reference = parameters.get('x-content-profile') == 'reference-prompts-v1'
                 presentation = function['description'].replace(SCHEMA['function']['description'], '', 1)
                 function['description'] = presentation + ('修订本次已明确选择的保存稿。先读取完整条目，再用base和updates修改原稿；'
                     '不要重新登记整组document或message_source，不另建一组来代替修订。保留未选择条目、素材及未改规格。'
@@ -474,17 +477,17 @@ def model_tools(tools, *, selectable_source_images=False, saved_text_available=F
                 parameters['examples'] = revision_examples(reference)
             elif reuse_source:
                 from services.task_execution.content_objects import revision_usage, revision_examples, SCHEMA
-                from services.task_execution.methods import REFERENCE_PROMPTS_PRESENTATION
-                reference = function['description'].startswith(REFERENCE_PROMPTS_PRESENTATION)
+                reference = parameters.get('x-content-profile') == 'reference-prompts-v1'
                 parameters['examples'] = revision_examples(reference)
                 presentation = function['description'].replace(SCHEMA['function']['description'], '', 1)
-                function['description'] = presentation + ('执行已保存的条目直接调用目标工具。仅恢复历史正文时用message_source和'
-                                           'continue_execution=true；修订用base和updates。' + revision_usage(reference))
+                recovery = ('仅恢复未登记历史正文时用message_source和continue_execution=true；'
+                            if 'message_source' in parameters['properties'] else '')
+                function['description'] = presentation + ('执行已保存的条目直接调用目标工具。'
+                    + recovery + '修订用base和updates。' + revision_usage(reference))
             elif first_delivery or writing_new:
                 # Preserve authoring Skill presentation requirements in the prefix.
                 from services.task_execution.content_objects import SCHEMA, MIXED_TEXT_GUIDANCE, creation_examples
-                from services.task_execution.methods import REFERENCE_PROMPTS_PRESENTATION
-                parameters['examples'] = creation_examples(function['description'].startswith(REFERENCE_PROMPTS_PRESENTATION))
+                parameters['examples'] = creation_examples(parameters.get('x-content-profile') == 'reference-prompts-v1')
                 description = function['description'].replace(SCHEMA['function']['description'], '', 1)
                 function['description'] = description + MIXED_TEXT_GUIDANCE + (
                     '普通新写方案、提示词或脚本可直接用编号标题及完整正文回复，由后台登记。'

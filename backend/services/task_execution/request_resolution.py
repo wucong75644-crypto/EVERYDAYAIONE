@@ -84,13 +84,17 @@ def selection_schema(runtime=None):
         for key in ('media', 'deliveries', 'continue_delivery', 'platform_changed', 'platform'):
             frame['properties'].pop(key, None)
     frame['required'] = ['target', 'focus']
+    from .image_history import selection_purpose
+    purpose = selection_purpose(runtime) if runtime is not None else None
+    examples = [example for example in action_target_contract.selection_examples() if purpose is None or example['intent'] == purpose[0]]
+    guidance = action_target_contract.GUIDANCE if purpose else action_target_contract.SELECTION_GUIDANCE
     return {'type': 'function', 'function': {'name': SELECT,
         'description': '核对最近请求或读取来源后，明确选择/纠正本次动作与目标。只单独调用，不执行业务；'
                        'request_context填写所选需求的规格、素材和target，不沿用无关旧方案。intent=explain时用image_action=analyze表示分析，display_existing表示实际向用户展示已有图；改成其他意图时image_action填null。未准备执行稿、未派发且没有接回旧任务时可纠正。'
                        ' 历史图片的名称和模型填写的role不是视觉事实；requires_view_before_selection=true时先单独调用read_conversation_text.view_image核实，再选择该图。重新展示仍引用原图image_ref，不作为新的生成事件。'
-                       + action_target_contract.SELECTION_GUIDANCE,
+                       + guidance,
         'parameters': {'type': 'object', 'additionalProperties': False, 'required': ['intent', 'request_context'],
-                       'allOf': action_target_contract.schema_rules(), 'examples': action_target_contract.selection_examples(),
+                       'allOf': action_target_contract.schema_rules(), 'examples': examples,
                        '$defs': definitions,
                        'properties': {'intent': {'type': 'string', 'enum': list(IMAGE_INTENTS)}, 'request_context': frame}}}}
 
@@ -229,11 +233,11 @@ def native_context(runtime):
                 '目标不明确或缺少资料时，用respond_without_execution提交具体问题；该工具不执行业务。'
                 '已读来源后需要纠正选择时，先单独调用resolve_request_target，不能直接换content_source。'
                 '目标缺稿时依据真实需求准备新稿，不执行无关旧稿。'}
-    if snapshot.get('image_provenance_version') == 1:
-        from .image_history import requires_view
-        for image in result['image_results']:
-            image['requires_view_before_selection'] = requires_view(runtime, {
-                'message_id': image['source_message_id'], 'content_index': image['content_index']})
+    if snapshot.get('image_reference_version') == 1:
+        from .image_history import selection_metadata
+        selection_metadata(runtime, result['image_results'], model_view=True)
+        for row in requests:
+            selection_metadata(runtime, row.get('images', []), model_view=True)
     if snapshot.get('catalog_version') == 2:
         from .request_catalog import project
         result['image_results'] = [{**image, 'target_fields': {'kind': 'image',
@@ -264,6 +268,15 @@ def native_context(runtime):
             '新上传和历史参考可同时使用，没有上传不代表自动继承最近图片。')
         result['instruction'] += ('用户已经明确的约束应当保留，不自行提出删除/改写等新选项或反复确认；'
             '仅当执行确实缺少必要信息且无法从原话取得时澄清。目标已明确且未改变时无需重复调用目标纠正工具。')
+    rejection = (result.get('resolution') or {}).get('rejection') or {}
+    candidate = rejection.get('candidate_target') or {}
+    if rejection.get('code') == 'REQUEST_TARGET_IMAGE_REQUIRES_VIEW' and candidate.get('kind') == 'image':
+        from .image_history import selection_recovery
+        rejection['recovery'] = selection_recovery(runtime, {
+            'message_id': candidate['source_message_id'], 'content_index': candidate['content_index']},
+            intent=rejection.get('requested_intent', 'explain'),
+            image_action=rejection.get('image_action', 'display_existing'), model_view=True)
+        rejection['instruction'] = '按recovery指定的tool和arguments继续，保留原候选和用户动作；核图或选择不等于展示或生成。'
     from .reference_boundary import NativeContext
     return NativeContext(result)
 
@@ -329,7 +342,7 @@ def freeze(runtime, request, raw, *, focus=None):
         if target.kind == 'image':
             from .image_history import requires_view
             reference = {'message_id': target.source_message_id, 'content_index': target.content_index}
-            if snapshot.get('image_provenance_version') == 1 and requires_view(runtime, reference):
+            if snapshot.get('image_reference_version') == 1 and requires_view(runtime, reference):
                 raise TaskError('REQUEST_TARGET_IMAGE_REQUIRES_VIEW')
             if target.basis == 'current_input' and target.source_message_id != snapshot['input_message_id']:
                 if target.source_message_id != active_request(snapshot):
@@ -338,11 +351,9 @@ def freeze(runtime, request, raw, *, focus=None):
             actual = next((i for i in snapshot.get('image_results', ())
                            if (i['source_message_id'], i['content_index']) == (target.source_message_id, target.content_index)), None)
             if actual is None:
-                from .image_history import recovered, was_viewed
+                from .image_history import recovered
                 actual = next((i for i in recovered(runtime)
                     if (i['source_message_id'], i['content_index']) == (target.source_message_id, target.content_index)), None)
-                if actual and not was_viewed(runtime, actual['reference']):
-                    raise TaskError('REQUEST_TARGET_IMAGE_REQUIRES_VIEW')
             if not actual and not (source and any(i['reference']['content_index'] == target.content_index for i in source.get('images', ()))):
                 raise TaskError('REQUEST_TARGET_IMAGE_NOT_FOUND')
             if actual:
@@ -489,7 +500,7 @@ def check(runtime, request, call, *, root_task_id=None):
     elif target['kind'] == 'image' and call['name'] == 'generate_image':
         selected = (target['source_message_id'], target['content_index'])
         from .image_history import requires_view
-        if context(runtime).get('image_provenance_version') == 1 and requires_view(runtime, {
+        if context(runtime).get('image_reference_version') == 1 and requires_view(runtime, {
                 'message_id': selected[0], 'content_index': selected[1]}):
             return ('REQUEST_TARGET_IMAGE_REQUIRES_VIEW', '尚未核实这张历史图片，先用view_image读取，核对用户要求后选择；本次未派发。')
         draft = args.get('draft')

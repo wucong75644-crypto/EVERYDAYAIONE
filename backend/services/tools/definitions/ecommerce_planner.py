@@ -13,7 +13,7 @@ def _planner_schema():
         "oneOf":[{"required":["references"]},{"required":["continue_plan_id"]}],"properties":{
             "continue_plan_id":{"type":"string","minLength":36,"maxLength":36},
             "references":{"type":"array","minItems":1,"maxItems":16,"items":{
-                "type":"object","additionalProperties":False,"required":["role"],
+                "type":"object","x-reference-kind":"image","additionalProperties":False,"required":["role"],
                 "properties":{"resource_ref":{"type":"string"},"file_id":{"type":"string"},
                     "asset_id":{"type":"string"},"message_id":{"type":"string"},
                     "content_index":{"type":"integer","minimum":0},

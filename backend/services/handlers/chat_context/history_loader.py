@@ -161,6 +161,10 @@ def _row_to_oai_messages(
             messages[target_index]["content"] += image_hint
     visible = [index for index, _ in image_parts] if role == "user" else []
     _append_image_locators(messages, row, org_id=org_id, visible_indices=visible)
+    if visible and row.get('id'):
+        from services.task_execution.image_visual_input import SOURCES
+        user_message[SOURCES] = [{'reference': {'message_id': str(row['id']), 'content_index': index}, 'url': url}
+                                 for index, url in image_parts]
     return messages, len(visible)
 
 

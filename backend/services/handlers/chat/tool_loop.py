@@ -227,6 +227,7 @@ def _complete_tool_step(
 def append_tool_images(
     messages: list[dict[str, Any]],
     image_urls: list[str],
+    *, references: list[dict[str, Any]] | None = None,
 ) -> None:
     if not image_urls:
         return
@@ -240,7 +241,11 @@ def append_tool_images(
         }
         for image_url in image_urls
     )
-    messages.append({"role": "user", "content": parts})
+    message = {"role": "user", "content": parts}
+    if references:
+        from services.task_execution.image_visual_input import SOURCES
+        message[SOURCES] = [{'reference': reference, 'url': url} for reference, url in zip(references, image_urls)]
+    messages.append(message)
 
 
 async def push_emit_payloads(

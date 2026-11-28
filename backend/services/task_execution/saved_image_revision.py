@@ -140,7 +140,14 @@ def execution_requirement(runtime, request, reference, *, options, materials, re
     if missing:
         changes['materials'] = missing
         reason = '旧稿未绑定本次明确选择的参考图，不能降为文生图；先读取并修订素材绑定。'
-    return {'required_changes': changes, 'requested_size': size, 'message': reason} if changes else None
+    return {'required_changes': changes, 'requested_size': size, 'saved_options': dict(options),
+        'saved_materials': [m.model_dump(mode='json', exclude_none=True) for m in inputs], 'message': reason} if changes else None
+
+
+def required_update_fields(changes, *, has_presentation):
+    fields = (['options', 'body'] + (['display_prefix'] if has_presentation else [])
+              if {'aspect_ratio', 'resolution', 'orientation'} & changes.keys() else [])
+    return fields + (['materials'] if changes.get('materials') else [])
 
 
 def pending_execution(runtime, request):
@@ -164,7 +171,19 @@ def pending_execution(runtime, request):
         requirement = execution_requirement(runtime, request, reference, options=item.get('options', {}),
             materials=inputs[index - 1] if len(inputs) >= index else (), revision=group['revision'])
         if requirement:
-            result.append({'content_source': reference.model_dump(mode='json', exclude_none=True), **requirement})
+            from .direct_loop import content_followup_state
+            has_presentation = False
+            for state in (runtime.task_execution_state, content_followup_state(runtime)):
+                if state is None:
+                    continue
+                try:
+                    _, _, saved_item = co.load(state, reference)
+                except (ValueError, TypeError):
+                    continue
+                has_presentation = bool(saved_item.display_prefix)
+                break
+            result.append({'content_source': reference.model_dump(mode='json', exclude_none=True), **requirement,
+                'required_update_fields': required_update_fields(requirement['required_changes'], has_presentation=has_presentation)})
     return result
 
 
@@ -217,7 +236,9 @@ def check(runtime, request, calls, state):
                     revised = patch.options if patch.options is not None else item.options
                     changed_keys = set(changes) | ({'aspect_ratio'} if 'orientation' in changes else set())
                     unchanged = {key: value for key, value in item.options.items() if key not in changed_keys}
-                    if (size_changes(revised, size)
+                    required = required_update_fields(changes, has_presentation=bool(item.display_prefix))
+                    if (any(getattr(patch, field) is None for field in required)
+                            or size_changes(revised, size)
                             or any(revised.get(key) != value for key, value in unchanged.items())
                             or patch.body is None or patch.body == item.body
                             or item.display_prefix and patch.display_prefix is None):

@@ -50,7 +50,7 @@ class ImageMethodDocument(MethodDocumentFact):
     image_plans: tuple[ImageBrief, ...] = Field(min_length=1, max_length=100)
 
 
-from .reference_prompt_format import PROFILE as REFERENCE_PROMPTS_PROFILE, DISPLAY_FIELDS, PROMPT_FIELDS
+from .reference_prompt_format import PROFILE as REFERENCE_PROMPTS_PROFILE, DISPLAY_FIELDS, PROMPT_FIELDS, RENDERED_LIMITS
 OUTPUT_PROFILES = frozenset({REFERENCE_PROMPTS_PROFILE, 'ecommerce-image-plan-v1'})
 
 
@@ -66,6 +66,7 @@ def content_format_contract(profile_id):
         'display_sections': ['方案标题', *REFERENCE_PROMPTS_DISPLAY_HEADINGS] if profile_id else [],
         'document_sections': ['参考图判断'] if profile_id else [],
         'read_before_revision': True, 'preserve_omitted_fields': True,
+        **({'rendered_limits': dict(RENDERED_LIMITS), 'length_unit': 'characters_including_fixed_headers'} if profile_id else {}),
         **({'revision_sections': 'field_patch_after_verified_read', 'new_sections': 'complete',
             'options_update': 'replace_complete_options'} if profile_id else {}),
         **({'model_fields': {'document.reference_analysis': '参考图判断',

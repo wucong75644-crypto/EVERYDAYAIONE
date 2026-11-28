@@ -7,6 +7,7 @@ from .contracts import TaskError, Fact
 from pydantic import model_validator
 
 PROFILE = 'reference-prompts-v1'
+RENDERED_LIMITS = {'prompt': 20000, 'presentation': 12000, 'reference_analysis': 12000}
 DISPLAY_FIELDS = {'scheme_content': '方案内容', 'visual_settings': '视觉设定',
                   'reference_usage': '参考图使用方式'}
 PROMPT_FIELDS = {'positive': '完整生图提示词', 'negative': '负面提示词'}
@@ -18,6 +19,8 @@ MODEL_GUIDANCE = (
     '每个字段只写该章节的完整正文，保留原项目符号和细节，不重复写Markdown章节标题，'
     '不写“见下方正文”等占位。不要提交display_prefix或body。'
     '后台按同一合同生成原版Markdown，执行只使用生成的完整提示词和负面提示词正文。'
+    f'长度按后台渲染后的字符总数计算（包括固定标题和分隔）：prompt合计不超过{RENDERED_LIMITS["prompt"]}，'
+    f'presentation合计不超过{RENDERED_LIMITS["presentation"]}，reference_analysis连同标题不超过{RENDERED_LIMITS["reference_analysis"]}；不是每个子字段各有总预算。'
     '修改旧稿先单独调用read_conversation_text读取指定条目及format_contract；'
     '复制读取回执content_source中的content_ref和item_index，用base和updates修订，不能重建另一组代替原稿。'
     '新建必须填写全部章节。修订updates只列用户指定条目；presentation和prompt是章节补丁，只填改变的子字段，'
@@ -32,8 +35,10 @@ MODEL_GUIDANCE = (
 
 
 def section_schema(fields, *, patch=False):
-    return {'type': 'object', 'additionalProperties': False, 'required': [] if patch else list(fields), **({'minProperties': 1} if patch else {}),
-            'properties': {key: {'type': 'string', 'minLength': 1, 'maxLength': 20000 if fields == PROMPT_FIELDS else 12000,
+    return {'type': 'object', 'additionalProperties': False,
+            'description': '所有子章节连同后台生成的固定标题和分隔合计受rendered_limits约束，不按每个子字段分别分配总额度。',
+            'required': [] if patch else list(fields), **({'minProperties': 1} if patch else {}),
+            'properties': {key: {'type': 'string', 'minLength': 1, 'maxLength': RENDERED_LIMITS['prompt' if fields == PROMPT_FIELDS else 'presentation'],
                 'pattern': r'\S', 'description': title + '的完整正文，不写章节标题或占位。'}
                 for key, title in fields.items()}}
 
@@ -64,9 +69,9 @@ def sections(text):
 
 
 class FormatArgumentsError(TaskError):
-    def __init__(self, issues):
+    def __init__(self, issues, *, code='CONTENT_PRESENTATION_ARGUMENTS_INVALID'):
         self.issues = issues
-        super().__init__('CONTENT_PRESENTATION_ARGUMENTS_INVALID')
+        super().__init__(code)
 
 
 def _render(value, fields, path):
@@ -85,6 +90,14 @@ def _heading(title, index):
     return title if re.match(r'^方案\s*(?:\d+|[一二三四五六七八九十])', title) else f'方案{index}｜{title}'
 
 
+def _bounded(text, field, path):
+    limit = RENDERED_LIMITS[field]
+    if len(text) > limit:
+        raise FormatArgumentsError([{'path': path, 'reason':
+            f'后台生成固定标题和分隔后合计{len(text)}字符，超过{limit}；保留原稿，按容量分次保存，不自动截断'}])
+    return text
+
+
 def decode_save(value, item_title):
     """Only explicit wire fields are transformed; native saved records stay unchanged."""
     if not isinstance(value, dict):
@@ -95,8 +108,9 @@ def decode_save(value, item_title):
         if 'display_prefix' in document:
             raise FormatArgumentsError([{'path': '$.document.display_prefix', 'reason': '不可混用原生Markdown与结构化章节'}])
         analysis = document.pop('reference_analysis')
-        document['display_prefix'] = _render({'reference_analysis': analysis},
-            {'reference_analysis': '参考图判断'}, '$.document').replace('## 参考图判断', '# 参考图判断', 1)
+        document['display_prefix'] = _bounded(_render({'reference_analysis': analysis},
+            {'reference_analysis': '参考图判断'}, '$.document').replace('## 参考图判断', '# 参考图判断', 1),
+            'reference_analysis', '$.document.reference_analysis')
     items = [(item, index, f'$.document.items[{index - 1}]', item.get('title'))
              for index, item in enumerate(document.get('items', ()) if isinstance(document, dict) else (), 1)
              if isinstance(item, dict)]
@@ -131,12 +145,12 @@ def decode_save(value, item_title):
         if 'presentation' in item:
             if 'display_prefix' in item or not isinstance(title, str) or not title.strip():
                 raise FormatArgumentsError([{'path': path + '.presentation', 'reason': '需要真实条目标题，且不可混用display_prefix'}])
-            item['display_prefix'] = '# ' + _heading(title, index) + '\n\n' + _render(
-                item.pop('presentation'), DISPLAY_FIELDS, path + '.presentation')
+            item['display_prefix'] = _bounded('# ' + _heading(title, index) + '\n\n' + _render(
+                item.pop('presentation'), DISPLAY_FIELDS, path + '.presentation'), 'presentation', path + '.presentation')
         if 'prompt' in item:
             if 'body' in item:
                 raise FormatArgumentsError([{'path': path + '.prompt', 'reason': '不可混用prompt与body'}])
-            item['body'] = _render(item.pop('prompt'), PROMPT_FIELDS, path + '.prompt')
+            item['body'] = _bounded(_render(item.pop('prompt'), PROMPT_FIELDS, path + '.prompt'), 'prompt', path + '.prompt')
     return result
 
 
@@ -172,11 +186,10 @@ def encode_example(value):
 
 def project_tool(function):
     """Project schemas, descriptions and every example together, after native tool selection."""
-    from .methods import REFERENCE_PROMPTS_PRESENTATION
-    if not function.get('description', '').startswith(REFERENCE_PROMPTS_PRESENTATION):
-        return function
     function = copy.deepcopy(function)
     parameters = function['parameters']
+    if parameters.pop('x-content-profile', None) != PROFILE:
+        return function
 
     def shape(node):
         if isinstance(node, list):
@@ -195,6 +208,10 @@ def project_tool(function):
             props['presentation'] = section_schema(DISPLAY_FIELDS, patch=patch)
             props['prompt'] = section_schema(PROMPT_FIELDS, patch=patch)
             props['title']['description'] = '方案标题，由后台生成固定标题行；修订时未改标题则省略。'
+        if isinstance(result.get('title'), str) and result['title'] in {'ContentItem', 'ContentItemPatch'}:
+            result['description'] = '方案条目；正文使用prompt，展示说明使用presentation。'
+        if 'updates' in props and isinstance(props['updates'], dict):
+            props['updates']['description'] = '仅列用户选定且改变的条目；item使用prompt和presentation章节补丁。省略字段保留原稿。'
         for old in renamed:
             props.pop(old, None)
         if 'required' in result:
@@ -208,13 +225,53 @@ def project_tool(function):
         examples.append(partial)
     function['parameters'] = shape(parameters)
     function['parameters']['examples'] = examples
-    # Keep the dynamic phase, without reintroducing native body/display_prefix
-    # authoring instructions into the structured reference format.
-    description = function['description']
-    markers = (' 当前已选稿件的修订流程（', ' 仅在本次需要修订所选旧稿时，')
-    positions = [description.index(marker) for marker in markers if marker in description]
-    function['description'] = MODEL_GUIDANCE + (description[min(positions):] if positions else '')
+    function['description'] = MODEL_GUIDANCE
     return function
+
+
+def workflow_guidance(workflow):
+    state = workflow['state']
+    if workflow['revision_required']:
+        return (' 当前已选稿件的修订流程（后台核验状态，不是新的选图建议）：'
+            + json.dumps(state, ensure_ascii=False)
+            + '。read_calls里的arguments可直接调用；成功读取后按本工具JSON结构修订。'
+            '要求生成时仅用保存成功的新回执，不调用旧版本。')
+    return (' 仅在本次需要修订所选旧稿时，先按以下已核验参数读取：'
+        + json.dumps(state['read_calls'], ensure_ascii=False) + '。原样执行旧稿无需额外读取或保存。')
+
+
+def workflow_examples(examples, workflow):
+    """Illustrate only the offered stage, never introduce a different design or size."""
+    rows = [row for row in workflow.get('items', ()) if row.get('required_update_fields')]
+    if not rows:
+        return examples
+    sample = next((copy.deepcopy(value) for value in examples if value.get('updates')), None)
+    if sample is None:
+        return []
+    row = rows[0]
+    fields = row['required_update_fields']
+    sample['base'] = copy.deepcopy(row['content_source'])
+    item = {}
+    sample['updates'] = [{'item_index': row['content_source']['item_index'], 'item': item}]
+    if 'options' in fields:
+        item['options'] = {**row.get('saved_options', {}), **{key: value for key, value in row.get('requested_size', {}).items()
+            if key in {'aspect_ratio', 'resolution'}}}
+    if 'materials' in fields:
+        item['materials'] = copy.deepcopy(row.get('saved_materials', []))
+        for material in row['required_changes']['materials']:
+            if material not in item['materials']:
+                item['materials'].append(copy.deepcopy(material))
+    if 'prompt' in fields:
+        item['prompt'] = {'positive': '按已读取的完整原稿逐项保留内容，仅同步本次明确要求的规格。',
+                          'negative': '保留原稿全部禁止项与限制，不增删主体、文字或素材。'}
+    if 'presentation' in fields:
+        item['presentation'] = {key: '保留已读取的本章节完整内容，仅同步与本次规格冲突的要求。' for key in DISPLAY_FIELDS}
+    if 'body' in fields:
+        item['body'] = '保留已读取原稿的全部内容和禁止项，仅按本次明确要求修订规格。'
+    if 'display_prefix' in fields:
+        item['display_prefix'] = '保留原稿展示说明，仅同步本次规格。'
+    sample['continue_execution'] = workflow.get('continue_execution', False)
+    return [sample]
 
 
 def save_recovery_fields(parameters, roots):
@@ -236,8 +293,6 @@ def save_recovery_fields(parameters, roots):
                 collect(array['items'], path + '.' + key + '[]')
     for key in form:
         collect(props[key], key)
-        if key == 'message_source' and key not in required:
-            required[key] = ['message_id']
         if props[key].get('items'):
             collect(props[key]['items'], key + '[]')
     return required, forms

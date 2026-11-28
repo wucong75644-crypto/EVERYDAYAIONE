@@ -164,7 +164,7 @@ async def test_save_repair_returns_exact_short_schema_without_renaming_invalid_f
     await execute(r, p, h, q, [call(co.SAVE, args)])
     result = json.loads(refs.text(p.messages[-1]['content']))
     assert result['code'] == co.INVALID_OBJECT and result['ok'] is False
-    assert result['parameters'] == refs.schema(co.SCHEMA['function']['parameters'])
+    assert result['parameters'] == refs.schema(co.SCHEMA)['function']['parameters']
     assert result['required_fields']['document.items[]'] == ['title', 'body']
     assert result['required_fields']['document.items[].materials[]'] == ['reference', 'role', 'usage']
     material = result['parameters']['properties']['document']['properties']['items']['items']['properties']['materials']['items']

@@ -81,6 +81,10 @@ def _schema_issues(value, schema, root, path, depth, image_hints):
         return issues
     if "anyOf" in schema and not any(not nested(value, branch) for branch in schema['anyOf']):
         add('不符合anyOf参数分支')
+    if "if" in schema:
+        branch = schema.get('then') if not nested(value, schema['if']) else schema.get('else')
+        if branch is not None:
+            issues.extend(nested(value, branch))
     if "allOf" in schema:
         for branch in schema['allOf']:
             issues.extend(nested(value, branch))
@@ -188,3 +192,37 @@ def parse_model_image_arguments(spec, raw):
     except (ValueError, TypeError) as exc:
         raise ToolArgumentValidationError([{"path": "$", "reason": "参数必须是有效 JSON 对象；字段不能重复、数值必须有限"}], parameters) from exc
     return value
+
+
+def argument_syntax_issue(raw, error):
+    """Diagnostic only: never modify or complete the provider's argument text."""
+    text = raw if isinstance(raw, str) else ''
+    position = getattr(error, 'pos', None)
+    if position is None:
+        return {'path': '$', 'reason': str(error), 'character_offset': None,
+                'utf8_byte_offset': None, 'excerpt': text[:200]}
+    stack = []
+    key = None
+    colon = re.compile(r'\s*:')
+    # Tokens inside strings are consumed whole, so braces in authored prose
+    # never affect the diagnostic container path.
+    for match in re.finditer(r'"(?:\\.|[^"\\])*"|[{}\[\]:,]|[^\s{}\[\]:,]+', text[:position]):
+        token = match.group()
+        if token in ('{', '['):
+            parent = stack[-1] if stack else None
+            path = ('$' if parent is None else
+                    parent['path'] + (f"[{parent['index']}]" if parent['array'] else '.' + str(key)))
+            stack.append({'path': path, 'array': token == '[', 'index': 0})
+            key = None
+        elif token in ('}', ']'):
+            if stack:
+                stack.pop()
+        elif token == ',':
+            if stack and stack[-1]['array']:
+                stack[-1]['index'] += 1
+            key = None
+        elif token.startswith('"') and colon.match(text, match.end(), position):
+            key = json.loads(token)
+    return {'path': stack[-1]['path'] if stack else '$', 'reason': str(error),
+            'character_offset': position, 'utf8_byte_offset': len(text[:position].encode('utf-8')),
+            'excerpt': text[max(0, position - 100):position + 100]}

@@ -96,9 +96,8 @@ async def deliver(runtime, request, prepared, blocks, *, execute, finish):
 
 
 def selection_arguments(reference):
-    return {'intent': 'explain', 'request_context': {'focus': 'selected_target',
-        'image_action': 'display_existing', 'target': {'kind': 'image', 'basis': 'explicit_reference',
-            'source_message_id': reference['message_id'], 'content_index': reference['content_index']}}}
+    from services.task_execution.image_history import selection_arguments as arguments
+    return arguments(reference)
 
 
 def selection_rejection(runtime, request, reference):
@@ -112,11 +111,13 @@ def selection_rejection(runtime, request, reference):
             and selected.get('input_revision') == input_revision(runtime, request)):
         return None
     from services.task_execution.reference_boundary import for_runtime, NativeContext
-    args = for_runtime(runtime).context(NativeContext(selection_arguments(reference)))
+    from services.task_execution.image_history import selection_recovery
+    recovery = selection_recovery(runtime, reference)
+    recovery = for_runtime(runtime).context(NativeContext(recovery))
     return {'ok': False, 'accepted': False, 'code': 'REQUEST_TARGET_SELECTION_REQUIRED',
         'message': '已确认用户要求展示旧图，但尚未绑定具体图片，本次未展示。'
                    '核实候选后先单独选择目标；需要看图时先view_image。不要重新生成或换成其他图。',
-        'recovery': {'tool': resolution.SELECT, 'arguments': args}}
+        'recovery': recovery}
 
 
 def stage(runtime, request, blocks):
@@ -126,19 +127,27 @@ def stage(runtime, request, blocks):
 
 
 def recovery_context(runtime, request, blocks):
-    from services.task_execution.image_history import recovered, requires_view
+    from services.task_execution.image_history import recovered, selection_metadata, canonical_reference
     from services.task_execution.reference_boundary import for_runtime, NativeContext
-    candidates = recovered(runtime)
-    examples = [{'reference': image['reference'], 'requires_view_before_selection': requires_view(runtime, image['reference']),
-                 'selection_arguments': selection_arguments(image['reference'])}
-                for image in candidates[:20]]
+    snapshot = resolution.context(runtime) or {}
+    candidates = [copy.deepcopy(image) for row in snapshot.get('requests', ()) for image in row.get('images', ())]
+    candidates += [{**copy.deepcopy(image), 'reference': {'message_id': image['source_message_id'],
+                      'content_index': image['content_index']}} for image in snapshot.get('image_results', ())]
+    candidates += copy.deepcopy(recovered(runtime))
+    examples = []
+    for candidate in candidates:
+        ref = canonical_reference(runtime, candidate['reference'])
+        if any(image['reference'] == ref for image in examples):
+            continue
+        examples.append({'reference': ref, **{key: candidate[key] for key in ('name', 'turn_number') if key in candidate}})
+    selection_metadata(runtime, examples, model_view=True)
     retry = runtime.checkpoint_base.get('_existing_image_recovery_v1', {})
     attempts = retry.get('attempts', 0) if retry.get('input_revision') == input_revision(runtime, request) else 0
     facts = {'continuation_attempt': attempts, 'previous_narrative_is_not_delivery': bool(attempts), 'intent': 'explain', 'image_action': 'display_existing', 'stage': stage(runtime, request, blocks),
         'candidates': examples, 'instruction':
             '本次要求实际展示已有图，尚未完成。查询、看图和口头承诺都不是交付。'
             '尚未找到候选用list_conversation_images，has_more=true可继续翻页；'
-            '需要核图时用read_conversation_text(view_image)，再单独resolve_request_target选择用户指向的图片。'
+            '对每个候选按next_step的tool和arguments继续；需要核图才用view_image，已满足条件才选择。'
             '候选示例不是默认选择，不因只有一张就省略用户语义核对。'
             '目标明确后后台按已校验目标展示；不要重新生成。'
             '确实需要用户选择时单独用respond_without_execution(purpose=clarification)提出具体问题；'
@@ -148,6 +157,11 @@ def recovery_context(runtime, request, blocks):
 
 def offer(runtime, request, tools):
     mode = action(runtime, request)
+    from services.handlers.chat.content_tools import semantic_intent
+    selected = resolution.binding(runtime) or {}
+    if semantic_intent(request, runtime) == 'edit' and resolution.context(runtime) is not None:
+        if selected.get('status') != 'resolved' or selected.get('input_revision') != input_revision(runtime, request):
+            tools = [tool for tool in tools if tool.get('function', {}).get('name') != 'generate_image']
     if mode not in {'display_existing', 'analyze'} or resolution.context(runtime) is None:
         return tools
     ready = mode == 'display_existing' and bool(references(runtime, request))
@@ -192,5 +206,6 @@ def request_continuation(runtime, request, prepared, blocks):
     if draft:
         prepared.messages.append({'role': 'assistant', 'content': draft})
     prepared.pending_display_narrative = None
-    prepared.messages.append({'role': 'system', 'content': recovery_context(runtime, request, blocks)})
+    prepared.messages.append({'role': 'system', 'content': recovery_context(runtime, request, blocks),
+                             '_host_context_kind': 'existing_image_delivery'})
     return True

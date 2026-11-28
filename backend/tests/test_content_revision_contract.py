@@ -110,7 +110,7 @@ async def test_old_reference_contract_is_visible_without_active_skill_and_repair
     # Do not install request context here; target scope integration has its own tests.
     schema = co.save_schema(r)
     assert schema['function']['description'].startswith('按当前参考图提示词方法')
-    offered = content_tools.model_tools([schema], saved_text_available=True,
+    offered = content_tools.model_tools([schema], saved_text_available=True, selected_saved=True,
         reuse_source=intent == 'execute_saved', revise_saved=intent == 'write')[0]
     refs = ImageReferences({'input_message_id': 'current', 'saved_groups': [row]})
     projected = refs.schema(offered)['function']

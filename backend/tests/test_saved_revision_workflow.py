@@ -37,7 +37,7 @@ async def customer_case(indices=(3,), **fields):
 def tools_for(r, q):
     refs = for_runtime(r)
     tools = content_tools.model_tools([co.save_schema(r), build_legacy_catalog().require('generate_image').to_schema()],
-        reuse_source=True, saved_text_available=True)
+        reuse_source=True, saved_text_available=True, selected_saved=True)
     tools = content_revision.offer(r, q, [*tools, content_tools.READ_SCHEMA])
     return {t['function']['name']: t['function'] for t in refs.tools(tools)}
 
@@ -61,13 +61,13 @@ async def test_customer_reads_then_saves_then_can_generate_without_first_old_dra
     Draft202012Validator(offered[content_tools.READ]['parameters']).validate(args)
     assert r.checkpoint_base == original  # Offering tools never grants approval or counts rejections.
     monkeypatch.setattr(content_tools, 'check_source_scope', lambda *args: None)
-    await read(r, p, h, q, row, 3)
+    receipt = await read(r, p, h, q, row, 3)
     offered = tools_for(r, q)
     assert co.SAVE in offered and 'generate_image' not in offered
     assert workflow(offered[co.SAVE])['stage'] == 'revision_required'
     p.content_visible_tools = offered
     old = co.load(r.task_execution_state, ref(row, 3))[2]
-    await execute(r, p, h, q, [call(co.SAVE, {'base': for_runtime(r).encode(ref(row, 3)),
+    await execute(r, p, h, q, [call(co.SAVE, {'base': for_runtime(r).encode(receipt)['content_source'],
         'updates': [{'item_index': 3, 'item': {'body': old.body + '\n2K清晰度。',
             'options': {**old.options, 'resolution': '2K'}}}], 'continue_execution': True}, 'customer-revision')])
     assert json.loads(p.messages[-1]['content'])['ok']

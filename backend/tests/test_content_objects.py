@@ -808,6 +808,8 @@ async def test_plain_answer_still_delivered_when_registration_tool_is_available(
     async def stream(**kwargs):
         from services.handlers.chat.content_tools import model_tools
         projected, = model_tools([co.SCHEMA])
+        from services.task_execution.reference_boundary import ModelReferenceBoundary
+        projected = ModelReferenceBoundary(None).schema(projected)
         assert projected in kwargs['tools']
         assert 'version' not in projected['function']['parameters']['$defs']['ContentDocument']['properties']
         yield StreamChunk(content='普通')
@@ -1700,7 +1702,9 @@ async def test_steer_attachments_project_to_original_turn_with_verified_workspac
     text, visual = entry['content']
     assert text['text'].startswith(directive)
     assert all(item['resource_ref'] in text['text'] for item in attachments)
-    assert visual == {'type': 'image_url', 'image_url': {'url': 'https://cdn.example.test/ref.png'}}
+    assert visual['_visual_reference']['resource_ref'] == attachments[0]['resource_ref']
+    from services.adapters.chat_protocol import chat_messages
+    assert chat_messages([entry])[0]['content'][1] == {'type': 'image_url', 'image_url': {'url': 'https://cdn.example.test/ref.png'}}
     from services.handlers.chat_context.attachments import format_attachments
     initial = format_attachments([{'name': 'brief.txt', 'workspace_path': 'brief.txt'}])
     records = json.loads(text['text'].split('\n')[-1])
@@ -1766,7 +1770,10 @@ def test_steer_visual_input_requires_verified_image_kind(tmp_path, monkeypatch):
     assert ordinary['path'] == 'renamed.png'
     assert verified['visually_present'] is True
     assert urls == ['verified.png']
-    assert images == [{'type': 'image_url', 'image_url': {'url': 'https://cdn.example.test/verified.png'}}]
+    assert images[0]['_visual_reference']['resource_ref'] == bound[1].resource_ref
+    from services.adapters.chat_protocol import chat_messages
+    assert chat_messages([{'role': 'user', 'content': images}])[0]['content'] == [
+        {'type': 'image_url', 'image_url': {'url': 'https://cdn.example.test/verified.png'}}]
 
 
 @pytest.mark.asyncio
