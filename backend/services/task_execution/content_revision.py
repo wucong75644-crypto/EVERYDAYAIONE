@@ -2,31 +2,18 @@
 import copy
 import json
 
-from .contracts import TaskState
 from .methods import content_format_contract
 
 def input_revision(runtime, request):
-    from .reducer import digest
-    from .request_resolution import context
-    checkpoint = runtime.checkpoint_base
-    changes = getattr(getattr(runtime, 'task_user_changes', None), 'items', ())
-    current = [item for item in changes if str(item.owner_task_id) == str(runtime.task_id)]
-    followup = checkpoint.get('_task_followup') or {}
-    original = (checkpoint.get('_task_followup_input_checkpoint') or {}).get('_task_user_changes') or {}
-    prior_ids = {item['event_id'] for item in original.get('items', ())}
-    # Adoption records the already-authenticated input as one new user-change
-    # event. It is the same input, not a new steer invalidating its own read.
-    synthetic = next((item.event_id for item in current
-        if str(item.event_id) not in prior_ids and item.message_sha256 == followup.get('input_sha256')), None)
-    anchor = getattr(request, 'context_anchor', None)
-    return digest([str(getattr(anchor, 'input_message_id', '') or ''), context(runtime),
-        [(str(item.event_id), item.message_sha256) for item in current if item.event_id != synthetic]])
+    from .request_window import input_revision as identity
+    return identity(runtime, request)
 
 
 KEY = '_content_revision_reads_v1'
 READ_GUIDANCE = (
     '修改已有稿件必须先单独用read_conversation_text的content_source读取每个待修改条目。'
     '读取回执同时给出完整item和format_contract；按旧稿要求修订，不以当前是否激活Skill决定旧稿格式。'
+    'content_source绑定所选稿件及版本，后台按该来源解析原任务；读取其他稿件不改变本次选择。'
     '后台核验本次真实读取记录；历史摘要、示例和模型声称已读取均不能代替读取回执。'
     '未修改字段省略，由后台保留；不能用概述代替原稿详细内容。'
     '保存后需要再次修改新版本时先读取新版本；直接执行新回执无需重复读取。'
@@ -50,6 +37,7 @@ def record_read(runtime, request, artifact, record, item_index):
     journal['items'][key] = {
         'artifact_id': artifact.id, 'item_index': item_index, 'sha256': artifact.sha256,
         'revision': record.revision, 'object_key': record.object_key,
+        'has_presentation': bool(record.document.items[item_index - 1].display_prefix),
         'format_contract': content_format_contract(record.presentation_profile)}
     runtime.checkpoint_base[KEY] = journal
     if fresh:
@@ -90,10 +78,8 @@ def selected_format(runtime):
     if target.get('kind') != 'content':
         return None
     artifact_id = target['artifact_id']
-    states = [getattr(runtime, 'task_execution_state', None)]
-    candidate = getattr(runtime, 'task_followup_candidate', None)
-    if candidate and candidate.get('state'):
-        states.append(TaskState.model_validate(candidate['state']))
+    from .content_source import state_for
+    states = [state_for(runtime, {'artifact_id': artifact_id, 'item_index': target.get('item_indices', [1])[0]})]
     for state in states:
         if state is None:
             continue
@@ -118,7 +104,8 @@ def check_call(runtime, request, call):
         return None  # Existing argument validation owns malformed JSON.
     if value.base is None:
         return None
-    state = getattr(runtime, 'task_execution_state', None)
+    from .content_source import state_for
+    state = state_for(runtime, value.base)
     if state and any(b.call_id == call['id'] for b in state.call_bindings):
         return None  # save() verifies the original call hash, never saves anew.
     if state is not None:
@@ -144,7 +131,8 @@ def check_call(runtime, request, call):
 
 def missing_reads(runtime, request, reference, indices):
     from .content_objects import _load_record
-    state = getattr(runtime, 'task_execution_state', None)
+    from .content_source import state_for
+    state = state_for(runtime, reference)
     journal = _journal(runtime)
     proofs = journal.get('items', {}) if journal.get('input_revision') == input_revision(runtime, request) else {}
     needed = []
@@ -175,30 +163,62 @@ def pending_reads(runtime, request):
         artifact_id=target['artifact_id'], item_index=target['item_indices'][0]), target['item_indices'])
 
 
+def public_fields(runtime, value):
+    """Project diagnostic metadata only; never rewrite authored text or IDs."""
+    public = copy.deepcopy(value)
+    if (selected_format(runtime) or {}).get('profile_id') == 'reference-prompts-v1':
+        def visit(node):
+            if isinstance(node, list):
+                for item in node:
+                    visit(item)
+            elif isinstance(node, dict):
+                if 'required_update_fields' in node:
+                    node['required_update_fields'] = [{'body': 'prompt', 'display_prefix': 'presentation'}.get(key, key)
+                        for key in node['required_update_fields']]
+                for key in ('items', 'pending_action', 'recovery'):
+                    if key in node:
+                        visit(node[key])
+        visit(public)
+    return public
+
+
+def model_view(runtime, value):
+    """One public field projection for stage messages and tool contracts."""
+    from .image_reference_catalog import for_runtime
+    from .reference_boundary import ModelReferenceBoundary
+    return ModelReferenceBoundary(for_runtime(runtime)).value(public_fields(runtime, value))
+
+
 def offer(runtime, request, tools):
     """Expose saved-text actions only after their actual prerequisites are met."""
     from .content_objects import SAVE
-    from .saved_image_revision import pending_execution
-    from .image_reference_catalog import for_runtime
-    from .reference_boundary import ModelReferenceBoundary
-    needed = pending_reads(runtime, request)
-    revisions = pending_execution(runtime, request)
+    from .content_action import evaluate
+    view = evaluate(runtime, request)
+    needed = view.reads
+    source_error = getattr(runtime, '_content_source_error', None)
+    if source_error is not None:
+        result = []
+        for original in tools:
+            name = original.get('function', {}).get('name')
+            if name in {SAVE, 'generate_image'}:
+                continue
+            tool = copy.deepcopy(original)
+            if name == 'read_conversation_text':
+                tool['function']['description'] += ' 当前指定稿件来源尚未核实：' + json.dumps(source_error.repair(), ensure_ascii=False)
+            result.append(tool)
+        return result
+    revisions = view.revisions
     if not needed and not revisions:
         return tools
-    boundary = ModelReferenceBoundary(for_runtime(runtime))
     workflow = {'stage': 'read_required' if needed else 'revision_required',
         'read_required_for_revision': bool(needed),
         'read_calls': [{'tool': 'read_conversation_text', 'arguments': args} for args in needed],
         'items': revisions, 'next_tool': 'read_conversation_text' if needed else SAVE,
         'steps': ['read_saved_item', 'save_revision', 'execute_saved_revision']}
     # Convert the complete object, not just field names embedded in prose.
-    public = boundary.value(workflow)
+    public = model_view(runtime, workflow)
     from services.handlers.chat.content_tools import semantic_intent
     public['continue_execution'] = semantic_intent(request, runtime) != 'write'
-    if (selected_format(runtime) or {}).get('profile_id') == 'reference-prompts-v1':
-        for item in public['items']:
-            item['required_update_fields'] = [{'body': 'prompt', 'display_prefix': 'presentation'}.get(key, key)
-                for key in item.get('required_update_fields', ())]
     from .request_resolution import binding
     selected_indices = set(((binding(runtime) or {}).get('target') or {}).get('item_indices', ()))
     blocked_indices = {row['content_source']['item_index'] for row in revisions}
@@ -238,7 +258,6 @@ def materialize_sections(runtime, request, call):
     """Merge section deltas only after a server-observed read of this version."""
     from . import content_objects as co
     from .contracts import TaskError
-    from .direct_loop import content_followup_state
     from .reference_prompt_format import PROFILE, encode_item, decode_save
     from .reference_boundary import NativeArguments, NativeToolCall
     if call['name'] != co.SAVE:
@@ -254,7 +273,8 @@ def materialize_sections(runtime, request, call):
     rejection = check_call(runtime, request, call)
     if rejection is not None:
         raise TaskError(rejection['code'])
-    state = runtime.task_execution_state or content_followup_state(runtime)
+    from .content_source import state_for
+    state = state_for(runtime, value.base)
     artifact, record, _ = co._load_record(state, value.base)
     if not co.is_current(state, artifact.id):
         raise TaskError('CONTENT_BASE_VERSION_CHANGED')
@@ -277,3 +297,34 @@ def materialize_sections(runtime, request, call):
             {'item_index': update.item_index, 'item': delta}]}, lambda *_: old.title)
         raw['item'] = normalized['updates'][0]['item']
     return NativeToolCall(name=call['name'], arguments=NativeArguments(arguments), call_id=call['id'])
+
+
+def saved_reference(runtime, request, target):
+    from . import content_objects as co
+    journal = _journal(runtime)
+    if journal.get('input_revision') != input_revision(runtime, request):
+        return None
+    state = getattr(runtime, 'task_execution_state', None)
+    artifacts = {a.id: a for a in co.objects(state)}
+    if target['artifact_id'] not in artifacts:
+        return None
+    from .saved_image_revision import execution_requirement
+    _, record, _ = co._load_record(state, {'artifact_id': target['artifact_id'],
+                                         'item_index': target['item_indices'][0]})
+    required = {i for i in target['item_indices'] if execution_requirement(runtime, request,
+        co.ContentReference(artifact_id=target['artifact_id'], item_index=i),
+        options=record.document.items[i - 1].options, materials=record.document.items[i - 1].materials,
+        revision=record.revision)}
+    identity, covered = target['artifact_id'], set()
+    for proof in journal.get('saved', ()):
+        if proof['base_artifact_id'] != identity:
+            continue
+        artifact = artifacts.get(proof['artifact_id'])
+        if (artifact and artifact.sha256 == proof['sha256']
+                and co.ContentRecord.model_validate_json(artifact.inline_text).base_artifact_id == identity
+                and co.ContentRecord.model_validate_json(artifact.inline_text).object_key == record.object_key):
+            identity = artifact.id
+            covered.update(proof['item_indices'])
+    if identity != target['artifact_id'] and required <= covered and co.is_current(state, identity):
+        return {'artifact_id': identity, 'item_index': target['item_indices'][0]}
+    return None

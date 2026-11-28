@@ -26,11 +26,12 @@ async def test_current_query_and_display_with_completed_customer_history(content
     prior = Path(os.environ['REQUEST_HISTORY_REPLAY_ROOT'])
     rows = json.loads((prior / 'request-context-customer-results.json').read_text())
     scenario = os.environ.get('REQUEST_CONTEXT_REPLAY_SCENARIO')
-    resize = scenario == 'resize'
+    historical_resize = scenario == 'historical_resize'
+    resize = scenario in {'resize', 'historical_resize'}
     text_revision = scenario == 'text_revision'
     image_edit = scenario in {'edit', 'display_edit'}
     made = next(row for row in rows if row['case'] == 'saved_draft_resize_and_generate')
-    cutoff_name = ('reference_skill_three_drafts' if resize else
+    cutoff_name = ('reference_skill_three_drafts' if resize and not historical_resize else
                    'saved_draft_resize_and_generate' if text_revision else 'new_task_no_generation')
     cutoff = next(row for row in rows if row['case'] == cutoff_name)
     actual = made['completed_images'][0]
@@ -49,7 +50,7 @@ async def test_current_query_and_display_with_completed_customer_history(content
                 table = command.split(' (')[0].split('.')[-1]
                 if values and not table.startswith('skill_') and table != 'conversation_skill_bindings':
                     with c.cursor().copy(command.removesuffix(';')) as target: target.write(values)
-            initial = cutoff['checkpoint'].get('_task_execution') if resize or text_revision else None
+            initial = cutoff['checkpoint'].get('_task_execution') if (resize and not historical_resize) or text_revision else None
             restored = c.execute('SELECT to_jsonb(s) FROM agent_task_states s WHERE root_task_id=%s', (initial['root_task_id'],)).fetchone()[0] if initial else None
             cutoff_queue = c.execute('SELECT queue_sequence FROM tasks WHERE id=%s', (cutoff['task_id'],)).fetchone()[0]
             c.execute('DELETE FROM agent_task_events')
@@ -84,7 +85,8 @@ async def test_current_query_and_display_with_completed_customer_history(content
                 assert len(images) == 1 and images[0].get('source_message_id')
                 displays.append(displayed)
             assert images[0]['source_message_id'] == actual['receipt']['message_id']
-        text = ('第三个做成一张图，正方形，一千就行。' if resize else
+        text = ('前面蓝白灯塔的第三个方案，做成一张图，正方形，一千就行。' if historical_resize else
+                '第三个做成一张图，正方形，一千就行。' if resize else
                 '第三个清楚点，改成两千，其他别改。先不用出图。' if text_revision else
                 '还是最早那张灯塔图，只把桌布换成浅蓝色，封面的图案和文字别动。' if image_edit else
                 '更早的图片也翻一下，最早那张蓝白灯塔图再发我看看，不用重新做。')
@@ -92,7 +94,8 @@ async def test_current_query_and_display_with_completed_customer_history(content
         if resize or text_revision:
             from services.task_execution import content_objects as co
             from services.task_execution.contracts import TaskState
-            original = co.catalog(TaskState.model_validate(cutoff['checkpoint']['_task_execution']))[-1]
+            prior_draft = next(row for row in rows if row['case'] == 'text_only_resolution_revision') if historical_resize else cutoff
+            original = co.catalog(TaskState.model_validate(prior_draft['checkpoint']['_task_execution']))[-1]
             revised = co.catalog(TaskState.model_validate(reply['checkpoint']['_task_execution']))[-1]
             assert original['object_key'] == revised['object_key'] and original['items'][:2] == revised['items'][:2]
             assert revised['items'][2]['options']['aspect_ratio'] == '1:1'

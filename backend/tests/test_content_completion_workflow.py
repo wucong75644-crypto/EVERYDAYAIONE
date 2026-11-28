@@ -17,7 +17,7 @@ from tests.test_content_objects import registered, ref, run_content_loop
 from tests.test_content_revision_contract import configure_reference
 from tests.test_model_directed_loop import execute
 from tests.test_saved_revision_workflow import customer_case, tools_for, workflow
-from tests.test_task_execution_model_bridge import call
+from tests.model_update_fixtures import call, model_arguments
 
 
 async def revision_case(reference=False, adopted=True, intent='write'):
@@ -98,6 +98,8 @@ async def test_actual_read_then_model_stop_then_save_advances_same_main_loop(mon
             assert len(rounds) == 4 and phase(r, q) is None, p.messages[-2:]
             yield StreamChunk(content='第三个已保存，其他两个保留原样。', finish_reason='stop')
             return
+        if name == co.SAVE:
+            args = model_arguments(args)
         Draft202012Validator(functions[name]['parameters']).validate(args)
         yield StreamChunk(tool_calls=[ToolCallDelta(index=0, id=f'completion-{len(rounds)}', name=name,
                             arguments_delta=json.dumps(args, ensure_ascii=False))], finish_reason='tool_calls')

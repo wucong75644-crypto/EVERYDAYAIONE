@@ -137,7 +137,8 @@ def create_resolver(handler,request,context):
             from services.handlers.image_size_requirements import resolve_size_requirement
             native=native_resolver(handler,request,context)
             actor=getattr(native.owner,'_actor_runtime',None)
-            projection=getattr(actor,'workflow_projection',None) or request.params.get('_ecom_workflow') or {}
+            from .request_window import projection as request_projection
+            projection=request_projection(actor, request)
             action=projection.get('intent')
             intent,previous=native.size_context(use_previous=action not in {'write','generate','write_then_submit_images'})
             return resolve_size_requirement(dict(arguments),references,intent=intent,previous=previous,action=action)

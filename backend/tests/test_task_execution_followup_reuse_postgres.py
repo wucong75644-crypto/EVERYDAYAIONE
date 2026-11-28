@@ -535,6 +535,10 @@ def test_followup_restores_current_video_discovery_for_selected_call(current_fol
         fresh = connection.execute('SELECT state FROM conversation_turn_checkpoints WHERE task_id=%s',
             (new['task'],)).fetchone()[0]
         fresh[content_tools.STATE] = {'task_id': new['task'], 'names': ['generate_video']}
+        fresh['_content_response_v1'] = {'version': 1, 'phase': 'proposed',
+            'owner_task_id': new['task'], 'handoff_root_task_id': old['task'],
+            'calls': [{'id': 'video-selection', **selected_call}],
+            'calls_sha256': __import__('services.task_execution.reducer', fromlist=['digest']).digest([{'id': 'video-selection', **selected_call}])}
         fresh['messages'].extend([
             {'role': 'assistant', 'content': None, 'tool_calls': [
                 {'id': 'video-selection', 'type': 'function', 'function': selected_call},

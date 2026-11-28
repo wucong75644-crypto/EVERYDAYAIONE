@@ -17,7 +17,7 @@ from tests.semantic_fixtures import semantic_request
 from tests.test_content_objects import registered, ref
 from tests.test_content_revision_contract import read
 from tests.test_model_directed_loop import execute
-from tests.test_task_execution_model_bridge import call
+from tests.model_update_fixtures import call
 
 
 async def customer_case(indices=(3,), **fields):
@@ -73,6 +73,9 @@ async def test_customer_reads_then_saves_then_can_generate_without_first_old_dra
     assert json.loads(p.messages[-1]['content'])['ok']
     latest, = co.catalog(r.task_execution_state)
     assert latest['revision'] == row['revision'] + 1
+    from services.task_execution.content_source import prepare_selected
+    await prepare_selected(r, q, p.execution_context)
+    assert r._content_source_error is None
     assert 'generate_image' in tools_for(r, q)
     assert saved_image_revision.check(r, q, [call('generate_image', {'content_source': ref(latest, 3)})],
         r.task_execution_state) == {}

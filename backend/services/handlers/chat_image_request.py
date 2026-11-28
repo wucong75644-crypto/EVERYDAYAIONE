@@ -407,7 +407,8 @@ class ChatImageInputResolver:
         actor = getattr(getattr(self, 'owner', None), '_actor_runtime', None)
         if semantic_context is None:
             from services.agent.image.ecommerce_planner.workflow import ImageRequestContext
-            raw = (getattr(actor, 'workflow_projection', None) or {}).get('request_context')
+            from services.task_execution.request_window import projection
+            raw = projection(actor).get('request_context')
             semantic_context = ImageRequestContext.model_validate(raw or {})
         intent = semantic_context.size_for(item_index)
         if 'width' in intent or 'height' in intent:

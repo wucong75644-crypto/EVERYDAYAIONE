@@ -1,6 +1,8 @@
 """An explicit current-input display directive, never an implicit latest image."""
 from __future__ import annotations
 
+from services.task_execution.request_window import projection as request_projection
+
 import copy
 import hashlib
 import json
@@ -13,7 +15,7 @@ FAILED = '这次未能展示所选图片，没有重新生成。所选图片暂�
 
 
 def action(runtime, request):
-    projection = getattr(runtime, 'workflow_projection', None) or (getattr(request, 'params', None) or {}).get('_ecom_workflow') or {}
+    projection = request_projection(runtime, request)
     if projection.get('intent') != 'explain':
         return None
     return (projection.get('request_context') or {}).get('image_action')

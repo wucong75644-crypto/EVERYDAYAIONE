@@ -171,17 +171,16 @@ def pending_execution(runtime, request):
         requirement = execution_requirement(runtime, request, reference, options=item.get('options', {}),
             materials=inputs[index - 1] if len(inputs) >= index else (), revision=group['revision'])
         if requirement:
-            from .direct_loop import content_followup_state
-            has_presentation = False
-            for state in (runtime.task_execution_state, content_followup_state(runtime)):
-                if state is None:
-                    continue
-                try:
-                    _, _, saved_item = co.load(state, reference)
-                except (ValueError, TypeError):
-                    continue
+            from .content_source import state_for
+            saved = state_for(runtime, reference)
+            if saved is None:
+                # Missing source facts cannot mean an absent presentation.
+                from .content_revision import _journal
+                proof = _journal(runtime).get('items', {}).get(f'{reference.artifact_id}:{index}', {})
+                has_presentation = proof.get('has_presentation', True)
+            else:
+                _, _, saved_item = co.load(saved, reference)
                 has_presentation = bool(saved_item.display_prefix)
-                break
             result.append({'content_source': reference.model_dump(mode='json', exclude_none=True), **requirement,
                 'required_update_fields': required_update_fields(requirement['required_changes'], has_presentation=has_presentation)})
     return result

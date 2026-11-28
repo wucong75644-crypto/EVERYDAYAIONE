@@ -18,7 +18,7 @@ def check(runtime, request, arguments):
     if pending is None and semantic_intent(request, runtime) != 'write':
         return None
     frame = semantic_context(request, runtime)
-    expected = max(frame.media.wait_for, default=1) if frame else 1
+    expected = max((frame.confirmation or frame.media).wait_for, default=1) if frame else 1
     state = getattr(runtime, 'task_execution_state', None)
     objects = {}
     for artifact in co.objects(state):
@@ -34,6 +34,8 @@ def check(runtime, request, arguments):
     count = previous.get('control_rejections', 0) + 1
     runtime.checkpoint_base[KEY] = {**previous, 'input_revision': revision, 'control_rejections': count}
     stopped = count >= 2
+    from .content_revision import public_fields
+    pending = public_fields(runtime, pending) if pending else None
     return {'ok': False, 'accepted': False,
         'code': 'CONTENT_TEXT_DELIVERY_STOPPED' if stopped else 'CONTENT_TEXT_DELIVERY_REQUIRED',
         'message': (incomplete_text(pending) if pending else '本次方案尚未完整保存，未提交图片任务。') if stopped else GUIDANCE,

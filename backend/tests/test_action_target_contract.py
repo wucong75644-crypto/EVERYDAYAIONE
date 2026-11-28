@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
+from services.handlers.chat import content_tools
 from jsonschema import Draft202012Validator
 
 from services.agent.image.ecommerce_planner.workflow import ImageRequestContext, WorkflowBinding
@@ -62,7 +63,9 @@ async def test_bad_correction_does_not_mutate_selection_approval_or_workflow(mon
     assert workflow.value.model_dump(mode='json') == old_value
     workflow.save.assert_not_awaited()
     r.workflow_projection = {'intent': wrong}
-    assert rr.check(r, q, call('generate_image', {'content_source': {'artifact_id': 'old-a', 'item_index': 1}}))[0] == contract.CODE
+    assert content_tools.semantic_intent(q, r) == 'execute_saved'
+    assert rr.check(r, q, call('generate_image', {'content_source': {'artifact_id': 'old-a', 'item_index': 1}})) is None
+    assert rr.binding(r) == original
 
 
 @pytest.mark.parametrize('intent', contract.CONTENT_INTENTS)

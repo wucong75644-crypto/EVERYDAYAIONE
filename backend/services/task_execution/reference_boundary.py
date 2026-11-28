@@ -124,6 +124,9 @@ class ModelReferenceBoundary:
         if isinstance(value.get('_content_workflow'), dict):
             from .reference_prompt_format import workflow_guidance
             result['description'] = result.get('description', '') + workflow_guidance(value['_content_workflow'])
+        if result.get('function', {}).get('name') == 'save_task_text':
+            from .content_update_wire import project
+            result['function'] = project(result['function'])
         return result
 
     def arguments(self, value, *, tool=None) -> NativeArguments:
@@ -131,6 +134,9 @@ class ModelReferenceBoundary:
             raise TaskError('REFERENCE_ARGUMENTS_ALREADY_PROJECTED')
         self._check_selectors(value)
         decoded = (self.catalog.decode_call(tool, value) if tool else self.catalog.decode(value)) if self.catalog else value
+        if not self.catalog and tool == 'save_task_text':
+            from .content_update_wire import native_updates
+            decoded = native_updates(decoded)
         return NativeArguments(decoded)
 
     def _check_selectors(self, value):
@@ -154,11 +160,14 @@ class ModelReferenceBoundary:
     def repair(self, error, offered=None):
         from .content_reference_catalog import ContentReferenceError
         from .reference_prompt_format import FormatArgumentsError, MODEL_GUIDANCE
-        if isinstance(error, ArgumentSyntaxError):
+        from .content_source import ContentSourceError
+        if isinstance(error, ContentSourceError):
+            result = error.repair()
+        elif isinstance(error, ArgumentSyntaxError):
             result = {'ok': False, 'accepted': False, 'code': str(error),
                 'submission_state': 'not_dispatched', 'issues': error.issues,
                 'recovery': {'action': 'repair_arguments', 'preserve_original': True},
-                'message': '原调用未执行、未保存。修正JSON语法或重复字段，按当前parameters保持原操作形式、'
+                'message': '原调用未执行、未保存。修正JSON语法或重复字段，按本次tools中的工具定义保持原操作形式、'
                     '原目标、所有正文、素材和规格，不重新改写方案；后台不会自动补删括号。'}
         elif isinstance(error, ContentReferenceError):
             result = self.catalog.contents.repair(error)
@@ -173,12 +182,14 @@ class ModelReferenceBoundary:
                 'message': '本次未执行。引用不存在、已过期或类型冲突；保留用户指定的目标，不自动换图或换稿。' + REFERENCE_GUIDANCE}
         if offered is not None:
             public = self.schema({'function': offered})['function']
-            result['parameters'] = public['parameters']
+            if not isinstance(error, ArgumentSyntaxError):
+                result['parameters'] = public['parameters']
             if isinstance(error, FormatArgumentsError):
                 result['message'] = public['description'] + ' 仅修正错误字段，保留目标、原文、素材和规格。'
             if isinstance(error, ArgumentSyntaxError):
                 from .reference_prompt_format import save_recovery_fields
-                result['required_fields'], result['allowed_forms'] = save_recovery_fields(result['parameters'], set())
+                result['required_fields'], result['allowed_forms'] = save_recovery_fields(public['parameters'], set())
+                result['tool_name'] = public.get('name')
                 result['message'] += ' 当前只允许所附allowed_forms的完整根对象，不能提交空对象或单独的条目；不要丢弃已有字段。'
             if str(error) == 'CONTENT_OBJECT_INVALID' and not isinstance(error, ArgumentSyntaxError):
                 from .reference_prompt_format import save_recovery_fields
@@ -186,7 +197,8 @@ class ModelReferenceBoundary:
                          for issue in getattr(error, 'issues', ()) if issue.get('path', '').startswith('$.')}
                 result['required_fields'], result['allowed_forms'] = save_recovery_fields(result['parameters'], roots)
                 result['message'] = public['description'] + ' 仅修正错误字段，保留目标、原文、素材和规格。'
-        return result
+        from .content_update_wire import public_error
+        return public_error(result)
 
 
 def for_runtime(runtime):

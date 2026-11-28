@@ -183,7 +183,12 @@ def groups(runtime):
     unique = {}
     for group in result:
         unique.setdefault((group['artifact_id'], group['revision']), group)
-    return list(unique.values())
+    latest = {}
+    for group in unique.values():
+        key = (group.get('root_task_id'), group.get('object_key') or group['artifact_id'])
+        latest[key] = max(latest.get(key, 0), group['revision'])
+    return [group for group in unique.values() if group['revision'] == latest[
+        (group.get('root_task_id'), group.get('object_key') or group['artifact_id'])]]
 
 
 def active_request(snapshot):
@@ -293,7 +298,7 @@ def model_context(runtime):
     return projected
 
 
-def freeze_frame(runtime, request, frame, intent):
+def freeze_frame(runtime, request, frame, intent, *, image_count=None):
     """One admission contract for router choices and later model corrections."""
     raw = frame.target.model_dump(mode='json', exclude_none=True) if frame.target else None
     if raw:
@@ -321,7 +326,17 @@ def freeze_frame(runtime, request, frame, intent):
                 if inputs and all(inputs) and any(m.usage == 'input' and (
                         m.reference.message_id, m.reference.content_index) not in allowed for m in frame.materials):
                     raise TaskError('REQUEST_TARGET_SAVED_INPUTS_CHANGED')
-    return freeze(runtime, request, raw, focus=frame.focus)
+    selected = next((g for g in groups(runtime) if raw and raw['kind'] == 'content'
+        and g['artifact_id'] == raw['artifact_id'] and g['revision'] == raw['revision']), None)
+    from .request_window import normalize_media
+    normalize_media(frame, selected)
+    result = freeze(runtime, request, raw, focus=frame.focus)
+    if result is not None:
+        description = frame.model_dump(mode='json', exclude_none=True, exclude={'target', 'focus'})
+        if raw and raw['kind'] != 'content' and frame.confirmation is not None:
+            description['media'] = {**description['media'], 'wait_for': [], 'wait_all': False}
+        result['action'] = {'intent': intent, 'image_count': image_count, 'request_context': description}
+    return result
 
 
 def freeze(runtime, request, raw, *, focus=None):
@@ -489,8 +504,14 @@ def check(runtime, request, call, *, root_task_id=None):
         state = getattr(runtime, 'task_execution_state', None)
         from .content_objects import objects
         fresh = state and any(a.id == ref.get('artifact_id') and str(a.source_task_id) == value['execution_task_id'] for a in objects(state))
-        if fresh:
+        if fresh and target['kind'] != 'content':
             return None
+        if fresh and ref.get('artifact_id') != target.get('artifact_id'):
+            from .content_revision import saved_reference
+            saved = saved_reference(runtime, request, target)
+            if (saved and saved['artifact_id'] == ref.get('artifact_id')
+                    and ref.get('item_index') in target.get('item_indices', ())):
+                return None
         if (target['kind'] != 'content' or ref.get('artifact_id') != target.get('artifact_id')
                 or ref.get('item_index') not in target.get('item_indices', ())):
             return ('REQUEST_TARGET_CONTENT_MISMATCH', '调用引用的方案与本次目标不一致。本次未执行，请使用目标版本，不能改用旧成品。')

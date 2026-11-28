@@ -935,6 +935,9 @@ async def _run_loop(
             from dataclasses import replace
             prepared.execution_context = replace(prepared.execution_context, feature_flags={
                 **prepared.execution_context.feature_flags, 'knowledge_refs_present': True})
+        if runtime is not None and content_tools.enabled(runtime, prepared.execution_context):
+            from services.task_execution.content_source import prepare_selected
+            await prepare_selected(runtime, request, prepared.execution_context)
         discovered_names = set(prepared.tool_context.discovered_tools)
         if runtime:
             discovered_names.update(content_tools.checkpoint_state(runtime).get("names", ()))
@@ -1658,8 +1661,9 @@ async def _read_turn_impl(
         model_messages, tools = ModelReferenceBoundary(image_references).model_input(
             model_messages, tools, plain_text_registration=getattr(prepared, 'plain_image_text_delivery', False))
         if draft_pending:
+            from services.task_execution.content_revision import model_view as content_model_view
             model_messages.append({'role': 'system', 'content': '[Current saved draft action]\n'
-                + json.dumps(ModelReferenceBoundary(image_references).value(draft_pending), ensure_ascii=False)
+                + json.dumps(content_model_view(runtime, draft_pending), ensure_ascii=False)
                 + '\n按当前next_tool继续。需要修订时按实际读取条目填写base+updates；'
                   '要求出图时continue_execution=true，只改文字为false。保存成功回执才表示已保存；'
                   '实际执行回执才表示已提交。缺少必要信息时用clarification询问，不以说明代替保存或执行。'})
@@ -2046,6 +2050,8 @@ async def _execute_tools(**kwargs):
     original_state=runtime.task_execution_state
     original_skills=runtime.skill_runtime
     original_checkpoint=copy.deepcopy(runtime.checkpoint_base)
+    from services.task_execution.request_window import capture_projection, restore_projection
+    window_projection = capture_projection(runtime, kwargs['prepared'], kwargs['request'])
     original_plan=runtime.task_direct_plan
     original_plan_owner=runtime.task_direct_plan_owner
     original_plan_id=runtime.task_direct_plan_id
@@ -2057,6 +2063,7 @@ async def _execute_tools(**kwargs):
             runtime.task_execution_state=original_state
             runtime.skill_runtime=original_skills
             runtime.checkpoint_base=original_checkpoint
+            restore_projection(runtime, kwargs['prepared'], kwargs['request'], window_projection)
             runtime.task_direct_plan=original_plan
             runtime.task_direct_plan_owner=original_plan_owner
             runtime.task_direct_plan_id=original_plan_id
@@ -2140,7 +2147,8 @@ async def _execute_tools_impl(
                         if issues:
                             raise FormatArgumentsError(issues[:16], code=content_objects.INVALID_OBJECT)
                 decoded_calls.append(NativeToolCall(name=call['name'], arguments=decoded, call_id=call['id'])
-                    if image_references is not None else call)
+                    if image_references is not None or (call['name'] == content_objects.SAVE
+                        and call['name'] not in syntax_owners) else call)
             except ArgumentSyntaxError as error:
                 if (call['name'] in syntax_owners
                         or (call['name'] == 'generate_image' and not repair_chat_images)):
@@ -2347,10 +2355,11 @@ async def _execute_tools_impl(
                             if pending_revisions and 'generate_image' not in visible:
                                 blocked.add('generate_image')
                             if query == 'generate_image' and pending_revisions and exact_tool is None:
+                                from services.task_execution.content_revision import public_fields
                                 result = {'ok': True, 'tools': [], 'status': 'revision_before_execution',
                                     'message': '当前已选旧稿须先读取并修订保存，再执行成功回执中的新版。',
                                     'recovery': {'steps': ['read_saved_item', 'save_revision', 'execute_saved_revision'],
-                                                 'items': pending_revisions}}
+                                                 'items': public_fields(runtime, {'items': pending_revisions})['items']}}
                             elif required_reads:
                                 result = {'ok': True, 'tools': [], 'status': 'read_before_revision',
                                     'message': '保存工具在成功读取所选旧稿后提供。先调用read_conversation_text。',
@@ -2530,8 +2539,14 @@ async def _execute_tools_impl(
             return None
         if scoped_content and not recovery_only and not content_output_registration:
             from services.task_execution.content_revision import check_call as check_revision_read, materialize_sections
+            from services.task_execution.content_source import prepare_calls, call_state
+            source_errors = await prepare_calls(runtime, request, calls, prepared.execution_context)
             read_errors, normalized_calls = {}, []
             for call in calls:
+                if call['id'] in source_errors:
+                    read_errors[call['id']] = reference_boundary.repair(source_errors[call['id']],
+                        getattr(prepared, 'model_visible_tools', {}).get(call['name']))
+                    continue
                 result = check_revision_read(runtime, request, call)
                 if result is not None:
                     read_errors[call['id']] = result
@@ -2563,12 +2578,10 @@ async def _execute_tools_impl(
                     if block.get('tool_call_id') in previewed_call_ids:
                         await sink.on_block_update(block)
                 return None
-        original_owner = getattr(runtime, 'task_followup_candidate', None)
         if scoped_content and not recovery_only and not content_output_registration:
-            from services.task_execution.direct_loop import select_content_owner
-            await select_content_owner(runtime, calls)
-            confirmation_state = runtime.task_execution_state or content_followup_state(runtime)
+            from services.task_execution.content_source import call_state
             for call in calls:
+                confirmation_state = call_state(runtime, call)
                 gate = item_confirmation.check(call, confirmation_state, '', semantic=media,
                     allow_new=(content_tools.semantic_intent(request,runtime) in {'generate','edit','write_then_submit_images'}
                         or call['name'] in content_tools.requested_delivery_tools(request,runtime)))
@@ -2578,8 +2591,10 @@ async def _execute_tools_impl(
                     item_confirmation.record_decision(runtime, request, confirmation_state, media)
         if scoped_content and not recovery_only and not content_output_registration and not direct_errors and not repair_rejections:
             from services.task_execution import saved_image_revision
-            revision_errors = saved_image_revision.check(runtime, request, calls,
-                runtime.task_execution_state or content_followup_state(runtime))
+            from services.task_execution.content_source import call_state
+            revision_errors = {}
+            for call in calls:
+                revision_errors.update(saved_image_revision.check(runtime, request, [call], call_state(runtime, call)))
             if revision_errors:
                 prepared.messages.append(assistant)
                 for call in calls:
@@ -2602,17 +2617,20 @@ async def _execute_tools_impl(
                     if block.get('tool_call_id') in previewed_call_ids:
                         await sink.on_block_update(block)
                 return None
+        handoff = None
+        if scoped_content and not recovery_only and not content_output_registration:
+            from services.task_execution.direct_loop import resolve_content_handoff
+            handoff = await resolve_content_handoff(runtime, calls)
         selected_content = (
             not recovery_only and getattr(prepared, 'content_controls_available', False)
             and scoped_content and not direct_errors and not repair_rejections
             and not (turn_text.strip() and any(c['name'] == content_objects.SAVE for c in calls))
-            and can_resume_content_calls(runtime, calls, request, server_image_plan=server_image_plan)
+            and can_resume_content_calls(runtime, calls, request, server_image_plan=server_image_plan, source=handoff)
         )
-        if not selected_content:
-            runtime.task_followup_candidate = original_owner
         if selected_content or any(c['name']=='resume_task_execution' for c in calls):
             await resume_from_model(runtime,prepared,blocks,calls,assistant,turn=turn,
-                model_round=next_model_round,build_checkpoint=_build_replay_context,selected_content=selected_content)
+                model_round=next_model_round,build_checkpoint=_build_replay_context,
+                selected_content=selected_content,source=handoff,request=request)
             return None
         if any(c['name'] == content_objects.SAVE for c in calls):
             content_save_started = time.monotonic()
@@ -2637,13 +2655,11 @@ async def _execute_tools_impl(
                                 and not approves_revision(candidate or content_followup_state(runtime), save_value,
                                     content_tools.semantic_context(request, runtime))):
                             raise TaskError('CONTENT_CONFIRMATION_EXISTING_ITEM_REQUIRED')
-                        conditions = save_value.confirmation or media
-                        wait_all = conditions.wait_all
-                        saved_confirmation_items = confirmation_items
-                        if conditions is not None:
-                            saved_confirmation_items = tuple(conditions.wait_for)
-                        if wait_all and save_value.document is not None:
-                            saved_confirmation_items = tuple(range(1, len(save_value.document.items) + 1))
+                        from services.task_execution.item_confirmation import MediaDirective
+                        requested = content_tools.semantic_context(request, runtime)
+                        conditions = (save_value.confirmation or (requested.confirmation if requested else None)
+                            or (MediaDirective() if save_value.base is not None else media))
+                        # The content owner expands future conditions after resolving the full document.
                         save_call = call
                         # Mixed immediate/waiting delivery is expressed by the same
                         # structured save (continue_execution), never guessed from prose.
@@ -2662,7 +2678,8 @@ async def _execute_tools_impl(
                         if (not content_tools.semantic_runtime(runtime) and turn_text.strip() and not visible_prefix
                                 and (not save_value.continue_execution or save_value.show_content)):
                             raise TaskError(content_objects.DRAFT_CONFLICT)
-                        related_state = candidate or content_followup_state(runtime)
+                        from services.task_execution.content_source import call_state
+                        related_state = candidate or call_state(runtime, call)
                         if (save_value.document is not None and not server_image_plan
                                 and (content_tools.selects_previous_item(request, runtime)
                                      or content_tools.revises_saved_item(request, runtime))):
@@ -2696,10 +2713,7 @@ async def _execute_tools_impl(
                             checked_message=checked_message, display_gaps=indexed_gaps,
                             author_request=content_tools.visual_author_request(request, content_output_registration, runtime),
                             allow_implicit_execution_materials=server_image_plan,
-                            confirmation_items=saved_confirmation_items,
-                            request_context=save_context,
-                            confirmation_tool=conditions.tool
-                                if saved_confirmation_items else None,
+                            request_context=save_context, waiting_conditions=conditions,
                         )
                         result = {'ok':True,'object':next(row for row in content_objects.catalog(candidate, for_model=True)
                                                          if row['artifact_id']==artifact.id)}

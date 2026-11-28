@@ -13,7 +13,7 @@ from services.task_execution.direct_loop import context_message, schemas, image_
 from services.task_execution.reducer import digest
 from services.tools.catalog import build_capability_catalog
 from tests.test_model_directed_loop import case, execute
-from tests.test_task_execution_model_bridge import call
+from tests.model_update_fixtures import call
 from tests.test_skill_storage import storage  # noqa: F401
 
 

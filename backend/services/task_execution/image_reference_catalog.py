@@ -128,8 +128,9 @@ class ImageReferences:
     def decode_call(self, name, value):
         result = self.decode(value)
         if name == 'save_task_text':
+            from .content_update_wire import native_updates
             from .reference_prompt_format import decode_save
-            result = decode_save(result, lambda identity, index: self.contents.items.get((identity, index)))
+            result = decode_save(native_updates(result), lambda identity, index: self.contents.items.get((identity, index)))
         return result
 
     def encode(self, value):
@@ -235,6 +236,8 @@ class ImageReferences:
                 function['parameters']['examples'] = [self.contents.example(v) for v in function['parameters']['examples']]
                 function['parameters']['examples'] = [v for v in function['parameters']['examples']
                     if not _issues(v, function['parameters'], image_hints=False)]
+            from .content_update_wire import project as flat_updates
+            result['function'] = function = flat_updates(function)
             if profile == 'reference-prompts-v1' or (function['parameters'].get('properties', {}).get('document', {}).get('properties', {}).get('reference_analysis')):
                 function['description'] += ' 完整JSON案例（示例不代表本次目标，引用须按真实目录选择）：' + json.dumps(
                     function['parameters']['examples'], ensure_ascii=False)
@@ -247,7 +250,8 @@ class ImageReferences:
             for reference in (True, False):
                 native_examples = revision_examples(reference)
                 from .reference_prompt_format import encode_example
-                visible = [self.contents.example(self.encode(encode_example(v) if reference else v)) for v in native_examples]
+                from .content_update_wire import flat_examples
+                visible = [flat_examples(self.contents.example(self.encode(encode_example(v) if reference else v))) for v in native_examples]
                 function['description'] = function['description'].replace(
                     json.dumps(native_examples, ensure_ascii=False), json.dumps(
                         function['parameters'].get('examples', visible) if function.get('name') == 'save_task_text' else visible,
@@ -257,6 +261,8 @@ class ImageReferences:
                 json.dumps(selection_examples(), ensure_ascii=False), json.dumps(
                     self.contents.example(selection_examples()), ensure_ascii=False))
             function['description'] = function['description'].replace('artifact_id', 'content_ref')
+            from .content_update_wire import description as update_description
+            function['description'] = update_description(function['description'])
         if isinstance(function, dict) and function.get('name') in {'generate_image', 'resolve_request_target', 'read_conversation_text'}:
             function['description'] = function.get('description', '') + ' 图片选择使用当前目录image_ref，后台解析真实图片身份，不填写图片消息ID和位置。'
         message_handle = next((handle for handle, ref in self.references.items() if 'message_id' in ref), None)
@@ -438,7 +444,8 @@ class ImageReferences:
             result['required_fields'] = required
             result['allowed_forms'] = forms
         result['message'] += ' 仅按所附parameters修复出错字段，保留原操作形式、全部正文、素材用途及规格。'
-        return result
+        from .content_update_wire import public_error
+        return public_error(result)
 
     def tools(self, tools, *, plain_text_registration=False):
         # Pure fresh text already has a frozen, durable host-registration path.
@@ -504,7 +511,8 @@ class ImageReferences:
                             if (call.get('id') in self.contents.authored_calls
                                     or self.contents.profiles.get(base.get('artifact_id')) == 'reference-prompts-v1'):
                                 from .reference_prompt_format import encode_example
-                                function['arguments'] = json.dumps(encode_example(arguments), ensure_ascii=False)
+                                from .content_update_wire import flat_examples
+                                function['arguments'] = json.dumps(flat_examples(encode_example(arguments)), ensure_ascii=False)
                         except (ValueError, TypeError, AttributeError, KeyError):
                             pass  # Failed/unknown historical forms remain evidence, never repaired by guessing.
                     function['arguments'] = self.text(function['arguments'])

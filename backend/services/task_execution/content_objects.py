@@ -738,7 +738,7 @@ def registration_source_images(request, runtime, *, semantic_context=None):
 
 def save(runtime, call, registry, *, has_image_attachments=False, source_images=(), checked_message=None,
          display_gaps=(), author_request=None, allow_implicit_execution_materials=False, confirmation_items=(),
-         confirmation_tool=None, request_context=None):
+         confirmation_tool=None, request_context=None, waiting_conditions=None):
     from services.tools import ToolCall
     from .model_directed import record_calls, call_binding
     from .direct_loop import active_image_methods
@@ -749,8 +749,8 @@ def save(runtime, call, registry, *, has_image_attachments=False, source_images=
     if request_context is None and '_media_decisions_v1' in getattr(runtime,'checkpoint_base',{}):
         from services.agent.image.ecommerce_planner.workflow import ImageRequestContext
         request_context = ImageRequestContext()
-    if value.confirmation is not None:
-        conditions = value.confirmation
+    conditions = value.confirmation or waiting_conditions
+    if conditions is not None:
         selected = tuple(range(1, len(value.document.items) + 1)) if conditions.wait_all and value.document else tuple(conditions.wait_for)
         confirmation_items = tuple(sorted(set(confirmation_items) | set(selected)))
         confirmation_tool = conditions.tool if selected else confirmation_tool
@@ -830,9 +830,9 @@ def save(runtime, call, registry, *, has_image_attachments=False, source_images=
             if update.item_index in indices or update.item_index > len(items): raise TaskError('CONTENT_UPDATE_INVALID')
             items[update.item_index-1] = ContentItem.model_validate({**items[update.item_index-1].model_dump(mode='json'),**update.item.model_dump(mode='json',exclude_unset=True)}); indices.add(update.item_index)
         document = previous.model_copy(update={'items':tuple(items)})
-    if value.confirmation is not None and value.confirmation.wait_all:
+    if conditions is not None and conditions.wait_all:
         confirmation_items = tuple(range(1,len(document.items)+1))
-        confirmation_tool = value.confirmation.tool
+        confirmation_tool = conditions.tool
     from .methods import presentation_issues, ContentPresentationError
     issues = presentation_issues(document, presentation_profile)
     if issues:

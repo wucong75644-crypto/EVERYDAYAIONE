@@ -27,10 +27,12 @@ MODEL_GUIDANCE = (
     '省略的章节由后台从本次已读取且版本一致的原稿保留；传入章节必须给出该章节的完整新正文。'
     '不改展示说明时省略presentation，'
     '不改执行正文时省略prompt；options若提供须保留未改选项，不换素材省略materials。'
-    '新建每条素材放document.items[].materials，修订素材放updates[].item.materials，顶层没有materials。'
+    '新建每条素材放document.items[].materials，修订素材放updates[].materials，顶层没有materials。'
+    '修订updates每项的item_index与prompt、presentation、options、materials直接并列，不加item包装。'
     '修改规格时，同步修订prompt和presentation中与新规格冲突的要求，保留其他细节；不能只改options留下旧规格。'
     '只看方案或只改文字continue_execution=false；明确要求改稿并执行才设true，'
     '保存成功后按新回执执行，保存本身不派发生图。用户等待条件用confirmation保留，不授予批准。'
+    '案例正文是独立短稿，仅说明合法结构，不是原稿替代品；实际修订必须基于读取的完整内容。'
 )
 
 
@@ -221,7 +223,7 @@ def project_tool(function):
     examples = [encode_example(v) for v in parameters.get('examples', ())]
     if examples and 'base' in examples[0]:
         partial = copy.deepcopy(examples[0])
-        partial['updates'][0]['item'] = {'prompt': {'positive': '保留原图主体和未改内容，仅调整明确要求的画面。'}}
+        partial['updates'][0]['item'] = {'prompt': {'positive': '单件产品居中展示，柔和自然光，产品边缘完整，表面纹理清晰。'}}
         examples.append(partial)
     function['parameters'] = shape(parameters)
     function['parameters']['examples'] = examples
@@ -250,6 +252,11 @@ def workflow_examples(examples, workflow):
         return []
     row = rows[0]
     fields = row['required_update_fields']
+    size = {**row.get('saved_options', {}), **row.get('requested_size', {})}
+    specification = '、'.join(f'{key}={size[key]}' for key in ('aspect_ratio', 'resolution') if key in size)
+    positive = '保留产品外形、数量、封面图案与文字、背景、拍摄视角和光影。' + (
+        '输出规格：' + specification + '。' if specification else '产品居中，边缘完整，细节清晰。')
+    negative = '禁止改变产品结构、数量与封面文字；禁止水印、模糊和拉伸变形。'
     sample['base'] = copy.deepcopy(row['content_source'])
     item = {}
     sample['updates'] = [{'item_index': row['content_source']['item_index'], 'item': item}]
@@ -262,14 +269,17 @@ def workflow_examples(examples, workflow):
             if material not in item['materials']:
                 item['materials'].append(copy.deepcopy(material))
     if 'prompt' in fields:
-        item['prompt'] = {'positive': '按已读取的完整原稿逐项保留内容，仅同步本次明确要求的规格。',
-                          'negative': '保留原稿全部禁止项与限制，不增删主体、文字或素材。'}
+        item['prompt'] = {'positive': positive, 'negative': negative}
     if 'presentation' in fields:
-        item['presentation'] = {key: '保留已读取的本章节完整内容，仅同步与本次规格冲突的要求。' for key in DISPLAY_FIELDS}
+        item['presentation'] = {
+            'scheme_content': '单件产品展示，封面图案与文字清楚可见，产品轮廓完整。',
+            'visual_settings': '柔和自然光，表面纹理清晰，阴影自然，颜色准确。',
+            'reference_usage': '沿用参考图的产品结构、背景、拍摄视角和光影。' + (
+                '输出规格：' + specification + '。' if specification else '')}
     if 'body' in fields:
-        item['body'] = '保留已读取原稿的全部内容和禁止项，仅按本次明确要求修订规格。'
+        item['body'] = positive + '\n' + negative
     if 'display_prefix' in fields:
-        item['display_prefix'] = '保留原稿展示说明，仅同步本次规格。'
+        item['display_prefix'] = '单件产品展示，柔和自然光，产品结构与封面文字清晰。' + specification
     sample['continue_execution'] = workflow.get('continue_execution', False)
     return [sample]
 

@@ -674,10 +674,11 @@ def content_followup_state(runtime):
     return None
 
 
-async def select_content_owner(runtime, calls):
+async def resolve_content_handoff(runtime, calls):
     """Bind a path offered by the scoped catalog; recheck it under the current Turn lease."""
-    groups = getattr(runtime, 'task_content_groups', ())
-    if not groups or runtime.task_execution_state is not None:
+    from .request_resolution import groups as content_groups
+    groups = content_groups(runtime)
+    if runtime.task_execution_state is not None:
         return
     selected = set()
     for call in calls:
@@ -689,19 +690,26 @@ async def select_content_owner(runtime, calls):
             return
     roots = {row['root_task_id'] for row in groups if row['artifact_id'] in selected}
     if len(roots) == 1 and selected <= {row['artifact_id'] for row in groups}:
-        source = await runtime.read_content_root(roots.pop())
+        from .content_source import _cache
+        sources = [_cache(runtime).get(identity) for identity in selected]
+        resolved = sources[0] if sources and all(sources) else None
+        reader = getattr(runtime, 'read_content_root', None)
+        source = resolved.handoff if resolved is not None else (await reader(roots.pop()) if reader else None)
         if source:
-            runtime.task_followup_candidate = source
+            return source
 
 
-def can_resume_content_calls(runtime, calls, request, *, server_image_plan=False):
+def can_resume_content_calls(runtime, calls, request, *, server_image_plan=False, source=None):
     from services.handlers.chat.content_tools import INPUT_TOOLS, bind_image_selection, validate_model_input
     from .content_objects import SAVE, SaveContent, compile_input, is_current, load
 
     revision = len(calls) == 1 and calls[0]['name'] == SAVE
     if not calls or (not revision and any(call['name'] not in INPUT_TOOLS for call in calls)):
         return False
-    state = content_followup_state(runtime)
+    from .request_resolution import binding
+    if (binding(runtime) or {}).get('action') is not None and source is None:
+        return False
+    state = TaskState.model_validate(source['state']) if source is not None else content_followup_state(runtime)
     if state is None:
         return False
     try:
@@ -744,38 +752,27 @@ def restored_content_calls(runtime, visible_tools):
             or changes[0].message_sha256 != followup.get('input_sha256')):
         return []
 
-    messages = initial.get('messages', ())
-    selected = set()
-    for message in reversed(messages):
-        if message.get('role') == 'tool':
-            try:
-                result = json.loads(message.get('content', ''))
-            except (TypeError, ValueError):
-                return []
-            if (isinstance(result, dict) and result.get('content_followup') is True
-                    and result.get('status') == 'resuming' and result.get('accepted') is False):
-                selected.add(message.get('tool_call_id'))
-            continue
-        if message.get('role') == 'system':
-            continue
-        original = message.get('tool_calls') or ()
-        if message.get('role') != 'assistant' or not original or selected != {c['id'] for c in original}:
-            return []
-        if any(c['function']['name'] not in visible_tools for c in original):
-            return []
-        from .reference_boundary import NativeArguments, NativeToolCall
-        return [NativeToolCall(name=c['function']['name'],
-                    arguments=NativeArguments(json.loads(c['function']['arguments'])),
-                    call_id=c['id'] + ':continued') for c in original]
-    return []
+    from .content_delivery import KEY
+    proposal = initial.get(KEY) or {}
+    if (proposal.get('phase') != 'proposed' or proposal.get('handoff_root_task_id') != str(state.root_task_id)
+            or proposal.get('owner_task_id') != str(runtime.task_id)):
+        return []
+    original = proposal.get('calls') or []
+    if (not original or proposal.get('calls_sha256') != digest(original)
+            or any(c['name'] not in visible_tools for c in original)):
+        return []
+    from .reference_boundary import NativeArguments, NativeToolCall
+    return [NativeToolCall(name=c['name'], arguments=NativeArguments(json.loads(c['arguments'])),
+        call_id=c['id'] + ':continued') for c in original]
+
 
 
 async def resume_from_model(runtime,prepared,blocks,calls,assistant,*,turn,model_round,build_checkpoint,
-                            selected_content=False):
+                            selected_content=False, source=None, request=None):
     """The main model chooses affiliation; the original fenced transfer commits it."""
     from .followup import FollowupObservation,apply
     from .content_objects import SAVE
-    source=followup_source(runtime)
+    source=source or followup_source(runtime)
     chosen = calls if selected_content else [c for c in calls if c['name'] == 'resume_task_execution']
     observation=None;error_code=None
     try:
@@ -815,5 +812,10 @@ async def resume_from_model(runtime,prepared,blocks,calls,assistant,*,turn,model
         await runtime.safe_point(SafePoint.AFTER_TOOL,replay_payload=build_checkpoint(
             prepared.messages,blocks,turn,next_model_round=model_round))
         return
+    if selected_content:
+        from .content_delivery import stage_response
+        await stage_response(runtime, request=request, prepared=prepared, blocks=blocks, turn=turn,
+            model_round=model_round, text='', calls=calls, finish='tool_calls', build_checkpoint=build_checkpoint,
+            handoff=source)
     await apply(runtime,prepared,blocks,observation.model_dump_json(),False,
-        model_round=model_round,turn=turn,build_checkpoint=build_checkpoint)
+        model_round=model_round,turn=turn,build_checkpoint=build_checkpoint, source=source)

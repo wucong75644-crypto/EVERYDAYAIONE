@@ -18,6 +18,8 @@ GUIDANCE = (
     '引用实际图片写新方案仍是write或write_then_submit_images，不因为有图片就改成edit。'
     '保存稿改规格后出图，先read_conversation_text读取原条目，再save_task_text用base+updates保存，'
     '最后generate_image提交新回执的content_source；实际图片编辑才用image_ref+edit_instruction。'
+    '普通ready稿件直接执行不填写media.approved，也不新增等待条件；等待条目以真实稿件目录为准。'
+    '修订稿件新增后续等待必须在save_task_text.confirmation明确表达，执行批准不能当作等待条件。'
     '当前动作及目标已正确时不用重复纠正；本工具不产生出图批准或取消等待条件。'
 )
 

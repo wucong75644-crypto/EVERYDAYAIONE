@@ -17,7 +17,7 @@ from services.handlers.chat import content_tools
 from tests.test_content_objects import registered, ref
 from tests.test_content_revision_contract import configure_reference, read
 from tests.test_model_directed_loop import execute
-from tests.test_task_execution_model_bridge import call
+from tests.model_update_fixtures import call, model_arguments
 
 
 def refs_with_drafts():
@@ -122,7 +122,7 @@ async def test_old_draft_read_short_save_and_execution_preserve_other_items_and_
     update = {'base': selected, 'updates': [{'item_index': 3, 'item': {'options': {'aspect_ratio': '1:1', 'resolution': '2K'}}}],
               'continue_execution': False}
     public_save = refs.tools(content_tools.model_tools([co.save_schema(r)], revise_saved=True, saved_text_available=True))[0]['function']
-    Draft202012Validator(public_save['parameters']).validate(update)
+    Draft202012Validator(public_save['parameters']).validate(model_arguments(update))
     p.content_visible_tools = {co.SAVE: content_tools.model_tools([co.save_schema(r)], revise_saved=True,
                                                                 saved_text_available=True)[0]['function']}
     rr.freeze(r, q, {'kind': 'content', 'basis': 'explicit_reference',
@@ -269,8 +269,8 @@ async def test_public_reference_schema_is_enforced_before_native_save(restored):
         assert result['code'] == 'CONTENT_READ_REQUIRED'
     else:
         assert result['code'] == co.INVALID_OBJECT
-        assert any(i['path'] == '$.updates[0].item.body' for i in result['issues'])
-        patch = result['parameters']['properties']['updates']['items']['properties']['item']
+        assert any(i['path'] == '$.updates[0].body' for i in result['issues'])
+        patch = result['parameters']['properties']['updates']['items']
         assert 'prompt' in patch['properties'] and 'body' not in patch['properties']
     assert r.task_execution_state == before
     h._execute_tool_calls.assert_not_awaited()

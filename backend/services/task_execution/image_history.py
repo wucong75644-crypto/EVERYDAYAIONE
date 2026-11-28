@@ -108,7 +108,8 @@ def requires_view(runtime, reference, *, model_view=False):
 
 
 def selection_purpose(runtime):
-    projection = getattr(runtime, 'workflow_projection', None) or (getattr(runtime, 'checkpoint_base', {}) or {}).get('_ecom_workflow') or {}
+    from .request_window import projection as request_projection
+    projection = request_projection(runtime) or (getattr(runtime, 'checkpoint_base', {}) or {}).get('_ecom_workflow') or {}
     return (projection['intent'], (projection.get('request_context') or {}).get('image_action')) if projection.get('intent') else None
 
 

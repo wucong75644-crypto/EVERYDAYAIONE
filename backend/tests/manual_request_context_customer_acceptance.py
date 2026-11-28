@@ -23,6 +23,23 @@ pytest_plugins = ['tests.test_content_objects_postgres']
 pytestmark = pytest.mark.skipif(os.environ.get('RUN_REQUEST_CONTEXT_ACCEPTANCE') != '1', reason='Explicit real model/provider acceptance')
 
 
+def assert_saved_draft(reply, task_id, *, count=3):
+    """No image tasks is not evidence that a text-only request succeeded."""
+    from services.task_execution import content_objects as co
+    from services.task_execution.contracts import TaskState
+    checkpoint = reply.get('checkpoint') or {}
+    delivery = checkpoint.get('_content_response_v1') or {}
+    assert delivery.get('phase') == 'committed' and delivery.get('owner_task_id') == str(task_id), 'No committed save for this request'
+    assert delivery.get('delivery_complete') is not False
+    state = TaskState.model_validate(checkpoint['_task_execution'])
+    artifact = next(a for a in co.objects(state) if a.id == delivery['artifact_id'])
+    assert str(artifact.source_task_id) == str(task_id)
+    record = co.ContentRecord.model_validate_json(artifact.inline_text)
+    assert len(record.document.items) == count
+    assert all(item.title.strip() and item.body.strip() for item in record.document.items)
+    return next(g for g in co.catalog(state) if g['artifact_id'] == artifact.id)
+
+
 def install_reference(dsn, env):
     """Use the exact already-published method body, not a replacement prompt."""
     from services.skills.contracts import SkillPackage, PublishRevision
@@ -75,7 +92,7 @@ async def test_simple_customer_history_sizes_and_new_request_windows(content_db,
             file = env['root'] / 'request-context-customer-results.json'
             file.write_text(json.dumps(results, ensure_ascii=False, indent=2, default=str)); file.chmod(0o600)
 
-        async def turn(name, text, *, attachments=(), selected=None, generate=False, images=0):
+        async def turn(name, text, *, attachments=(), selected=None, generate=False, images=0, saved=False):
             row = {'case': name, 'user_text': text, 'status': 'running'}
             results.append(row); persist(); start = time.monotonic(); offset = len(env['wire'])
             print(json.dumps({'case': name, 'stage': 'sending'}, ensure_ascii=False), flush=True)
@@ -91,6 +108,8 @@ async def test_simple_customer_history_sizes_and_new_request_windows(content_db,
                 state = (reply.get('checkpoint') or {}).get('_task_execution')
                 if state:
                     row['catalog'] = co.catalog(TaskState.model_validate(state))
+                if saved:
+                    row['saved_draft'] = assert_saved_draft(reply, facts['task'])
                 row['wire_errors'] = wire_errors(env['wire'][offset:])
                 row['status'] = 'passed'
                 return row
@@ -103,24 +122,32 @@ async def test_simple_customer_history_sizes_and_new_request_windows(content_db,
 
         photo = Path(os.environ['REQUEST_CONTEXT_PRODUCT_IMAGE'])
         upload = await env['upload'](facts, photo, '客户测试/手账主体.jpg')
-        first = await turn('reference_skill_three_drafts', '帮我想三个蓝白灯塔封面方案，本子的样子别改。前两个横着，三比二、一千，第三个竖着，三比四、两千。先看方案，不出图。', attachments=[upload], selected=selection)
+        first = await turn('reference_skill_three_drafts', '帮我想三个蓝白灯塔封面方案，本子的样子别改。前两个横着，三比二、一千，第三个竖着，三比四、两千。先看方案，不出图。', attachments=[upload], selected=selection, saved=True)
         group = first['catalog'][-1]
         assert [i['options']['aspect_ratio'] for i in group['items']] == ['3:2', '3:2', '3:4']
         assert [i['options']['resolution'] for i in group['items']] == ['1K', '1K', '2K']
         assert all(any(m['usage'] == 'input' for m in item['materials']) for item in group['items'])
-        made = await turn('saved_draft_resize_and_generate', '第三个做成一张图，正方形，一千就行。', images=1, generate=True)
+        made = await turn('saved_draft_resize_and_generate', '第三个做成一张图，正方形，一千就行。', images=1, generate=True, saved=True)
         assert made['native'][0]['native']['mode'] == 'image_to_image'
         assert made['native'][0]['native']['references'][0]['content_sha256'] == hashlib.sha256(photo.read_bytes()).hexdigest()
         original_image = made['completed_images'][0]
         source_message = original_image['receipt']['message_id']
         source_hash = original_image['sha256']
         previous = made['catalog'][-1]
-        changed = await turn('text_only_resolution_revision', '第三个清楚点，改成两千，其他别改。先不用出图。')
+        changed = await turn('text_only_resolution_revision', '第三个清楚点，改成两千，其他别改。先不用出图。', saved=True)
         revised = changed['catalog'][-1]
         assert revised['object_key'] == previous['object_key']
         assert revised['items'][:2] == previous['items'][:2]
         assert revised['items'][2]['options']['resolution'] == '2K'
-        await turn('new_task_no_generation', '换个新任务，想三个绿叶封面方案，本子还是这个样子。先看方案，不要出图。')
+        new_task = await turn('new_task_no_generation', '换个新任务，想三个绿叶封面方案，本子还是这个样子。先看方案，不要出图。', saved=True)
+        assert new_task['saved_draft']['object_key'] != revised['object_key']
+        if os.environ.get('REQUEST_CONTEXT_CROSS_TASK_RESIZE') == '1':
+            cross = await turn('cross_task_old_draft_resize_and_generate',
+                '前面蓝白灯塔的第三个方案，做成一张图，正方形，一千就行。', images=1, generate=True, saved=True)
+            assert cross['catalog'][-1]['object_key'] == revised['object_key']
+            assert cross['catalog'][-1]['items'][:2] == revised['items'][:2]
+            assert cross['catalog'][-1]['items'][2]['options']['resolution'] == '1K'
+
         upload_shown = await turn('display_original_upload_before_lighthouse', '最早上传的本子原图也发我看看，不用重新做。')
         upload_parts = upload_shown['message']['content']
         upload_parts = json.loads(upload_parts) if isinstance(upload_parts, str) else upload_parts
@@ -146,11 +173,18 @@ def test_saved_customer_evidence():
     raw = (root / 'request-context-customer-results.json').read_bytes()
     evidence = (root / 'evidence.json').read_bytes()
     rows = json.loads(raw)
-    assert [row['case'] for row in rows] == ['reference_skill_three_drafts', 'saved_draft_resize_and_generate',
+    names = ['reference_skill_three_drafts', 'saved_draft_resize_and_generate',
         'text_only_resolution_revision', 'new_task_no_generation', 'display_original_upload_before_lighthouse',
         'find_and_display_old_lighthouse', 'edit_same_historical_image']
+    cross_rows = [row for row in rows if row['case'] == 'cross_task_old_draft_resize_and_generate']
+    if cross_rows:
+        names.insert(4, 'cross_task_old_draft_resize_and_generate')
+    assert [row['case'] for row in rows] == names
     assert all(row['status'] == 'passed' for row in rows)
-    first, made, changed, new_task, upload_shown, shown, edited = rows
+    first, made, changed, new_task, upload_shown, shown, edited = [next(r for r in rows if r['case'] == name)
+        for name in names if name != 'cross_task_old_draft_resize_and_generate']
+    for row in (first, made, changed, new_task, *cross_rows):
+        assert_saved_draft(row, row['task_id'])
     original = first['catalog'][-1]
     assert [item['options'] for item in original['items']] == [
         {'aspect_ratio': '3:2', 'resolution': '1K'}, {'aspect_ratio': '3:2', 'resolution': '1K'},
@@ -165,7 +199,8 @@ def test_saved_customer_evidence():
     assert revised['items'][2]['options'] == {'aspect_ratio': '1:1', 'resolution': '2K'}
     assert new_task['catalog'][-1]['object_key'] != original['object_key']
     assert new_task['catalog'][-1]['revision'] == 1
-    assert sum(len(row['native']) for row in rows) == 2
+    extra = len(cross_rows)
+    assert sum(len(row['native']) for row in rows) == 2 + extra
     native = made['native'][0]['native']
     assert (native['mode'], native['aspect_ratio'], native['resolution']) == ('image_to_image', '1:1', '1K')
     assert native['references'][0]['content_sha256'] == hashlib.sha256(
@@ -178,13 +213,13 @@ def test_saved_customer_evidence():
     assert not shown['native'] and not changed['native'] and not new_task['native']
     assert edited['native'][0]['native']['mode'] == 'image_to_image'
     assert edited['native'][0]['native']['references'][0]['content_sha256'] == image['sha256']
-    for row in (made, edited):
+    for row in (made, edited, *cross_rows):
         result, = row['completed_images']
         assert result['status'] == 'completed'
         assert hashlib.sha256(Path(result['local_file']).read_bytes()).hexdigest() == result['sha256']
     failures = wire_errors(json.loads(evidence)['wire'])
     assert not failures, failures
-    audit = {'status': 'passed', 'customer_turns': len(rows), 'completed_images': 2,
+    audit = {'status': 'passed', 'customer_turns': len(rows), 'completed_images': 2 + extra,
         'real_tool_errors': failures, 'source_sha256': hashlib.sha256(raw).hexdigest(),
         'wire_sha256': hashlib.sha256(evidence).hexdigest()}
     (root / 'verified-customer-audit.json').write_text(json.dumps(audit, ensure_ascii=False, indent=2))

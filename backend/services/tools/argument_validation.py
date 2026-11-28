@@ -223,6 +223,13 @@ def argument_syntax_issue(raw, error):
             key = None
         elif token.startswith('"') and colon.match(text, match.end(), position):
             key = json.loads(token)
-    return {'path': stack[-1]['path'] if stack else '$', 'reason': str(error),
+    diagnostic = {}
+    actual = text[position:position + 1]
+    if stack and actual in ('}', ']'):
+        expected = ']' if stack[-1]['array'] else '}'
+        if actual != expected:
+            diagnostic = {'kind': 'container_not_closed', 'expected_token': expected, 'actual_token': actual,
+                'message': f"{stack[-1]['path']} 的{'数组' if stack[-1]['array'] else '对象'}尚未闭合，遇到了 {actual}；应先核对该容器的 {expected}。"}
+    return {'path': stack[-1]['path'] if stack else '$', 'reason': str(error), **diagnostic,
             'character_offset': position, 'utf8_byte_offset': len(text[:position].encode('utf-8')),
             'excerpt': text[max(0, position - 100):position + 100]}

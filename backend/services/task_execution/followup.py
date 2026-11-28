@@ -73,8 +73,8 @@ def payload(source,current,*,task_id,turn_id,model_round,usage,observation):
     return result
 
 
-async def apply(runtime,prepared,blocks,text,has_tool_calls,*,model_round,turn,build_checkpoint):
-    source=runtime.task_followup_candidate
+async def apply(runtime,prepared,blocks,text,has_tool_calls,*,model_round,turn,build_checkpoint,source=None):
+    source=source or runtime.task_followup_candidate
     try:
         observation=FollowupObservation.model_validate_json(text)
         if has_tool_calls or any(not q.strip() or q not in source['message'] for q in observation.evidence):raise ValueError()

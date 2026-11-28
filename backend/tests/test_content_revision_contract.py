@@ -15,6 +15,7 @@ from services.task_execution.image_reference_catalog import ImageReferences
 from tests.test_content_objects import registered, ref
 from tests.test_model_directed_loop import execute
 from tests.test_task_execution_model_bridge import call
+from tests.model_update_fixtures import call as model_call
 
 
 def configure_reference(runtime, row):
@@ -53,7 +54,7 @@ async def test_model_cannot_save_or_adopt_without_read_then_actual_read_unlocks_
     before = r.task_execution_state
     r.task_followup_adopt = AsyncMock()
     save = call(co.SAVE, {'base': ref(row, 3), 'updates': [{'item_index': 3, 'item': {'body': '第三项修订后的完整正文。'}}]}, 'revision')
-    await execute(r, p, h, q, [save])
+    await execute(r, p, h, q, [model_call(save['name'], json.loads(save['arguments']), save['id'])])
     result = json.loads(p.messages[-1]['content'])
     assert result['code'] == 'CONTENT_READ_REQUIRED'
     assert result['recovery']['calls'] == [{'content_source': {'artifact_id': row['artifact_id'], 'item_index': 3}}]
@@ -63,7 +64,7 @@ async def test_model_cannot_save_or_adopt_without_read_then_actual_read_unlocks_
     result = await read(r, p, h, q, row, 3)
     assert result['ok'] and result['format_contract']['profile_id'] is None
     assert result['item']['body'] == '完整正文3，文字 ORIGINAL-3\n保持原产品结构，禁止水印。\n不能变形，条目限制3。'
-    await execute(r, p, h, q, [save])
+    await execute(r, p, h, q, [model_call(save['name'], json.loads(save['arguments']), save['id'])])
     assert json.loads(p.messages[-1]['content'])['ok']
     latest, = co.catalog(r.task_execution_state)
     _, document, item = co.load(r.task_execution_state, ref(latest, 3))
@@ -129,7 +130,7 @@ async def test_old_reference_contract_is_visible_without_active_skill_and_repair
     assert result['format_contract'] == content_format_contract(REFERENCE_PROMPTS_PROFILE)
     bad = {'base': ref(row, 3), 'updates': [{'item_index': 3, 'item': {'body': '漏掉标题的正文\n\n## 负面提示词\n不要水印。'}}]}
     before = r.task_execution_state
-    await execute(r, p, h, q, [call(co.SAVE, bad, 'bad-presentation')])
+    await execute(r, p, h, q, [model_call(co.SAVE, bad, 'bad-presentation')])
     result = json.loads(p.messages[-1]['content'])
     assert result['code'] == co.PRESENTATION_INCOMPLETE
     assert result['issues'] == [{'path': '$.updates[0].item.body', 'reason': '缺少必需章节：完整生图提示词'}]
@@ -137,7 +138,7 @@ async def test_old_reference_contract_is_visible_without_active_skill_and_repair
     assert r.task_execution_state == before
     fixed = copy.deepcopy(bad)
     fixed['updates'][0]['item']['body'] = '## 完整生图提示词\n修订后的完整封面提示词。\n\n## 负面提示词\n不要水印。'
-    await execute(r, p, h, q, [call(co.SAVE, fixed, 'fixed-presentation')])
+    await execute(r, p, h, q, [model_call(co.SAVE, fixed, 'fixed-presentation')])
     assert json.loads(p.messages[-1]['content'])['ok']
     latest, = co.catalog(r.task_execution_state)
     _, doc, _ = co.load(r.task_execution_state, ref(latest, 3))

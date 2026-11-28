@@ -6,7 +6,6 @@ original operation ledgers, current authorization and input-revision fences.
 from __future__ import annotations
 
 import copy
-import hashlib
 import json
 import time
 
@@ -18,12 +17,8 @@ MAX_BYTES = 1024 * 1024
 
 
 def input_revision(runtime, request):
-    anchor = getattr(request, 'context_anchor', None)
-    changes = getattr(getattr(runtime, 'task_user_changes', None), 'items', ())
-    values = [str(getattr(anchor, 'input_message_id', '') or ''),
-              str(getattr(anchor, 'base_revision', '') or ''),
-              [(str(i.event_id), str(i.message_sha256)) for i in changes]]
-    return hashlib.sha256(json.dumps(values, sort_keys=True).encode()).hexdigest()
+    from .request_window import input_revision as identity
+    return identity(runtime, request)
 
 
 def pending_response(runtime, request):
@@ -44,10 +39,14 @@ def pending_response(runtime, request):
     return None
 
 
-async def stage_response(runtime, request, prepared, blocks, turn, model_round, text, calls, finish, build_checkpoint, *, source='tool', control_pending=False):
+async def stage_response(runtime, request, prepared, blocks, turn, model_round, text, calls, finish, build_checkpoint, *, source='tool', control_pending=False, handoff=None):
     value = {'version': 1, 'phase': 'proposed', 'input_revision': input_revision(runtime, request),
              'model_round': model_round, 'text': text, 'calls': copy.deepcopy(calls), 'finish_reason': finish,
              'projection_source': source}
+    if handoff is not None:
+        from .reducer import digest
+        value.update(handoff_root_task_id=str(handoff['state']['root_task_id']), owner_task_id=str(runtime.task_id),
+            calls_sha256=digest(value['calls']))
     if control_pending:
         value['control_pending']=True
     previous = runtime.checkpoint_base.get(KEY) or {}

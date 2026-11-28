@@ -85,7 +85,7 @@ _SOURCE_RECOVERY = {
         'reload_source', '重新读取当前会话中用户指定的成图并核对引用。仍无法确认时请用户选择底图。'),
     'CONTENT_SOURCE_REQUIRED': ('reload_source', '从当前成果目录选取来源。需要时先用会话读取工具读取原稿。'),
     'CONTENT_OBJECT_UNAVAILABLE_OR_CHANGED': ('reload_source', '重新读取当前目录，使用选定条目的当前版本。'),
-    'CONTENT_BASE_VERSION_CHANGED': ('reload_source', '重新读取当前目录中的最新版，核对同一条目。'),
+    'CONTENT_BASE_VERSION_CHANGED': ('reload_source', '核对用户指定版本和当前目录，重新读取同一稿件；不自动换成最新版。'),
     'CONTENT_ITEM_UNAVAILABLE': ('reload_source', '核对当前目录的条目编号。多个候选无法区分时请用户选择。'),
     'CONTENT_SOURCE_IMAGE_SELECTION_REQUIRED': ('reload_source', '核对该条目的可选原图。用户意图明确时选择对应原图，否则请用户选择。'),
     'CONTENT_IMAGE_SELECTION_CONFLICT': ('repair_arguments', '按本轮意图只填写一种原图选择。'),

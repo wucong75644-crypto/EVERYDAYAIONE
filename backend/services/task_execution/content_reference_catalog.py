@@ -16,6 +16,7 @@ class ContentReferences:
         self.references, self.reverse, self.items = {}, {}, {}
         self.selectable = set()
         self.objects = {}
+        self.revisions = {}
         self.profiles, self.authored_calls = {}, set()
 
     def add(self, group, *, current=True):
@@ -26,9 +27,18 @@ class ContentReferences:
         if handle in self.references and self.references[handle] != identity:
             raise TaskError('CONTENT_REFERENCE_COLLISION')
         self.references[handle], self.reverse[identity] = identity, handle
-        if current:
+        object_key, revision = group.get('object_key'), group.get('revision')
+        peers = [ref for ref in self.selectable if object_key and self.objects.get(ref) == object_key]
+        if current and type(revision) is int:
+            newer = any(self.revisions.get(ref, 0) > revision for ref in peers)
+            self.selectable.difference_update(ref for ref in peers if self.revisions.get(ref, 0) < revision)
+            if not newer:
+                self.selectable.add(handle)
+        elif current:
             self.selectable.add(handle)
-        self.objects[handle] = group.get('object_key')
+        self.objects[handle] = object_key
+        if type(revision) is int:
+            self.revisions[handle] = revision
         for item in group.get('items', ()):
             if item.get('title'):
                 self.items[(identity, item['item_index'])] = item['title']

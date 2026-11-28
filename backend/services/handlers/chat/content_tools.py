@@ -1,4 +1,6 @@
 """Private discovery and read-only history; existing checkpoint verification."""
+from services.task_execution.request_window import projection as request_projection
+
 import copy
 import hashlib
 import json
@@ -24,7 +26,7 @@ MISSING_IMAGE_PROMPT_QUESTION = (
 
 def semantic_intent(request, runtime=None):
     """One frozen workflow decision; consumers never reclassify its user words."""
-    projection = getattr(runtime, 'workflow_projection', None) or (getattr(request, 'params', None) or {}).get('_ecom_workflow')
+    projection = request_projection(runtime, request)
     if not isinstance(projection, dict):
         return None
     return projection.get('intent')
@@ -153,21 +155,21 @@ def image_writing_only_request(request, runtime=None):
 
 
 def requested_delivery_tools(request, runtime=None):
-    projection = getattr(runtime, 'workflow_projection', None) or (getattr(request, 'params', None) or {}).get('_ecom_workflow') or {}
+    projection = request_projection(runtime, request)
     context = projection.get('request_context') or {}
     labels = {'generate_video': '视频', 'code_execute': '文件'}
     return {tool: labels[tool] for tool in context.get('deliveries', ()) if tool in labels}
 
 
 def requires_continued_delivery(request, runtime=None):
-    projection = getattr(runtime, 'workflow_projection', None) or (getattr(request, 'params', None) or {}).get('_ecom_workflow') or {}
+    projection = request_projection(runtime, request)
     context = projection.get('request_context') or {}
     return bool(context.get('continue_delivery') or requested_delivery_tools(request, runtime))
 
 
 
 def waits_for_video_confirmation(request, runtime=None):
-    projection = getattr(runtime, 'workflow_projection', None) or (getattr(request, 'params', None) or {}).get('_ecom_workflow') or {}
+    projection = request_projection(runtime, request)
     media = (projection.get('request_context') or {}).get('media') or {}
     return media.get('tool') == 'generate_video' and bool(media.get('wait_for') or media.get('wait_all'))
 
@@ -716,45 +718,22 @@ def check_source_scope(db, context):
 
 
 async def read_saved_item(runtime, db, context, reference, *, request=None):
-    from services.task_execution.content_objects import ContentReference, is_current
-    from services.task_execution.contracts import TaskState
-    from services.task_execution.direct_loop import content_followup_state
+    from services.task_execution.content_objects import ContentReference
     import asyncio
 
     await asyncio.to_thread(check_source_scope, db, context)
     target = ContentReference.model_validate(reference)
-    state = runtime.task_execution_state or content_followup_state(runtime)
-    if not is_current(state, target.artifact_id) and runtime.task_execution_state is None:
-        # A read is not adoption or execution authorization. The chosen source
-        # is omitted from other_groups, so it must also be readable when the
-        # advisory router is unresolved and content_followup_state is gated.
-        candidate = getattr(runtime, 'task_followup_candidate', None)
-        if candidate and candidate.get('state'):
-            readable = TaskState.model_validate(candidate['state'])
-            if is_current(readable, target.artifact_id):
-                state = readable
-    if not is_current(state, target.artifact_id):
-        roots = {row['root_task_id'] for row in getattr(runtime, 'task_content_groups', ())
-                 if row['artifact_id'] == target.artifact_id}
-        if len(roots) != 1 or runtime.task_execution_state is not None:
-            raise ValueError('CHAT_CONTENT_VERSION_UNAVAILABLE')
-        root = roots.pop()
-        source = await runtime.read_content_root(root)
-        if not source:
-            raise ValueError('CHAT_CONTENT_VERSION_UNAVAILABLE')
-        state = TaskState.model_validate(source['state'])
-        if str(state.root_task_id) != str(root):
-            raise PermissionError('CHAT_SOURCE_DENIED')
-    if state is None or (str(state.conversation_id), str(state.org_id), str(state.actor_user_id)) != (
-            str(context.conversation_id), str(context.org_id), str(context.actor_user_id)):
-        raise PermissionError('CHAT_SOURCE_DENIED')
-    identity = state.execution_identity
-    if (identity.workspace_owner_id != str(context.workspace_owner_id)
-            or identity.context_scope != context.context_scope
-            or identity.personal_context_allowed != context.personal_context_allowed):
-        raise PermissionError('CHAT_SOURCE_DENIED')
-    if not is_current(state, target.artifact_id):
-        raise ValueError('CHAT_CONTENT_VERSION_UNAVAILABLE')
+    runtime._content_source_request = request
+    from services.task_execution.content_source import resolve, ContentSourceError
+    try:
+        source = await resolve(runtime, target, context=context, refresh=True)
+    except ContentSourceError as error:
+        if str(error) == 'CONTENT_SOURCE_SCOPE_DENIED':
+            raise PermissionError('CHAT_SOURCE_DENIED') from error
+        if str(error) in {'CONTENT_SOURCE_UNAVAILABLE', 'CONTENT_BASE_VERSION_CHANGED'}:
+            raise ValueError('CHAT_CONTENT_VERSION_UNAVAILABLE') from error
+        raise
+    state = source.state
     from services.task_execution.content_objects import _load_record
     from services.task_execution.content_revision import record_read
     from services.task_execution.methods import content_format_contract
@@ -1101,7 +1080,7 @@ def verified_video_status_text(text, *, fresh=False, confirmed_item=None):
 
 
 def semantic_context(request, runtime=None):
-    projection = getattr(runtime, 'workflow_projection', None) or (getattr(request, 'params', None) or {}).get('_ecom_workflow') or {}
+    projection = request_projection(runtime, request)
     raw = projection.get('request_context')
     if raw is None:
         return None

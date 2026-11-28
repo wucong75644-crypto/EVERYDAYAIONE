@@ -1,7 +1,32 @@
 """User-authored confirmation conditions for numbered content plans."""
+from services.task_execution.request_window import projection as request_projection
+
 import json
 from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+class WaitingConditions(BaseModel):
+    """Future waiting conditions, with no fields capable of granting approval."""
+    model_config = ConfigDict(extra='forbid', strict=True, json_schema_extra={'examples': [
+        {'tool': 'generate_image', 'wait_for': [3], 'wait_all': False},
+        {'tool': 'generate_image', 'wait_for': [], 'wait_all': True}], 'allOf': [
+        {'if': {'anyOf': [
+            {'required': ['wait_all'], 'properties': {'wait_all': {'const': True}}},
+            {'required': ['wait_for'], 'properties': {'wait_for': {'minItems': 1}}}]},
+         'then': {'required': ['tool'], 'properties': {'tool': {'type': 'string',
+             'enum': ['generate_image', 'generate_video']}}}}]})
+    tool: Literal['generate_image', 'generate_video'] | None = None
+    wait_for: list[Annotated[int, Field(ge=1, le=100)]] = Field(default_factory=list, max_length=100, json_schema_extra={'uniqueItems': True})
+    wait_all: bool = False
+
+    @model_validator(mode='after')
+    def bounded(self):
+        if (self.wait_for or self.wait_all) and self.tool is None:
+            raise ValueError('CONTENT_CONFIRMATION_TOOL_REQUIRED')
+        if len(set(self.wait_for)) != len(self.wait_for):
+            raise ValueError('CONTENT_CONFIRMATION_DUPLICATE_ITEM')
+        return self
 
 
 class MediaDirective(BaseModel):
@@ -26,7 +51,7 @@ class MediaDirective(BaseModel):
 
 
 def directive(request, runtime):
-    projection = getattr(runtime, 'workflow_projection', None) or (getattr(request, 'params', None) or {}).get('_ecom_workflow') or {}
+    projection = request_projection(runtime, request)
     raw = (projection.get('request_context') or {}).get('media')
     value = MediaDirective.model_validate(raw) if raw is not None else MediaDirective()
     from .saved_image_revision import revised_approval

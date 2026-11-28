@@ -153,11 +153,12 @@ def input_version(runtime, request):
     return digest([getattr(anchor, 'input_message_id', None), sorted(runtime.task_direct_seen)])
 
 
-def current_attachment_edit(request):
+def current_attachment_edit(request, runtime=None):
     """Resolve the existing semantic target against actual current attachments."""
     text='\n'.join(part.text for part in request.content if part.type=='text')
     images=[index for index,part in enumerate(request.content) if part.type=='image']
-    projection=(getattr(request,'params',None) or {}).get('_ecom_workflow') or {}
+    from .request_window import projection as request_projection
+    projection=request_projection(runtime, request)
     semantics=projection.get('request_context')
     target=(semantics or {}).get('canvas_image')
     message=getattr(request.context_anchor,'input_message_id',None)
@@ -337,7 +338,7 @@ async def prepare(runtime, handler, request, prepared, call, args, registry, *, 
             explicit_size = frame.size_for(1)
             item = item.model_copy(update={'options': {key: explicit_size[key]
                 for key in ('aspect_ratio', 'resolution') if key in explicit_size}})
-    current=current_attachment_edit(request) if edit is not None and edit.source_reference is None else None
+    current=current_attachment_edit(request, runtime) if edit is not None and edit.source_reference is None else None
     if current is not None:
         message,index,target,text,images=current
         if (str(edit.source_message_id),edit.source_content_index)!=(message,index):
@@ -345,7 +346,8 @@ async def prepare(runtime, handler, request, prepared, call, args, registry, *, 
         if (getattr(getattr(runtime,'task_user_changes',None),'items',())
                 or getattr(runtime,'_steer_messages',())):
             raise TaskError('CHAT_INLINE_IMAGE_INPUT_CHANGED')
-        frame = ((getattr(request, 'params', None) or {}).get('_ecom_workflow') or {}).get('request_context') or {}
+        from .request_window import projection as request_projection
+        frame = request_projection(runtime, request).get('request_context') or {}
         selected = [m.get('reference', {}) for m in frame.get('materials') or () if m.get('usage') == 'input']
         ordinals = sorted({target, *(images.index(ref['content_index']) + 1 for ref in selected
             if str(ref.get('message_id')) == message and ref.get('content_index') in images)})
