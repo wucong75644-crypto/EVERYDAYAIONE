@@ -6,6 +6,7 @@
 
 import type {
   Message,
+  DeliveryPresentation,
   MessageStatus,
   ContentPart,
   ImagePart,
@@ -20,6 +21,17 @@ import { parseContentParts } from '../schemas/messageProtocol';
 // ============================================================
 // 内容提取函数
 // ============================================================
+
+/** Validate both REST projection and native persisted snapshots at the boundary. */
+export function deliveryPresentation(message: { generation_params?: unknown; delivery_presentation?: unknown }): DeliveryPresentation | undefined {
+  const params = message.generation_params;
+  const value = message.delivery_presentation ?? (params && typeof params === 'object'
+    ? (params as Record<string, unknown>).delivery_presentation : undefined);
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const data = value as Record<string, unknown>;
+  return data.origin === 'internal_continuation' && typeof data.output_started === 'boolean'
+    ? { origin: data.origin, output_started: data.output_started } : undefined;
+}
 
 /** 从 Message 提取文本内容（多 text block 时拼接所有文本） */
 export function getTextContent(message: Message): string {
@@ -110,6 +122,8 @@ export function getFiles(message: Message): FilePart[] {
 
 /** API 返回的原始消息（content 可能是字符串或数组） */
 export interface RawApiMessage {
+  generation_params?: unknown;
+  delivery_presentation?: unknown;
   id: string;
   conversation_id: string;
   role: string;
@@ -136,6 +150,7 @@ function resolveStatus(status?: string, isError?: boolean): MessageStatus {
 /** 转换旧格式消息为新格式（兼容 Message 和 API 原始数据） */
 export function normalizeMessage(msg: RawApiMessage | Message): Message {
   const status = resolveStatus(msg.status as string | undefined, msg.is_error);
+  msg = { ...msg, delivery_presentation: deliveryPresentation(msg) };
   const context = {
     messageId: msg.id,
     conversationId: msg.conversation_id,

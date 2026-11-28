@@ -1,3 +1,4 @@
+import { deliveryPresentation } from '../../../utils/messageUtils';
 import { observeChatBody } from '../../../utils/chatTiming';
 import { KnowledgeReferenceTags } from '../../knowledge/KnowledgeReferenceTags';
 /**
@@ -343,6 +344,9 @@ export default memo(function MessageItem({
   // message placeholder. Keep live thinking and actual errors visible.
   const silentAssistant = !isUser && Array.isArray(message.content)
     && message.content.every(part => part.type === 'task_progress' || (part.type === 'text' && !part.text.trim()));
+  if (silentAssistant && deliveryPresentation(message)?.output_started === false
+      && ['pending', 'streaming', 'completed'].includes(message.status)
+      && !isRegenerating && !isErrorMessage && !message.error) return null;
   if (silentAssistant && message.status === 'completed'
       && !isStreaming && !isRegenerating && !isErrorMessage) return null;
 

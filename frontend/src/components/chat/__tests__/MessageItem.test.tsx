@@ -690,3 +690,24 @@ describe('已有图片交付的缩略图', () => {
     expect(container.querySelector('img')?.parentElement?.style.width).toBe('500px');
   });
 });
+
+it.each(['pending', 'streaming', 'completed'] as const)('hides unstarted internal continuation on reload: %s', status => {
+  const { container } = render(<MessageItem message={makeMessage({ status, content: [],
+    generation_params: { delivery_presentation: { origin: 'internal_continuation', output_started: false } },
+  })} isStreaming={status === 'streaming'} />);
+  expect(container.querySelector('[data-message-id]')).toBeNull();
+});
+
+it.each([
+  { status: 'streaming' as const, content: [], delivery_presentation: { origin: 'internal_continuation' as const, output_started: true } },
+  { status: 'streaming' as const, content: [], generation_params: { type: 'chat' as const } },
+  { status: 'failed' as const, content: [], is_error: true },
+  { status: 'streaming' as const, content: [{ type: 'text' as const, text: '我接着把两张图比较一下。' }] },
+  { status: 'streaming' as const, content: [{ type: 'thinking' as const, text: '继续比较用户指定的两张图' }] },
+])('keeps real output, failures and normal user requests visible %#', changes => {
+  const { container } = render(<MessageItem message={makeMessage({
+    generation_params: { delivery_presentation: { origin: 'internal_continuation', output_started: false } },
+    ...changes,
+  })} isStreaming />);
+  expect(container.querySelector('[data-message-id]')).not.toBeNull();
+});

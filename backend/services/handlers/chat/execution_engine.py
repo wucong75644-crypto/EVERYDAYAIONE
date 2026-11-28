@@ -249,9 +249,12 @@ async def execute_chat(
         request.replay_context,
     )
     try:
-        # Start the existing delivery stream before Skill/workflow IO. This only
-        # acknowledges execution; activation success is reported separately.
-        await output.start()
+        # Only a proven no-model completion skips the visible stream. A steer
+        # discovered at a later safe point can still start it before sampling.
+        prepared.delivery_start_pending = bool(getattr(runtime, 'task_image_completion', None) is not None
+            and runtime.task_execution_state is not None and runtime.task_execution_state.status == 'completed')
+        if not prepared.delivery_start_pending:
+            await output.start()
         skills = None
         selection_error = None
         from services.agent.image.ecommerce_planner.workflow import EcommerceWorkflow
@@ -648,38 +651,6 @@ async def _run_loop(
                 'credits_cost': handler._calculate_credits(totals.usage) if request.calculate_credits else 0,
                 'tool_digest': _build_digest(prepared.messages, request.conversation_id, prepared.budget.turns_used)
                     if parts or getattr(runtime, 'task_image_completion', None) is None else None}
-    async def finish_inline_receipt(turn_index, next_round):
-        from services.task_execution import request_resolution, inline_image_action
-        from services.task_execution.content_delivery import input_revision
-        from services.task_execution.model_bridge import review_model_completion
-        if (request_resolution.context(runtime) is None
-                or content_tools.requires_continued_delivery(request, runtime)):
-            return False
-        target = request_resolution.binding(runtime)
-        state = runtime.task_execution_state
-        record = inline_image_action.read_record(runtime)
-        if (not target or target['input_revision'] != input_revision(runtime, request)
-                or state is None):
-            return False
-        from services.task_execution.reducer import digest
-        single_saved = target['target']['kind'] == 'content' and len(target['target']['item_indices']) == 1
-        calls = [b for b in state.call_bindings if b.tool_name == 'generate_image'
-                 and b.input_sha256 == digest(sorted(getattr(runtime, 'task_direct_seen', ())))
-                 and (record is not None and b.call_id == record.call_id or single_saved)]
-        accepted = [op for op in state.operations if op.step_id in {b.step_id for b in calls} and op.status == 'accepted'
-                    and str(op.owner_task_id) == target['execution_task_id'] and op.receipt_ref]
-        if len(accepted) != 1:
-            return False
-        status_key = accepted[0].id
-        if not any(block.get('image_receipt_status') == status_key for block in blocks):
-            notice = {'type': 'text', 'text': request_resolution.image_status_reply(runtime, request),
-                      'image_receipt_status': status_key}
-            blocks.append(notice); totals.text += notice['text']
-            await sink.on_block(notice)
-        await review_model_completion(runtime=runtime, prepared=prepared, blocks=blocks,
-            build_checkpoint=_build_replay_context, turn=turn_index, next_model_round=next_round,
-            repeated_tool_call_guard=repeated_tool_call_guard, sink=sink, terminal_result=terminal_task_result)
-        return True
     thinking_mode = request.thinking_mode
     entry_question = next((b for b in blocks if b.get("ecom_entry_question") is True), None)
     if entry_question:
@@ -708,8 +679,6 @@ async def _run_loop(
         await recover_pending_batch(prepared=prepared, runtime=runtime, request=request, handler=handler,
             sink=sink, totals=totals, blocks=blocks, cancellation_event=cancellation_event,
             model_round=model_round, execute_tools=_execute_tools, repeated_tool_call_guard=repeated_tool_call_guard)
-        if await finish_inline_receipt(prepared.budget.turns_used, model_round):
-            return None
         if runtime.task_execution_state is not None and runtime.task_execution_state.status != 'active':
             return None
     while not prepared.budget.stop_reason:
@@ -1476,8 +1445,6 @@ async def _run_loop(
         if image_metrics is not None:
             totals.usage["image_argument_metrics"] = image_metrics
         resource_stop = getattr(getattr(executor, "_tool_runtime", None), "resource_stop_reason", "")
-        if await finish_inline_receipt(turn, model_round):
-            return None
         result_stop = getattr(handler, "_tool_result_stop_reason", "")
         if getattr(handler, '_request_response_stop', False):
             response = getattr(runtime, 'checkpoint_base', {}).get('_request_response_v1')
@@ -1521,25 +1488,6 @@ async def _run_loop(
         blocks.append(notice)
         await sink.on_block(notice)
     return None
-
-
-_IMAGE_DELIVERY_COMPLETE = '<image-delivery-complete/>'
-
-
-def _image_delivery_can_finish_silently(runtime):
-    """Only an applied image event with a complete physical outcome can close silently."""
-    event = getattr(runtime, 'task_image_completion', None)
-    if event is None or not event.event_artifact_ids or runtime.task_unreviewed_changes:
-        return False
-    state = runtime.task_execution_state
-    if not state.model_directed:
-        return False
-    plan = state.working_plan
-    if plan and any(item.status != 'completed' for item in plan.steps):
-        return False
-    from services.task_execution.direct_loop import end_candidate
-
-    return end_candidate(state).status == 'completed'
 
 
 async def _read_turn(
@@ -1600,7 +1548,6 @@ async def _read_turn_impl(
     image_reply = (not task_review and not image_completion and request is not None and not defer_narrative
                    and (content_tools.image_execution_request(request, runtime)
                         or getattr(prepared, 'saved_image_repeat', False)))
-    silent_delivery = image_completion and _image_delivery_can_finish_silently(runtime)
     native_continuation = bool(getattr(runtime, 'checkpoint_base', {}).get('_continuation_input'))
     delivery = (content_tools.requested_delivery_tools(request, runtime)
                 if not task_review and not native_continuation and not image_completion
@@ -1615,7 +1562,7 @@ async def _read_turn_impl(
                        and not existing_image_delivery.complete(runtime, request, blocks))
     from services.task_execution.content_completion import phase as content_phase
     draft_pending = content_phase(runtime, request) if not task_review else None
-    defer_narrative = defer_narrative or image_reply or silent_delivery or bool(missing_delivery) or video_pending or display_pending or bool(draft_pending)
+    defer_narrative = defer_narrative or image_reply or bool(missing_delivery) or video_pending or display_pending or bool(draft_pending)
     from services.handlers.interrupt_anchor import project_interrupt_history
 
     skills = runtime.skill_runtime if runtime and not task_review else None
@@ -1636,12 +1583,6 @@ async def _read_turn_impl(
             instruction += (' 以下为原任务的失败判定。受理未知时查询原任务；'
                             '继续可独立完成的交付并保留已发布成果。\n'
                             + json.dumps(failures, ensure_ascii=False))
-        if silent_delivery:
-            instruction += (
-                '如果已发布的图片已满足用户全部要求，且没有待处理的追加要求，'
-                '只返回 ' + _IMAGE_DELIVERY_COMPLETE + '，无需再发完成通知。'
-                '如果用户还要求其他交付，直接完成那些工作。'
-            )
         messages = [*messages, {'role': 'system', 'content': instruction}]
     model_messages = skills.model_messages(messages, tools) if skills else messages
     visual_input = None
@@ -1667,15 +1608,22 @@ async def _read_turn_impl(
                 + '\n按当前next_tool继续。需要修订时按实际读取条目填写base+updates；'
                   '要求出图时continue_execution=true，只改文字为false。保存成功回执才表示已保存；'
                   '实际执行回执才表示已提交。缺少必要信息时用clarification询问，不以说明代替保存或执行。'})
-        if content_tools.semantic_intent(request, runtime) in {'generate', 'edit', 'write_then_submit_images'}:
-            model_messages.append({'role': 'system', 'content':
-                '当前语义动作包含实际图片交付。先核对所选需求及其等待条件；未要求等待确认时，'
-                '不要只返回提示词正文或只保存后结束。单图可用generate_image的编辑或draft形式；'
-                '需要先保存完整方案再执行时，用save_task_text显式continue_execution=true后按真实保存回执提交。'
-                '有用户等待条件时仍须遵守，不把这条说明当作批准，也不能执行无关历史稿。'})
     else:
         model_messages, tools = ModelReferenceBoundary(None).model_input(model_messages, tools)
+    if (not task_review and not image_completion
+            and content_tools.semantic_intent(request, runtime) in {'generate', 'edit', 'write_then_submit_images', 'execute_saved', 'repeat'}):
+        model_messages.append({'role': 'system', 'content':
+            '工具回执是执行状态事实：accepted只是已受理，不是图片已完成；completed须有真实发布结果。'
+            '取得工具回执后用自然语言回应本次用户要求，不照抄固定状态模板；不要声称回执没有证明的保存、展示或完成。'
+            '用户还有其他交付时继续完成；图片仍在后台执行时结束本次自然回复，等待原结果事件，不重复生图或循环查询。'
+            '当前语义动作包含实际图片交付。先核对所选需求及其等待条件；未要求等待确认时，'
+            '不要只返回提示词正文或只保存后结束。单图可用generate_image的编辑或draft形式；'
+            '需要先保存完整方案再执行时，用save_task_text显式continue_execution=true后按真实保存回执提交。'
+            '有用户等待条件时仍须遵守，不把这条说明当作批准，也不能执行无关历史稿。'})
     prepared.model_visible_tools = {t['function']['name']: t['function'] for t in tools if 'function' in t}
+    if getattr(prepared, 'delivery_start_pending', False):
+        await sink.start()
+        prepared.delivery_start_pending = False
     stream_kwargs = {
         "messages": model_messages,
         "tools": tools,
@@ -1904,12 +1852,12 @@ async def _read_turn_impl(
     logger.info('Chat model timing | task={} | round={} | metrics={}',
                 request.task_id if request else None, model_round, timing)
     if image_reply and not content_output:
-        from services.task_execution.request_resolution import context as request_context, image_status_reply
-        if request_context(runtime) is not None:
-            turn_text = '' if ordered_calls else image_status_reply(runtime, request)
+        from services.task_execution.request_resolution import context as request_context
+        if ordered_calls:
+            turn_text = ''  # Await actual effects before a final natural-language receipt.
         if not getattr(prepared, 'image_receipt_seen', False) and not any(
                 c['name'] == content_objects.SAVE for c in ordered_calls):
-            if request_context(runtime) is None or ordered_calls:
+            if request_context(runtime) is None:
                 turn_text = content_tools.unconfirmed_image_reply(turn_text, bool(ordered_calls))
             if (not ordered_calls
                     and getattr(prepared, 'allow_image_call_repair', False)
@@ -1940,18 +1888,13 @@ async def _read_turn_impl(
         pending_retry = (not ordered_calls and totals.last_finish_reason != 'length'
                          and existing_image_delivery.can_continue(runtime, request, prepared))
         turn_text = '' if ordered_calls or pending_retry else existing_image_delivery.MISSING
-    if silent_delivery:
-        if turn_text.strip() == _IMAGE_DELIVERY_COMPLETE:
-            turn_text = ''
-        if not turn_text.strip() and not ordered_calls:
-            turn_text = turn_thinking = ''
     if video_pending and not content_output and not content_tools.semantic_runtime(runtime):
         from services.task_execution.item_confirmation import directive
         media = directive(request, runtime) if request else None
         confirmed_item = media.approved[0] if media and media.confirmation_only and len(media.approved) == 1 else None
         turn_text = content_tools.verified_video_status_text(
             turn_text, fresh=video_receipts == {'new'}, confirmed_item=confirmed_item)
-    if (image_reply or silent_delivery or missing_delivery or video_pending or display_pending) and not content_output and turn_text and not draft_pending:
+    if (image_reply or missing_delivery or video_pending or display_pending) and not content_output and turn_text and not draft_pending:
         totals.text += turn_text
         await sink.on_text(turn_text)
     return turn_text, turn_thinking, ordered_calls, previewed_call_ids
@@ -2308,12 +2251,11 @@ async def _execute_tools_impl(
                                     handler._tool_result_stop_reason = rejection['message']
                                     handler._request_response_stop = True
                             else:
-                                from services.task_execution.request_resolution import image_status_reply, binding
+                                from services.task_execution.request_resolution import binding
                                 selected = binding(runtime) or {}
                                 effect = any(op.tool_name == 'generate_image' and str(op.owner_task_id) == selected.get('execution_task_id')
                                              for op in runtime.task_execution_state.operations) if runtime.task_execution_state else False
-                                rendered = (image_status_reply(runtime, request) if args['purpose'] == 'explanation'
-                                            else args['text'] + '\n\n' + image_status_reply(runtime, request)) if effect else args['text'] + '\n\n本轮未提交新的图片任务。'
+                                rendered = args['text']
                                 from . import existing_image_delivery
                                 if existing_image_delivery.action(runtime, request) == 'display_existing' and not existing_image_delivery.complete(runtime, request, blocks):
                                     rendered = (args['text'] + '\n\n本次尚未展示图片。' if args['purpose'] == 'clarification' else existing_image_delivery.MISSING)

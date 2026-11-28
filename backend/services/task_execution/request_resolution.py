@@ -81,7 +81,7 @@ def selection_schema(runtime=None):
                 branch['required'].append('source_message_id')
         # This control repairs a target, not unrelated delivery authorization.
         # Unmentioned validated directives remain with the existing workflow.
-        for key in ('media', 'deliveries', 'continue_delivery', 'platform_changed', 'platform'):
+        for key in ('media', 'deliveries', 'continue_delivery', 'platform_changed', 'platform', 'image_completion_scope'):
             frame['properties'].pop(key, None)
     frame['required'] = ['target', 'focus']
     from .image_history import selection_purpose
@@ -109,6 +109,7 @@ async def select(runtime, request, prepared, args):
         old_target = Target.model_validate(merged['target']).model_dump(exclude={'basis'}) if merged.get('target') else None
         new_target = Target.model_validate(raw_frame['target']).model_dump(exclude={'basis'}) if raw_frame.get('target') else None
         if old_target != new_target:
+            merged.pop('image_completion_scope', None)
             for field in ('size', 'size_rules', 'canvas_image', 'canvas_resource', 'materials', 'reference_usage'):
                 merged.pop(field, None)
             # Approval belongs to an exact saved object, never to a corrected
@@ -335,6 +336,11 @@ def freeze_frame(runtime, request, frame, intent, *, image_count=None):
         description = frame.model_dump(mode='json', exclude_none=True, exclude={'target', 'focus'})
         if raw and raw['kind'] != 'content' and frame.confirmation is not None:
             description['media'] = {**description['media'], 'wait_for': [], 'wait_all': False}
+        from .image_completion_policy import verified_scope, user_text
+        scope = verified_scope(description.get('image_completion_scope'), user_text(request, runtime),
+            continued=bool(description.get('continue_delivery') or description.get('deliveries')))
+        if scope is not None:
+            description['image_completion_scope'] = scope.model_dump(mode='json')
         result['action'] = {'intent': intent, 'image_count': image_count, 'request_context': description}
     return result
 

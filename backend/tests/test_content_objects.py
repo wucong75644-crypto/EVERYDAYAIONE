@@ -990,9 +990,7 @@ async def test_image_completion_event_continues_original_goal_without_asking_for
         if followup:
             yield StreamChunk(content=followup)
         else:
-            yield StreamChunk(thinking_content='图片已交付')
-            yield StreamChunk(content='<image-delivery-')
-            yield StreamChunk(content='complete/>', finish_reason='stop')
+            yield StreamChunk(finish_reason='stop')
 
     sink, blocks, totals = await run_content_loop(runtime, prepared, handler, request, stream)
     parts = await _finalize_output_parts(handler=handler, prepared=prepared, totals=totals, blocks=blocks,
@@ -1000,7 +998,9 @@ async def test_image_completion_event_continues_original_goal_without_asking_for
     assert len(model_inputs) == 1
     assert sum(m['role'] == 'user' for m in model_inputs[0]) == 1
     assert '图片任务完成事件' in model_inputs[0][-1]['content']
-    assert ('<image-delivery-complete/>' in model_inputs[0][-1]['content']) == (operation_status == 'completed')
+    assert '<image-delivery-complete/>' not in model_inputs[0][-1]['content']
+    assert '原目标剩余的要求' in model_inputs[0][-1]['content']
+    assert not any('当前语义动作包含实际图片交付' in str(m.get('content','')) for m in model_inputs[0])
     assert sink.text == (expected or '')
     assert [p.text for p in parts if p.type == 'text'] == ([expected] if expected else [])
     if not expected:

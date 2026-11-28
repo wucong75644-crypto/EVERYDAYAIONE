@@ -1,3 +1,4 @@
+import { createMessageStreamProjection } from '../messageStreamProjection';
 /**
  * wsMessageHandlers 单元测试
  *
@@ -1639,5 +1640,26 @@ describe('actual paid supplier delivery vectors', () => {
     expect(store.completeStreaming).not.toHaveBeenCalled();
     expect(store.markConversationCompleted).not.toHaveBeenCalled();
     expect(deps.chunkBufferRef.current.get('parent-stream')?.chunk).toBe('尚未结束的聊天正文');
+  });
+});
+
+describe('internal continuation presentation lifecycle', () => {
+  it('starts visibility only from an accepted live or replayed start, once', () => {
+    const store = createMockStore();
+    vi.mocked(store.getMessage).mockReturnValue({ id: 'internal', conversation_id: 'conv', role: 'assistant',
+      status: 'pending', content: [], created_at: '',
+      generation_params: { delivery_presentation: { origin: 'internal_continuation', output_started: false } },
+    });
+    const deps = createMockDeps(store);
+    const projection = createMessageStreamProjection(deps);
+    projection.projectReplayEvent('conv', 'internal', 'task', 'stream', 1,
+      { event_type: 'message_start', delivery_seq: 1, payload: {} });
+    expect(store.updateMessage).toHaveBeenCalledWith('internal', {
+      delivery_presentation: { origin: 'internal_continuation', output_started: true },
+    });
+    vi.mocked(store.updateMessage).mockClear();
+    projection.projectReplayEvent('conv', 'internal', 'task', 'stream', 1,
+      { event_type: 'message_start', delivery_seq: 1, payload: {} });
+    expect(store.updateMessage).not.toHaveBeenCalled();
   });
 });

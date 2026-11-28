@@ -288,8 +288,15 @@ export interface MessageError {
   message: string;
 }
 
+/** Host-owned delivery metadata; never a model completion decision. */
+export interface DeliveryPresentation {
+  origin: 'internal_continuation';
+  output_started: boolean;
+}
+
 /** 生成参数 */
 export interface GenerationParams {
+  delivery_presentation?: DeliveryPresentation;
   type?: 'chat' | 'image' | 'image_ecom' | 'video' | 'audio';
   model?: string;
   taobao_main_image?: boolean;
@@ -307,6 +314,7 @@ export interface Message {
   status: MessageStatus;
   task_id?: string;
   generation_params?: GenerationParams;
+  delivery_presentation?: DeliveryPresentation | null;
   credits_cost?: number;
   error?: MessageError;
   created_at: string;

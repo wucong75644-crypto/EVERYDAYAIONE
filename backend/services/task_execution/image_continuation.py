@@ -122,6 +122,9 @@ def continuation_payload(bundle, *, task, claim, execution_scope):
     from .continuation_checkpoint import build_context
     checkpoint = dict(bundle['checkpoint'])
     checkpoint.pop(RECOVERY_KEY, None)
+    from .image_completion_policy import completion_decision
+    if completion_decision(source, candidate, checkpoint, task, bundle['children'], failures) == 'finish':
+        candidate = candidate.model_copy(update={'status': 'completed'})
     if failures:
         checkpoint[RECOVERY_KEY] = failure_recovery(bundle['children'], failures, task['delivery_context']['event_id'])
     return build_context(checkpoint,source,candidate,task=task,claim=claim,message=message,

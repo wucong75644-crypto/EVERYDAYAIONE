@@ -38,7 +38,13 @@ def format_message(message: dict) -> dict:
     Returns:
         格式化后的消息对象
     """
+    params = message.get("generation_params") or {}
+    presentation = params.get("delivery_presentation") if isinstance(params, dict) else None
+    if not (isinstance(presentation, dict) and presentation.get('origin') == 'internal_continuation'
+            and type(presentation.get('output_started')) is bool):
+        presentation = None
     return {
+        "delivery_presentation": presentation,
         "id": message["id"],
         "conversation_id": message["conversation_id"],
         "content": parse_content(message["content"]),

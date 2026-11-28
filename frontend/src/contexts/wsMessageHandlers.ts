@@ -87,7 +87,10 @@ const handlerDefinitions: Record<string, HandlerDefinition> = {
       }
 
       logger.info('ws:message', 'start received', { messageId: effectiveMessageId });
-      if (effectiveMessageId) deps.getStore().setStatus(effectiveMessageId, 'streaming');
+      if (effectiveMessageId) {
+        projection.startOutput(effectiveMessageId);
+        deps.getStore().setStatus(effectiveMessageId, 'streaming');
+      }
     },
 
   message_chunk: (deps, msg, projection) => {

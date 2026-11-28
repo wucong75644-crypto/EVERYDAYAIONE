@@ -1,3 +1,4 @@
+import { deliveryPresentation } from '../utils/messageUtils';
 /**
  * 消息流投影层。
  *
@@ -75,6 +76,7 @@ export interface MessageStreamProjection {
     blocks: ContentPart[],
     remainingText: string,
   ) => void;
+  startOutput: (messageId: string) => void;
   projectBlock: (conversationId: string, block: ContentPart) => void;
   projectReplayEvent: (
     conversationId: string,
@@ -250,6 +252,15 @@ export function createMessageStreamProjection(deps: HandlerDeps): MessageStreamP
     store.appendContentBlock(conversationId, block);
   };
 
+  const startOutput = (messageId: string): void => {
+    const message = getStore().getMessage(messageId);
+    if (message && deliveryPresentation(message)) {
+      getStore().updateMessage(messageId, {
+        delivery_presentation: { origin: 'internal_continuation', output_started: true },
+      });
+    }
+  };
+
   const projectReplayEvent = (
     conversationId: string,
     messageId: string | undefined,
@@ -277,6 +288,7 @@ export function createMessageStreamProjection(deps: HandlerDeps): MessageStreamP
       timestamp: Date.now(),
     };
     if (!acceptDelivery(replayMessage)) return;
+    if (eventType === 'message_start' && messageId) startOutput(messageId);
     const chunk = stringValue(eventPayload?.chunk);
     if (eventType === 'message_chunk' && chunk) appendTextChunk(conversationId, chunk);
     if (eventType === 'thinking_chunk' && chunk) appendThinkingChunk(conversationId, chunk);
@@ -303,5 +315,6 @@ export function createMessageStreamProjection(deps: HandlerDeps): MessageStreamP
     restore,
     projectBlock,
     projectReplayEvent,
+    startOutput,
   };
 }

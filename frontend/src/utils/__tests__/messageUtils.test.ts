@@ -581,3 +581,13 @@ describe('calcRemainingText', () => {
     expect(result).toBe('text');
   });
 });
+
+it('projects validated internal delivery metadata through native snapshot and REST reload', () => {
+  const raw = { id: 'internal', conversation_id: 'chat', role: 'assistant', content: '[]', status: 'pending',
+    generation_params: { delivery_presentation: { origin: 'internal_continuation', output_started: false } } };
+  expect(normalizeMessage(raw).delivery_presentation).toEqual({ origin: 'internal_continuation', output_started: false });
+  expect(normalizeMessage({ ...raw, delivery_presentation: { origin: 'internal_continuation', output_started: true } })
+    .delivery_presentation?.output_started).toBe(true);
+  expect(normalizeMessage({ ...raw, generation_params: {}, delivery_presentation: { origin: 'internal_continuation', output_started: 'false' } })
+    .delivery_presentation).toBeUndefined();
+});

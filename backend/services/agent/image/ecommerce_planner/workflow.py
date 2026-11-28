@@ -15,6 +15,7 @@ from services.task_execution.content_objects import Material
 from services.task_execution.request_resolution import Target
 from services.task_execution import action_target_contract
 from services.task_execution.contracts import TaskError
+from services.task_execution.image_completion_policy import ImageCompletionScope, SCOPE_GUIDANCE
 
 KEY = "_ecom_workflow"
 SKILL = "ecommerce-main-images"
@@ -98,6 +99,7 @@ class ImageRequestContext(BaseModel):
     materials: list[Material] | None = Field(default=None, max_length=16,
         description='本轮新稿共同采用的真实图片及用途，按实际输入顺序填写，逐字复制素材reference；主体与风格参考均为input，排除的图片不填。非图片写作或沿用已有稿件时可为null。')
     continue_delivery: bool = False
+    image_completion_scope: ImageCompletionScope | None = Field(default=None, description=SCOPE_GUIDANCE)
     target: Target | None = None
     focus: Literal['current_request', 'selected_target', 'retain_previous'] | None = Field(default=None,
         description='current_request用于独立新需求；selected_target用于选定历史图片或保存稿。'
@@ -142,6 +144,12 @@ class ImageRequestContext(BaseModel):
             if rule.scope == 'all' or item_index in rule.item_indices:
                 return rule.size.model_dump(exclude_none=True)
         return {}
+
+    @field_validator('image_completion_scope', mode='before')
+    @classmethod
+    def completion_scope(cls, value):
+        from services.task_execution.image_completion_policy import advisory_scope
+        return advisory_scope(value)
 
     @field_validator('size', mode='before')
     @classmethod
@@ -276,7 +284,7 @@ async def classify_workflow(text, previous=None, *, org_id=None, selected_skill=
     context = {**(context or {}), 'image_target_references': [
         ({'image_reference': key, **reference} if turn_catalog else {'image_reference': key})
         for key, reference in image_targets.items()]}
-    tool['function']['parameters']['properties']['request_context']['required'] = ['size','platform','media','deliveries','materials','image_action']
+    tool['function']['parameters']['properties']['request_context']['required'] = ['size','platform','media','deliveries','materials','image_action','image_completion_scope']
     if (context or {}).get('request_resolution') is not None:
         tool['function']['parameters']['properties']['request_context']['required'].extend(['target', 'focus'])
     tool['function']['parameters']['$defs']['MediaDirective']['required'] = ['tool','wait_for','wait_all','approved','confirmation_only']
@@ -328,6 +336,7 @@ async def classify_workflow(text, previous=None, *, org_id=None, selected_skill=
         "按完整条件含义理解，不要求固定说法。用户没设等待条件时不新增确认。已保存等待条件继续有效，且media.tool必须使用原工具。"
         "target.kind=content时以所选稿件实际等待条目为准；普通ready方案执行approved=[]，不创建wait_for。"
         "本次明确新增后续等待条件填写request_context.confirmation，再由保存工具保存；不把批准执行当作新的等待。")
+    prompt += SCOPE_GUIDANCE
     prompt += ("deliveries只列用户本轮明确要求实际交付的视频generate_video或文件code_execute；"
         "讨论、引用、否定和待后续确认的动作不列入。其他发送/发布等本轮额外交付用continue_delivery=true。"
         "额外交付不改变图片intent；只写方案并导出文件时intent=write、deliveries含code_execute，不创建图片。")
